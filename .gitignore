@@ -1,0 +1,23 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Local-only deploy reference (contains real JWT secrets + SMTP password).
+# Its values live in the Railway dashboard, not in git.
+backend-unified/DEPLOY_ENV.md
+dist/
+build/
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cache/
+.parcel-cache/
+.turbo/
+coverage/
+.next/
+out/
