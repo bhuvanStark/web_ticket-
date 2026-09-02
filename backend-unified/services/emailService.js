@@ -1,34 +1,52 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-let transporter = null;
+// Email delivery goes through the Resend HTTPS API (Railway blocks outbound
+// SMTP on the current plan). Configuration comes from two Railway env vars:
+//   RESEND_API_KEY     — the Resend API key (never logged or hard-coded)
+//   RESEND_FROM_EMAIL  — the verified sender, e.g. "TaskTel <noreply@taskteltechnologees.com>"
+let resendClient = null;
 
-function getTransporter() {
-  if (transporter) return transporter;
+function getResendClient() {
+  if (resendClient) return resendClient;
 
-  const user = (process.env.SMTP_USER || process.env.GMAIL_USER || '').trim();
-  const pass = (process.env.SMTP_PASS || process.env.GMAIL_PASS || '').trim().replace(/\s+/g, '');
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(process.env.SMTP_PORT) || 465;
-
-  if (!user || !pass) {
-    console.warn('⚠️  SMTP_USER/SMTP_PASS not configured — invitation emails will be logged, not sent.');
-    return null;
+  const apiKey = (process.env.RESEND_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error('Email not sent: RESEND_API_KEY is not configured');
   }
 
-  transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-    // Railway resolves smtp.gmail.com to IPv6 and fails with ENETUNREACH —
-    // pin the SMTP connection to IPv4 and fail fast instead of hanging.
-    family: 4,
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000
-  });
+  resendClient = new Resend(apiKey);
+  return resendClient;
+}
 
-  return transporter;
+function getFromAddress() {
+  const from = (process.env.RESEND_FROM_EMAIL || '').trim();
+  if (!from) {
+    throw new Error('Email not sent: RESEND_FROM_EMAIL is not configured');
+  }
+  return from;
+}
+
+// Single delivery primitive used by every sender below. Throws (never silently
+// reports success) when the service is misconfigured or the API rejects.
+async function deliver({ to, subject, html, context }) {
+  let client;
+  let from;
+  try {
+    client = getResendClient();
+    from = getFromAddress();
+  } catch (configError) {
+    console.error(`[emailService] ${configError.message} — "${context}" to ${to} was NOT sent.`);
+    throw configError;
+  }
+
+  const { data, error } = await client.emails.send({ from, to, subject, html });
+
+  if (error) {
+    console.error(`[emailService] Resend API error sending "${context}" to ${to}:`, error);
+    throw new Error(error.message || 'Resend API error');
+  }
+
+  return { sent: true, messageId: data?.id };
 }
 
 export function buildInviteEmailHtml({ recipientName, companyName, jobRole, inviterName, activateUrl }) {
@@ -78,22 +96,13 @@ export function buildInviteEmailHtml({ recipientName, companyName, jobRole, invi
 
 export const sendInviteEmail = async ({ recipientEmail, recipientName, companyName, jobRole, inviterName, activateUrl }) => {
   const html = buildInviteEmailHtml({ recipientName, companyName, jobRole, inviterName, activateUrl });
-  const activeTransporter = getTransporter();
 
-  if (!activeTransporter) {
-    console.log(`[email:stub] Invite for ${recipientEmail} — activate URL: ${activateUrl}`);
-    return { sent: false, previewUrl: null };
-  }
-
-  const sender = process.env.SMTP_USER || process.env.GMAIL_USER;
-  const info = await activeTransporter.sendMail({
-    from: `"TaskTel Enterprise AV Desk" <${sender}>`,
+  return deliver({
     to: recipientEmail,
     subject: `[${companyName || 'TaskTel'}] You've been invited to join TaskTel AV`,
-    html
+    html,
+    context: 'Invite'
   });
-
-  return { sent: true, messageId: info.messageId };
 };
 
 // Shared shell so all TaskTel emails look the same.
@@ -201,23 +210,11 @@ export function buildResetLinkEmailHtml({ customerName, resetUrl }) {
   });
 }
 
-const sendMail = async ({ to, subject, html, logLabel, logUrl }) => {
-  const activeTransporter = getTransporter();
-
-  if (!activeTransporter) {
-    console.log(`[email:stub] ${logLabel} for ${to} — URL: ${logUrl}`);
-    return { sent: false };
-  }
-
-  const sender = process.env.SMTP_USER || process.env.GMAIL_USER;
-  const info = await activeTransporter.sendMail({
-    from: `"TaskTel Enterprise AV Desk" <${sender}>`,
-    to,
-    subject,
-    html
-  });
-
-  return { sent: true, messageId: info.messageId };
+// Interface unchanged for callers: they still pass { to, subject, html, logLabel,
+// logUrl }. deliver() logs a clear error and throws on misconfiguration or API
+// failure, so callers never receive a false "sent" result.
+const sendMail = async ({ to, subject, html, logLabel }) => {
+  return deliver({ to, subject, html, context: logLabel });
 };
 
 export const sendResetApprovalEmail = async ({ adminEmail, customerName, customerEmail, companyName, requestedAt, approveUrl }) =>
