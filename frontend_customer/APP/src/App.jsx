@@ -54,8 +54,11 @@ function App() {
   // =========================================================
 
   const [currentScreen, setCurrentScreen] = useState(() => {
-    if (window.location.pathname === '/reset-password') return 'reset';
-    if (window.location.pathname === '/activate-account') return 'activate';
+    // Suffix match, not an exact compare: in production the app is mounted under
+    // /customer/, so emailed links land on /customer/reset-password etc.
+    const path = window.location.pathname.replace(/\/+$/, '');
+    if (path.endsWith('/reset-password')) return 'reset';
+    if (path.endsWith('/activate-account')) return 'activate';
     // A stored token is not trusted until /auth/me confirms it below; show the
     // loader meanwhile rather than flashing the dashboard.
     if (localStorage.getItem('tasktel_access_token')) return 'restoring';
@@ -401,7 +404,7 @@ function App() {
           <ResetPasswordScreen
             token={activationToken}
             onComplete={() => {
-              window.history.pushState({}, '', '/');
+              window.history.pushState({}, '', import.meta.env.BASE_URL);
               setCurrentScreen('login');
             }}
           />
@@ -412,7 +415,7 @@ function App() {
           <ActivateAccountScreen
             token={activationToken}
             onComplete={() => {
-              window.history.pushState({}, '', '/');
+              window.history.pushState({}, '', import.meta.env.BASE_URL);
               setCurrentScreen('login');
             }}
           />
@@ -716,7 +719,7 @@ class ErrorBoundary extends React.Component {
       localStorage.clear();
       sessionStorage.clear();
     } catch (e) {}
-    window.location.href = '/';
+    window.location.href = import.meta.env.BASE_URL;
   };
 
   render() {

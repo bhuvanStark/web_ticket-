@@ -19,7 +19,13 @@ function getTransporter() {
     host,
     port,
     secure: port === 465,
-    auth: { user, pass }
+    auth: { user, pass },
+    // Railway resolves smtp.gmail.com to IPv6 and fails with ENETUNREACH —
+    // pin the SMTP connection to IPv4 and fail fast instead of hanging.
+    family: 4,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000
   });
 
   return transporter;

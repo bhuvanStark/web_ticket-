@@ -1,15 +1,31 @@
+import unifiedClient from './api/unifiedClient';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
-async function apiRequest(endpoint, options = {}) {
+function buildHeaders(options) {
   const token = localStorage.getItem('tasktel_access_token');
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers
+  };
+}
+
+async function apiRequest(endpoint, options = {}) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  let response = await fetch(url, { ...options, headers: buildHeaders(options) });
+
+  // On a 401 (expired access token) refresh once through the shared client and
+  // retry a single time — same contract as unifiedClient.fetch, cannot loop.
+  if (response.status === 401) {
+    try {
+      await unifiedClient.refreshAccessToken();
+      response = await fetch(url, { ...options, headers: buildHeaders(options) });
+    } catch {
+      // Refresh failed; tokens are cleared. Fall through and surface the error.
     }
-  });
+  }
+
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok || payload.success === false) {

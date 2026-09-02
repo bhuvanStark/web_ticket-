@@ -11,10 +11,13 @@ class AdminAPIClient {
     this.userRole = 'admin';
   }
 
-  // Initialize from localStorage
+  // Initialize from localStorage. The admin/technician portal keeps its tokens
+  // under the `admin_*` keys only — the customer app shares the same origin in
+  // production (/ticket vs /customer) and owns the `tasktel_*` keys, so the two
+  // must not read or write each other's namespace.
   init() {
-    this.accessToken = localStorage.getItem('admin_access_token') || localStorage.getItem('tasktel_access_token');
-    this.refreshToken = localStorage.getItem('admin_refresh_token') || localStorage.getItem('tasktel_refresh_token');
+    this.accessToken = localStorage.getItem('admin_access_token');
+    this.refreshToken = localStorage.getItem('admin_refresh_token');
   }
 
   // Set tokens
@@ -23,11 +26,9 @@ class AdminAPIClient {
     this.refreshToken = refreshToken;
     if (accessToken) {
       localStorage.setItem('admin_access_token', accessToken);
-      localStorage.setItem('tasktel_access_token', accessToken);
     }
     if (refreshToken) {
       localStorage.setItem('admin_refresh_token', refreshToken);
-      localStorage.setItem('tasktel_refresh_token', refreshToken);
     }
   }
 
@@ -37,6 +38,7 @@ class AdminAPIClient {
     this.refreshToken = null;
     localStorage.removeItem('admin_access_token');
     localStorage.removeItem('admin_refresh_token');
+    // Sweep any stale keys written by older builds that dual-wrote this namespace.
     localStorage.removeItem('tasktel_access_token');
     localStorage.removeItem('tasktel_refresh_token');
   }
@@ -67,7 +69,6 @@ class AdminAPIClient {
       if (data.success && data.data?.accessToken) {
         this.accessToken = data.data.accessToken;
         localStorage.setItem('admin_access_token', this.accessToken);
-        localStorage.setItem('tasktel_access_token', this.accessToken);
         return this.accessToken;
       }
 

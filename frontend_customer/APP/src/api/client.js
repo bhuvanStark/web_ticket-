@@ -1,4 +1,7 @@
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// NOTE: this client is currently unused (superseded by ./unifiedClient.js). Kept
+// in sync so it cannot crash the bundle if re-imported — `process` is undefined
+// in a Vite browser build; the API URL comes from import.meta.env.VITE_*.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 class APIClient {
   constructor(baseURL = API_BASE_URL) {

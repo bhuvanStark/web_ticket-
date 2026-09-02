@@ -50,8 +50,10 @@ const MainLayout = () => {
 
   // The password-reset link emailed to an admin lands here. Checked before the
   // login gate, since the admin is by definition signed out at this point.
+  // Suffix match, not an exact compare: in production the app is mounted under
+  // /ticket/, so the emailed link lands on /ticket/reset-password.
   const [resetToken] = useState(() =>
-    window.location.pathname === '/reset-password'
+    window.location.pathname.replace(/\/+$/, '').endsWith('/reset-password')
       ? new URLSearchParams(window.location.search).get('token') || ''
       : null
   );
@@ -61,7 +63,7 @@ const MainLayout = () => {
       <AdminResetPasswordScreen
         token={resetToken}
         onDone={() => {
-          window.history.pushState({}, '', '/');
+          window.history.pushState({}, '', import.meta.env.BASE_URL);
           window.location.reload();
         }}
       />

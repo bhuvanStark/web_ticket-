@@ -85,7 +85,11 @@ function syncTicketsPlugin() {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // Production is served from a sub-path (https://<domain>/ticket/). The dev
+  // server stays at the root so the local workflow is unchanged. Every in-app
+  // redirect uses import.meta.env.BASE_URL, which tracks this value.
+  base: command === 'build' ? '/ticket/' : '/',
   plugins: [
     react(),
     tailwindcss(),
@@ -95,4 +99,4 @@ export default defineConfig({
     port: 5173,
     strictPort: true
   }
-})
+}))

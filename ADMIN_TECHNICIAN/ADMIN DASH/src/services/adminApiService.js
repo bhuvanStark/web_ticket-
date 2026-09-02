@@ -1,11 +1,34 @@
+import unifiedClient from '../api/unifiedClient';
+
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 const authHeaders = (json = false) => ({
   ...(json ? { 'Content-Type': 'application/json' } : {}),
-  ...(localStorage.getItem('tasktel_access_token')
-    ? { Authorization: `Bearer ${localStorage.getItem('tasktel_access_token')}` }
+  ...(localStorage.getItem('admin_access_token')
+    ? { Authorization: `Bearer ${localStorage.getItem('admin_access_token')}` }
     : {})
 });
+
+// Every call in this module is authenticated. On a 401 (expired access token)
+// refresh once through the shared client and retry the request a single time —
+// same contract as unifiedClient.fetch, and it cannot loop.
+async function authFetch(url, options = {}) {
+  let res = await fetch(url, options);
+  if (res.status === 401) {
+    try {
+      const freshToken = await unifiedClient.refreshAccessToken();
+      res = await fetch(url, {
+        ...options,
+        headers: { ...options.headers, Authorization: `Bearer ${freshToken}` }
+      });
+    } catch {
+      // Refresh failed; unifiedClient has already cleared the tokens. Return the
+      // original 401 so the caller surfaces the error and the app falls back to
+      // the login screen on its next session check.
+    }
+  }
+  return res;
+}
 
 async function readApiData(response, operation) {
   const payload = await response.json().catch(() => null);
@@ -125,7 +148,7 @@ export function transformDbTicketToAdmin(row) {
 // 1. Fetch Service Requests
 export async function fetchAdminServiceRequests() {
   try {
-    const res = await fetch(`${API_BASE_URL}/service-requests`, { headers: authHeaders() });
+    const res = await authFetch(`${API_BASE_URL}/service-requests`, { headers: authHeaders() });
     if (!res.ok) throw new Error('Failed to fetch requests');
     const data = await readApiData(res, 'fetch service requests');
     return (data || []).map(transformDbTicketToAdmin);
@@ -138,7 +161,7 @@ export async function fetchAdminServiceRequests() {
 // 2. Fetch Customers
 export async function fetchAdminCustomers() {
   try {
-    const res = await fetch(`${API_BASE_URL}/customers`, { headers: authHeaders() });
+    const res = await authFetch(`${API_BASE_URL}/customers`, { headers: authHeaders() });
     const data = await readApiData(res, 'fetch customers');
     return data || [];
   } catch (error) {
@@ -150,7 +173,7 @@ export async function fetchAdminCustomers() {
 // 3. Fetch Locations
 export async function fetchAdminLocations() {
   try {
-    const res = await fetch(`${API_BASE_URL}/locations`, { headers: authHeaders() });
+    const res = await authFetch(`${API_BASE_URL}/locations`, { headers: authHeaders() });
     const data = await readApiData(res, 'fetch locations');
     return data || [];
   } catch (error) {
@@ -162,7 +185,7 @@ export async function fetchAdminLocations() {
 // 4. Fetch Rooms
 export async function fetchAdminRooms() {
   try {
-    const res = await fetch(`${API_BASE_URL}/rooms`, { headers: authHeaders() });
+    const res = await authFetch(`${API_BASE_URL}/rooms`, { headers: authHeaders() });
     const data = await readApiData(res, 'fetch rooms');
     return data || [];
   } catch (error) {
@@ -174,7 +197,7 @@ export async function fetchAdminRooms() {
 // 5. Fetch Technicians
 export async function fetchAdminTechnicians() {
   try {
-    const res = await fetch(`${API_BASE_URL}/technicians`, { headers: authHeaders() });
+    const res = await authFetch(`${API_BASE_URL}/technicians`, { headers: authHeaders() });
     const data = await readApiData(res, 'fetch technicians');
     return data || [];
   } catch (error) {
@@ -186,7 +209,7 @@ export async function fetchAdminTechnicians() {
 // 6. Assign Technician
 export async function assignTechnicianInApi(ticketDbId, techDbId, mode = 'onsite') {
   try {
-    const res = await fetch(`${API_BASE_URL}/service-requests/${ticketDbId}/assign`, {
+    const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/assign`, {
       method: 'POST',
       headers: authHeaders(true),
       body: JSON.stringify({ technician_id: techDbId, mode })
@@ -203,7 +226,7 @@ export async function assignTechnicianInApi(ticketDbId, techDbId, mode = 'onsite
 export async function updateTicketStatusInApi(ticketDbId, newStatusStr, customSubtitle = '') {
   try {
     const dbStatus = STATUS_TO_DB[newStatusStr] || 'assigned';
-    const res = await fetch(`${API_BASE_URL}/service-requests/${ticketDbId}/status`, {
+    const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/status`, {
       method: 'PATCH',
       headers: authHeaders(true),
       body: JSON.stringify({ status: dbStatus, customSubtitle })
@@ -219,7 +242,7 @@ export async function updateTicketStatusInApi(ticketDbId, newStatusStr, customSu
 // Technician submits the field service report. Creates the report row (tech
 // signed) and moves the ticket to awaiting-customer-signature.
 export async function submitServiceReportInApi(ticketDbId, report) {
-  const res = await fetch(`${API_BASE_URL}/service-requests/${ticketDbId}/report`, {
+  const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/report`, {
     method: 'POST',
     headers: authHeaders(true),
     body: JSON.stringify({
@@ -265,7 +288,7 @@ export async function createServiceRequestInApiAdmin(newTicketData) {
     if (newTicketData.preferredTime) payload.preferred_time = newTicketData.preferredTime;
     if (newTicketData.area) payload.area = newTicketData.area;
 
-    const res = await fetch(`${API_BASE_URL}/service-requests`, {
+    const res = await authFetch(`${API_BASE_URL}/service-requests`, {
       method: 'POST',
       headers: authHeaders(true),
       body: JSON.stringify(payload)
@@ -283,7 +306,7 @@ export async function createServiceRequestInApiAdmin(newTicketData) {
 
 // 10. Delete Service Request
 export async function deleteServiceRequestFromApi(ticketDbId) {
-  const res = await fetch(`${API_BASE_URL}/service-requests/${ticketDbId}`, {
+  const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}`, {
     method: 'DELETE',
     headers: authHeaders()
   });
@@ -307,7 +330,7 @@ export async function createTechnicianInApi(techData) {
       specialization: techData.specialization || null
     };
 
-    const res = await fetch(`${API_BASE_URL}/technicians`, {
+    const res = await authFetch(`${API_BASE_URL}/technicians`, {
       method: 'POST',
       headers: authHeaders(true),
       body: JSON.stringify(payload)
@@ -337,7 +360,7 @@ export function subscribeToAdminServiceRequests(onRealtimeChange) {
   return { unsubscribe: () => {} };
 }
 export async function createAdminCustomer(payload) {
-  const res = await fetch(`${API_BASE_URL}/customers`, {
+  const res = await authFetch(`${API_BASE_URL}/customers`, {
     method: 'POST',
     headers: authHeaders(true),
     body: JSON.stringify(payload)
@@ -346,7 +369,7 @@ export async function createAdminCustomer(payload) {
   return await res.json();
 }
 export async function updateAdminCustomer(id, payload) {
-  const res = await fetch(`${API_BASE_URL}/customers/${id}`, {
+  const res = await authFetch(`${API_BASE_URL}/customers/${id}`, {
     method: 'PATCH',
     headers: authHeaders(true),
     body: JSON.stringify(payload)
@@ -355,7 +378,7 @@ export async function updateAdminCustomer(id, payload) {
   return await res.json();
 }
 export async function deleteAdminCustomer(id) {
-  const res = await fetch(`${API_BASE_URL}/customers/${id}`, { method: 'DELETE', headers: authHeaders() });
+  const res = await authFetch(`${API_BASE_URL}/customers/${id}`, { method: 'DELETE', headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to delete customer');
   return await res.json();
 }

@@ -40,7 +40,7 @@ export const AppProvider = ({ children }) => {
   // call returned 401.
   const hasStoredSession = () =>
     localStorage.getItem('admin_auth') === 'true' &&
-    Boolean(localStorage.getItem('admin_access_token') || localStorage.getItem('tasktel_access_token'));
+    Boolean(localStorage.getItem('admin_access_token'));
 
   const [isLoggedIn, setIsLoggedIn] = useState(hasStoredSession);
   // While true, MainLayout shows a loader instead of the dashboard or the login
@@ -84,7 +84,7 @@ export const AppProvider = ({ children }) => {
   const setActivePage = (page) => {
     _setActivePage(page);
     if (isLoggedIn) {
-      window.history.pushState({ page }, '', `/?page=${page}`);
+      window.history.pushState({ page }, '', `${import.meta.env.BASE_URL}?page=${page}`);
     }
   };
 
@@ -486,7 +486,7 @@ export const AppProvider = ({ children }) => {
     localStorage.setItem('admin_role', 'tech');
     localStorage.setItem('admin_user', JSON.stringify(newUser));
     _setActivePage('my-dashboard');
-    window.history.pushState({ page: 'my-dashboard' }, '', '/?page=my-dashboard');
+    window.history.pushState({ page: 'my-dashboard' }, '', `${import.meta.env.BASE_URL}?page=my-dashboard`);
 
     showToast(`Logged in as technician: ${newUser.name}`, 'success');
   };
@@ -542,7 +542,7 @@ export const AppProvider = ({ children }) => {
       localStorage.setItem('admin_role', 'admin');
       localStorage.setItem('admin_user', JSON.stringify(newUser));
       _setActivePage('dashboard');
-      window.history.pushState({ page: 'dashboard' }, '', '/?page=dashboard');
+      window.history.pushState({ page: 'dashboard' }, '', `${import.meta.env.BASE_URL}?page=dashboard`);
 
       showToast(`Switched view to ${newUser.roleLabel} Mode`, 'info');
     }
@@ -627,7 +627,7 @@ export const AppProvider = ({ children }) => {
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_user');
     localStorage.removeItem('base_role');
-    window.history.pushState(null, '', '/');
+    window.history.pushState(null, '', import.meta.env.BASE_URL);
     showToast('Logged out successfully', 'info');
   };
 
