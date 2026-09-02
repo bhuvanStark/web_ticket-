@@ -193,6 +193,9 @@ export const validateServiceRequest = (req, res, next) => {
     customer_id,
     location_id,
     room_id,
+    room_name,
+    customer_org,
+    facility_location,
     issue_title,
     issue_description,
     issue_category,
@@ -203,10 +206,15 @@ export const validateServiceRequest = (req, res, next) => {
   const errors = [];
   const isEpabx = String(support_category).toLowerCase() === 'epabx';
 
-  if (!customer_id) errors.push('customer_id is required');
-  if (!location_id) errors.push('location_id is required');
-  // EPABX tickets have no room; AV tickets require one.
-  if (!isEpabx && !room_id) errors.push('room_id is required');
+  const hasText = (v) => typeof v === 'string' && v.trim().length > 0;
+
+  // The customer portal ties a ticket to a customer/location profile (sends
+  // *_id); the admin "Raise Ticket" form stores them as free text (sends
+  // *_org / facility_location, no lookup). Accept either — but not neither.
+  if (!customer_id && !hasText(customer_org)) errors.push('customer_org is required');
+  if (!location_id && !hasText(facility_location)) errors.push('facility_location is required');
+  // EPABX tickets have no room; AV tickets need one, by FK or by label.
+  if (!isEpabx && !room_id && !hasText(room_name)) errors.push('room is required for AV tickets');
   if (!issue_title || issue_title.trim().length === 0) errors.push('issue_title is required');
   if (!issue_description || issue_description.trim().length === 0) errors.push('issue_description is required');
   if (!issue_category) errors.push('issue_category is required');
@@ -214,6 +222,9 @@ export const validateServiceRequest = (req, res, next) => {
 
   if (issue_title && issue_title.trim().length > 255) errors.push('issue_title must not exceed 255 characters');
   if (issue_description && issue_description.trim().length > 2000) errors.push('issue_description must not exceed 2000 characters');
+  if (hasText(customer_org) && customer_org.trim().length > 255) errors.push('customer_org must not exceed 255 characters');
+  if (hasText(facility_location) && facility_location.trim().length > 255) errors.push('facility_location must not exceed 255 characters');
+  if (hasText(room_name) && room_name.trim().length > 255) errors.push('room_name must not exceed 255 characters');
 
   if (errors.length > 0) {
     return res.status(400).json({

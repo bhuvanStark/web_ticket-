@@ -23,19 +23,26 @@ const EPABX_ISSUE_CATEGORIES = [
   'Other'
 ];
 
+// Fixed AV room choices for this form — not tied to any location or customer.
+const AV_ROOMS = [
+  'Huddle Room',
+  'Board Room',
+  'Training Room',
+  'Town Hall'
+];
+
 export const CreateTicketModal = () => {
   const {
     isCreateTicketOpen,
     setIsCreateTicketOpen,
-    customers,
-    locations,
-    rooms,
     createServiceRequest
   } = useApp();
 
-  const [customerId, setCustomerId] = useState(customers[0]?.id || '');
-  const [locationId, setLocationId] = useState(locations[0]?.id || '');
-  const [roomId, setRoomId] = useState(rooms[0]?.id || '');
+  // Customer Organisation and Facility Location are plain text stored on this
+  // ticket — no lookup, no matching, no profile creation.
+  const [customerOrg, setCustomerOrg] = useState('');
+  const [facilityLocation, setFacilityLocation] = useState('');
+  const [roomName, setRoomName] = useState('');
 
   const [title, setTitle] = useState('');
   // 'AV' | 'EPABX' — drives the issue-category list and whether a room is asked.
@@ -50,63 +57,24 @@ export const CreateTicketModal = () => {
   const isEpabx = serviceType === 'EPABX';
   const issueCategories = isEpabx ? EPABX_ISSUE_CATEGORIES : AV_ISSUE_CATEGORIES;
 
-  // /locations and /rooms are returned untransformed, so their rows carry
-  // snake_case customer_id / location_id. Read both spellings, or the filters
-  // silently match nothing and the dropdowns render empty.
-  const ownerId = (row) => row.customerId ?? row.customer_id;
-  const parentLocationId = (row) => row.locationId ?? row.location_id;
-
-  // These useState initialisers run on mount, which happens before the API
-  // data lands, so customerId/locationId can still hold '' from the empty
-  // first render. Fall back to the first loaded record rather than filtering
-  // against an empty string and matching nothing.
-  const currentCustomer = customers.find(c => c.id === customerId) || customers[0];
-  const effectiveCustomerId = currentCustomer?.id ?? customerId;
-  // Locations are shared across customers (their customer_id is usually null),
-  // so a customer-scoped filter yields nothing. Show the customer's own
-  // locations if any are tagged, otherwise every location.
-  const scopedLocations = locations.filter(l =>
-    ownerId(l) === effectiveCustomerId ||
-    (l.customerName || '').toLowerCase() === (currentCustomer?.name || '').toLowerCase()
-  );
-  const customerLocations = scopedLocations.length ? scopedLocations : locations;
-  // Bind to the actually-selected id first so the dropdown's onChange takes effect.
-  const currentLocation =
-    customerLocations.find(l => l.id === locationId) || customerLocations[0] || locations[0];
-  const locationRooms = rooms.filter(r => parentLocationId(r) === currentLocation?.id);
-  const currentRoom = locationRooms.find(r => r.id === roomId) || locationRooms[0] || null;
-  const handleCustomerChange = (newCustId) => {
-    setCustomerId(newCustId);
-    const targetCust = customers.find(c => c.id === newCustId);
-    const matchingLocs = locations.filter(l =>
-      ownerId(l) === newCustId ||
-      (l.customerName || '').toLowerCase() === (targetCust?.name || '').toLowerCase()
-    );
-    const firstLoc = (matchingLocs.length ? matchingLocs : locations)[0];
-    if (firstLoc) {
-      setLocationId(firstLoc.id);
-      const firstRm = rooms.find(r => parentLocationId(r) === firstLoc.id);
-      if (firstRm) setRoomId(firstRm.id);
-    }
-  };
-
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!title) return;
-    if (!isEpabx && !currentRoom) {
-      alert('This location has no rooms configured. Add a room first, or raise the ticket as EPABX.');
+    if (!title.trim()) return;
+    if (!customerOrg.trim() || !facilityLocation.trim()) {
+      alert('Enter the customer organisation and facility location.');
+      return;
+    }
+    if (!isEpabx && !roomName) {
+      alert('Select a room for this AV ticket.');
       return;
     }
 
     createServiceRequest({
       title,
-      customerName: currentCustomer.name,
-      customerId: currentCustomer.id,
-      locationName: currentLocation?.name || '',
-      locationId: currentLocation?.id,
+      customerOrg: customerOrg.trim(),
+      facilityLocation: facilityLocation.trim(),
       // EPABX tickets carry no room; AV tickets require the selected one.
-      roomName: isEpabx ? null : (currentRoom?.name || null),
-      roomId: isEpabx ? null : (currentRoom?.id || null),
+      roomName: isEpabx ? null : roomName,
       serviceType,
       issueType,
       area: area.trim() || null,
@@ -151,44 +119,37 @@ export const CreateTicketModal = () => {
             <div className={`grid grid-cols-1 gap-3 ${isEpabx ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
               <div>
                 <label className="block text-xs font-bold text-[#172033] mb-1">Customer Organization</label>
-                <select
-                  value={effectiveCustomerId || ''}
-                  onChange={(e) => handleCustomerChange(e.target.value)}
+                <input
+                  type="text"
+                  value={customerOrg}
+                  onChange={(e) => setCustomerOrg(e.target.value)}
+                  placeholder="e.g. ABC Private Limited"
                   className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-bold text-[#004898] outline-none"
-                >
-                  {customers.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-[#172033] mb-1">Facility Location</label>
-                <select
-                  value={currentLocation?.id || ''}
-                  onChange={(e) => {
-                    setLocationId(e.target.value);
-                    const firstRm = rooms.find(r => parentLocationId(r) === e.target.value);
-                    if (firstRm) setRoomId(firstRm.id);
-                  }}
+                <input
+                  type="text"
+                  value={facilityLocation}
+                  onChange={(e) => setFacilityLocation(e.target.value)}
+                  placeholder="e.g. Chennai Office - 2nd Floor"
                   className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none"
-                >
-                  {customerLocations.map(l => (
-                    <option key={l.id} value={l.id}>{l.name}</option>
-                  ))}
-                </select>
+                />
               </div>
 
               {!isEpabx && (
                 <div>
                   <label className="block text-xs font-bold text-[#172033] mb-1">Room</label>
                   <select
-                    value={currentRoom?.id || ''}
-                    onChange={(e) => setRoomId(e.target.value)}
+                    value={roomName}
+                    onChange={(e) => setRoomName(e.target.value)}
                     className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none"
                   >
-                    {locationRooms.map(r => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
+                    <option value="" disabled>Select a room</option>
+                    {AV_ROOMS.map(r => (
+                      <option key={r} value={r}>{r}</option>
                     ))}
                   </select>
                 </div>

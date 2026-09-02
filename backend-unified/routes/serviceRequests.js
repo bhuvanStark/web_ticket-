@@ -83,6 +83,9 @@ router.post('/', validateServiceRequest, async (req, res) => {
       customer_id,
       location_id,
       room_id,
+      customer_org,
+      facility_location,
+      room_name,
       issue_category,
       issue_title,
       issue_description,
@@ -101,11 +104,18 @@ router.post('/', validateServiceRequest, async (req, res) => {
     // EPABX tickets never carry a room, regardless of what a stale client sends.
     const resolvedRoomId =
       normalisedSupportCategory === 'epabx' ? null : (room_id || null);
+    const resolvedRoomName =
+      normalisedSupportCategory === 'epabx' ? null : (room_name || null);
 
     const data = await serviceRequestService.createServiceRequest({
-      customer_id,
-      location_id,
+      customer_id: customer_id || null,
+      location_id: location_id || null,
       room_id: resolvedRoomId,
+      // Free-text ticket fields (admin "Raise Ticket"): stored as typed, never
+      // looked up or resolved to a profile.
+      customer_org: customer_org || null,
+      facility_location: facility_location || null,
+      room_name: resolvedRoomName,
       issue_category,
       issue_title,
       issue_description,
@@ -119,16 +129,18 @@ router.post('/', validateServiceRequest, async (req, res) => {
       priority: 'high'
     });
 
-    // Send notification
-    try {
-      await notificationService.sendTemplateNotification(
-        customer_id,
-        'request_received',
-        { ticket_number: data.ticket_number || data.id },
-        data.id
-      );
-    } catch (notificationError) {
-      console.warn('Service request created, but notification failed:', notificationError.message);
+    // Send notification only for tickets tied to a real customer account.
+    if (customer_id) {
+      try {
+        await notificationService.sendTemplateNotification(
+          customer_id,
+          'request_received',
+          { ticket_number: data.ticket_number || data.id },
+          data.id
+        );
+      } catch (notificationError) {
+        console.warn('Service request created, but notification failed:', notificationError.message);
+      }
     }
 
     res.status(201).json({ success: true, data, message: 'Service request created successfully' });

@@ -148,13 +148,13 @@ export const Sidebar = () => {
           <div className="flex items-center gap-3">
             {isSidebarCollapsed ? (
               <div className="w-10 h-10 bg-[#004898] rounded-xl flex items-center justify-center">
-                <img src="/tasktel-logo.png" alt="TaskTel AV Logo" className="h-6 object-contain invert brightness-0" />
+                <img src={`${import.meta.env.BASE_URL}tasktel-logo.png`} alt="TaskTel AV Logo" className="h-6 object-contain invert brightness-0" />
               </div>
             ) : (
-              <img 
-                src="/tasktel-logo.png" 
-                alt="TaskTel AV Logo" 
-                className="h-10 object-contain transition-all" 
+              <img
+                src={`${import.meta.env.BASE_URL}tasktel-logo.png`}
+                alt="TaskTel AV Logo"
+                className="h-10 object-contain transition-all"
               />
             )}
           </div>

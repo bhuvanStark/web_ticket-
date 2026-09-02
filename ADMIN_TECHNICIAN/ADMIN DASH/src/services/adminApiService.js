@@ -83,7 +83,7 @@ export function transformDbTicketToAdmin(row) {
     {
       time: timeStr,
       title: 'Customer submitted request.',
-      subtitle: `Created via TaskTel for ${row.customers?.name || 'Customer'}`
+      subtitle: `Created via TaskTel for ${row.customer_org || row.customers?.name || 'Customer'}`
     }
   );
 
@@ -94,12 +94,15 @@ export function transformDbTicketToAdmin(row) {
     dbId: row.id,
     ticketNumber: requestReference,
     title: row.issue_title || 'Untitled service request',
-    customer: row.customers?.name || row.customers?.company_name || 'Unknown customer',
-    customerId: row.customer_id,
-    location: row.locations?.name || 'Unknown location',
-    locationId: row.location_id,
+    // Admin free-text tickets carry customer_org / facility_location / room_name
+    // directly on the row; older tickets resolve via the customer/location/room
+    // relations. Prefer the free text, fall back to the relation.
+    customer: row.customer_org || row.customers?.name || row.customers?.company_name || 'Unknown customer',
+    customerId: row.customer_id || null,
+    location: row.facility_location || row.locations?.name || 'Unknown location',
+    locationId: row.location_id || null,
     // EPABX tickets have no room.
-    room: row.rooms?.name || (row.support_category === 'epabx' ? '—' : 'Unknown room'),
+    room: row.room_name || row.rooms?.name || (row.support_category === 'epabx' ? '—' : 'Unknown room'),
     roomId: row.room_id || null,
     area: row.area || '',
     equipment: row.equipment?.name || null,
@@ -260,15 +263,15 @@ export async function submitServiceReportInApi(ticketDbId, report) {
 // 8. Create Service Request
 export async function createServiceRequestInApiAdmin(newTicketData) {
   try {
-    // The modal works in camelCase; POST /service-requests destructures
-    // snake_case and customer_id/location_id/room_id/issue_category/issue_title
-    // are all NOT NULL. Map here, or every field arrives undefined and the
-    // insert fails.
+    // Admin "Raise Ticket" stores Customer Organisation / Facility Location as
+    // plain text on the ticket (never a customer/location profile lookup), and
+    // the AV room is one of four fixed labels. Send customer_org /
+    // facility_location / room_name — not the *_id columns.
     const isEpabx = newTicketData.serviceType === 'EPABX';
 
     const payload = {
-      customer_id: newTicketData.customerId,
-      location_id: newTicketData.locationId,
+      customer_org: (newTicketData.customerOrg || '').trim() || null,
+      facility_location: (newTicketData.facilityLocation || '').trim() || null,
       issue_category: newTicketData.issueType,
       issue_title: newTicketData.title || newTicketData.issueType || 'Service request',
       // The customer ticket has no separate notes field — mirror that here.
@@ -280,9 +283,9 @@ export async function createServiceRequestInApiAdmin(newTicketData) {
       support_category: isEpabx ? 'epabx' : 'av'
     };
 
-    // Room is AV-only; EPABX tickets are stored with room_id NULL.
-    if (!isEpabx && newTicketData.roomId) {
-      payload.room_id = newTicketData.roomId;
+    // Room is AV-only; EPABX tickets are stored with no room.
+    if (!isEpabx && newTicketData.roomName) {
+      payload.room_name = newTicketData.roomName;
     }
     if (newTicketData.preferredDate) payload.preferred_date = newTicketData.preferredDate;
     if (newTicketData.preferredTime) payload.preferred_time = newTicketData.preferredTime;
