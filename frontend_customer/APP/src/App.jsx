@@ -16,8 +16,6 @@ import { NotificationsScreen } from './screens/NotificationsScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 
 import { QRScannerModal } from './components/QRScannerModal';
-import { ServiceCompletionModal } from './components/ServiceCompletionModal';
-import { FeedbackModal } from './components/FeedbackModal';
 import { SkeletonLoader } from './components/SkeletonLoader';
 import { NotificationToast } from './components/NotificationToast';
 import { sendWebPushNotification } from './utils/notifications';
@@ -97,8 +95,6 @@ function App() {
   // =========================================================
 
   const [showQrModal, setShowQrModal] = useState(false);
-  const [showCompletionModal, setShowCompletionModal] = useState(false);
-  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [activeToast, setActiveToast] = useState(null);
 
   useEffect(() => {
@@ -316,40 +312,14 @@ function App() {
     // Fire Web Push & In-App Toast Alert
     sendWebPushNotification(title, message);
     setActiveToast({ title, message, ticketId: activeTicket.id });
-
-    if (isNowResolved) {
-      setShowCompletionModal(true);
-    }
   };
 
 
+  // Merge a locally-updated ticket back into state. Customer sign-off / ticket
+  // completion is handled entirely on the technician's device now, so this is
+  // just a state merge.
   const handleUpdateTicket = async (updatedTicket) => {
-    let finalTicket = updatedTicket;
-
-    // The customer sign-off: they typed their name and drew a signature. We
-    // persist only the fact that they signed (+ their name), never the image.
-    if (updatedTicket.customerSignedNow && updatedTicket.dbId && updatedTicket.dbStatus !== 'resolved') {
-      const response = await unifiedClient.completeServiceRequest(updatedTicket.dbId, {
-        customerSignerName: updatedTicket.customerSignerName || user?.name || null,
-        rating: updatedTicket.rating ?? null,
-        feedbackNotes: updatedTicket.feedbackNotes || null
-      });
-      const saved = response.data;
-      finalTicket = {
-        ...updatedTicket,
-        status: 'Completed',
-        dbStatus: saved.status,
-        currentStepIndex: 1,
-        isCompleted: true,
-        awaitingCustomerSignature: false,
-        serviceReport: updatedTicket.serviceReport
-          ? { ...updatedTicket.serviceReport, customerSigned: true, customerSignerName: updatedTicket.customerSignerName }
-          : updatedTicket.serviceReport,
-        rating: saved.rating,
-        feedbackNotes: saved.feedback_notes,
-        actualCompletionDate: saved.actual_completion_date
-      };
-    }
+    const finalTicket = updatedTicket;
 
     setTickets(prev => {
       const isSame = (a, b) => (a || '').toString().replace(/^#/, '').toLowerCase().trim() === (b || '').toString().replace(/^#/, '').toLowerCase().trim();
@@ -664,34 +634,6 @@ function App() {
           <QRScannerModal
             onClose={() => setShowQrModal(false)}
             onScanRoomSuccess={handleQrScanSuccess}
-          />
-        )}
-
-        {showCompletionModal && (
-          <ServiceCompletionModal
-            ticket={selectedTicket || activeTicket}
-            onConfirmResolved={() => {
-              setShowCompletionModal(false);
-              setShowFeedbackModal(true);
-            }}
-            onRejectResolution={() => {
-              setShowCompletionModal(false);
-              alert(
-                'Re-opening ticket. Support desk notified.'
-              );
-            }}
-          />
-        )}
-
-        {showFeedbackModal && (
-          <FeedbackModal
-            ticket={selectedTicket || activeTicket}
-            onSubmitFeedback={() => {
-              setShowFeedbackModal(false);
-              setCurrentScreen('home');
-              setActiveTab('home');
-            }}
-            onClose={() => setShowFeedbackModal(false)}
           />
         )}
       </div>

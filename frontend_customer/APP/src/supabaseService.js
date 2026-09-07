@@ -65,19 +65,26 @@ export function transformDbTicketToFrontend(row) {
     techSigned: !!reportRow.tech_signed,
     techSignerName: reportRow.tech_signer_name || '',
     customerSigned: !!reportRow.customer_signed,
-    customerSignerName: reportRow.customer_signer_name || ''
+    customerSignerName: reportRow.customer_signer_name || '',
+    customerSignerDetails: reportRow.customer_signer_details || ''
   } : null;
 
-  // The customer only ever sees two states: submitted, or completed. A report
-  // that the technician has signed but the customer has not is "awaiting
-  // signature" — still shown as submitted, with a sign prompt.
-  const isCompleted = rawStatus === 'resolved' || rawStatus === 'closed' || serviceReport?.customerSigned;
-  const awaitingCustomerSignature =
-    !isCompleted && (rawStatus === 'pending_customer_signoff' || (serviceReport?.techSigned && !serviceReport?.customerSigned));
+  // The customer sees three states: Received -> In Progress -> Completed.
+  // Status is driven by the ticket, not the report — a 'pending' ticket has a
+  // saved (customer-signed) report but the job is not finished, so it stays
+  // "In Progress". 'reassigned' is also still "In Progress" from the customer's
+  // side. Sign-off is captured by the technician on site; the customer never
+  // signs here. The report is viewable as soon as the technician submits it.
+  const receivedStatuses = ['unassigned', 'request_received', 'under_review'];
+  const completedStatuses = ['completed', 'resolved', 'closed'];
+  const isCompleted = completedStatuses.includes(rawStatus);
+  // Customer sees the report only once the job is Completed — not while Pending.
+  const reportReady = isCompleted;
+  const awaitingCustomerSignature = false;
 
   const mappedStatus = isCompleted ? 'Completed'
-    : awaitingCustomerSignature ? 'Awaiting Your Signature'
-    : 'Request Submitted';
+    : receivedStatuses.includes(rawStatus) ? 'Received'
+    : 'In Progress';
 
   return {
     id: row.ticket_number || row.id,
@@ -108,10 +115,11 @@ export function transformDbTicketToFrontend(row) {
     createdAt: row.created_at ? new Date(row.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Just Now',
     status: mappedStatus,
     dbStatus: row.status,
-    // Two-state timeline for the customer: 0 = submitted, 1 = completed.
-    currentStepIndex: isCompleted ? 1 : 0,
+    // Three-state timeline: 0 = Received, 1 = In Progress, 2 = Completed.
+    currentStepIndex: isCompleted ? 2 : (mappedStatus === 'Received' ? 0 : 1),
     awaitingCustomerSignature,
     isCompleted,
+    reportReady,
     serviceReport,
     priority: row.priority ? `${row.priority.charAt(0).toUpperCase() + row.priority.slice(1)} Priority` : 'High Priority',
     // The customer is deliberately not shown any technician identity.

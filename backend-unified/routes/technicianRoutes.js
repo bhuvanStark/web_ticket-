@@ -184,7 +184,7 @@ router.patch('/assigned-requests/:id/start', requireTechnician, validateUUID, as
     const { data: updated, error } = await supabase
       .from('service_requests')
       .update({
-        status: 'technician_on_the_way',
+        status: 'active',
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
@@ -242,7 +242,7 @@ router.patch('/assigned-requests/:id/begin', requireTechnician, validateUUID, as
     const { data: updated, error } = await supabase
       .from('service_requests')
       .update({
-        status: 'service_in_progress',
+        status: 'active',
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
@@ -300,7 +300,7 @@ router.patch('/assigned-requests/:id/complete', requireTechnician, validateUUID,
     const { data: updated, error } = await supabase
       .from('service_requests')
       .update({
-        status: 'pending_customer_signoff',
+        status: 'completed',
         feedback_notes: work_done || notes,
         updated_at: new Date().toISOString()
       })

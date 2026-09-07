@@ -21,6 +21,7 @@ export const TicketDetailsModal = () => {
     isAssignModalOpen,
     setIsAssignModalOpen,
     updateTicketStatus,
+    reassignPending,
     role,
     activePage,
     deleteTicket,
@@ -120,88 +121,77 @@ export const TicketDetailsModal = () => {
                 </div>
               </div>
 
-              {/* Service Completion Report (Only if Resolved/Closed) */}
-              {(t.status === 'Resolved' || t.status === 'Closed') && (
+              {/* Field Service Report — shown whenever a report exists
+                  (Completed, Pending or Reassigned). Real data only. */}
+              {t.serviceReport && (() => {
+                const r = t.serviceReport;
+                const signDate = (d) => d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                return (
                 <div className="bg-white rounded-2xl border border-[#E4E7EC] shadow-sm overflow-hidden">
-                  <div className="px-5 py-4 border-b border-[#E4E7EC] bg-gradient-to-r from-[#F0FDF4] to-white flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-[#059669]" />
-                    <h3 className="font-extrabold text-[#172033]">Service Completion Report</h3>
+                  <div className="px-5 py-4 border-b border-[#E4E7EC] bg-gradient-to-r from-[#F0FDF4] to-white flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-[#059669]" />
+                      <h3 className="font-extrabold text-[#172033]">
+                        Field Service Report
+                        {t.status === 'Pending' && <span className="ml-2 text-[10px] font-bold bg-[#FEF0C7] text-[#B54708] px-2 py-0.5 rounded-full border border-[#FDE68A]">PENDING</span>}
+                        {t.status === 'Reassigned' && <span className="ml-2 text-[10px] font-bold bg-[#F2F4F7] text-[#475467] px-2 py-0.5 rounded-full border border-[#E4E7EC]">REASSIGNED</span>}
+                      </h3>
+                    </div>
+                    <button
+                      onClick={() => generateServiceReportPDF(t)}
+                      className="btn btn-sm bg-white hover:bg-[#F8FAFC] text-[#004898] border border-[#E4E7EC] font-bold flex items-center gap-1.5"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download PDF</span>
+                    </button>
                   </div>
-                  
+
                   <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">Diagnosis</span>
-                      <p className="text-sm font-semibold text-[#172033] leading-relaxed">
-                        {t.serviceReport?.diagnosis || t.diagnosis || "Logitech Table Hub USB receiver cable handshake reset error."}
-                      </p>
+                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">System</span>
+                      <p className="text-sm font-semibold text-[#172033] leading-relaxed">{r.system || '—'}</p>
                     </div>
                     <div>
-                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">Work Performed</span>
-                      <p className="text-sm font-semibold text-[#172033] leading-relaxed">
-                        {t.serviceReport?.workPerformed || t.resolution || "Reseated high-speed USB-C host interface cable, updated Logitech Rally hub firmware to v1.2.40, and verified DisplayLink video feed."}
-                      </p>
+                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">Nature of Complaint</span>
+                      <p className="text-sm font-semibold text-[#172033] leading-relaxed">{r.natureOfComplaint || '—'}</p>
                     </div>
-                    
                     <div className="md:col-span-2">
-                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">Parts Installed</span>
-                      <div className="flex flex-wrap gap-2">
-                        {t.serviceReport?.partsUsed?.length > 0 ? (
-                          t.serviceReport.partsUsed.map((p, i) => (
-                            <span key={i} className="px-3 py-1.5 bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg font-bold text-xs text-[#172033]">
-                              {p.name} × {p.qty || 1}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="px-3 py-1.5 bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg font-bold text-xs text-[#172033]">
-                            HDMI Extender (4K 60Hz) × 1
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">Work Done</span>
+                      <p className="text-sm font-semibold text-[#172033] leading-relaxed whitespace-pre-line">{r.workDone || '—'}</p>
+                    </div>
+                    <div className="md:col-span-2">
+                      <span className="text-[10px] font-black text-[#667085] uppercase tracking-wider mb-2 block">Part / Material</span>
+                      <p className="text-sm font-semibold text-[#172033] leading-relaxed">{r.partsMaterial || '—'}</p>
                     </div>
                   </div>
 
-                  {/* Signatures */}
+                  {/* Sign-off */}
                   <div className="px-5 py-5 border-t border-[#E4E7EC] bg-[#F8FAFC] grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Tech Signature */}
                     <div className="bg-white p-4 rounded-xl border border-[#E4E7EC]">
-                      <div className="flex items-center justify-between mb-4">
-                        <h4 className="text-[10px] font-black uppercase tracking-wider text-[#667085]">Engineer Sign-Off</h4>
-                        <span className="text-[9px] font-bold bg-[#ECFDF5] text-[#059669] px-2 py-0.5 rounded-full border border-[#A7F3D0]">
-                          CERTIFIED
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-[10px] font-black uppercase tracking-wider text-[#667085]">Technician Sign-Off</h4>
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${r.techSigned ? 'bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]' : 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]'}`}>
+                          {r.techSigned ? 'SIGNED' : 'NOT SIGNED'}
                         </span>
                       </div>
-                      <div className="flex items-end justify-between">
-                        <div>
-                          <div className="text-xs font-black text-[#172033]">{t.technicianSignerName || t.serviceReport?.technicianSignerName || t.assignedTo || 'Ravi Kumar'}</div>
-                          <div className="text-[10px] text-[#004898] font-bold mt-0.5">{t.technicianSignerRole || t.serviceReport?.technicianSignerRole || 'Field Engineer'}</div>
-                        </div>
-                        <span className="font-serif italic text-sm font-bold text-[#004898]">
-                          ✍️ {t.assignedTo?.split(' ')[0] || 'Ravi'}
-                        </span>
-                      </div>
+                      <div className="text-xs font-black text-[#172033]">{r.techSignerName || '—'}</div>
+                      {r.techSignedAt && <div className="text-[10px] text-[#667085] font-bold mt-0.5">{signDate(r.techSignedAt)}</div>}
                     </div>
 
-                    {/* Customer Signature */}
                     <div className="bg-white p-4 rounded-xl border border-[#E4E7EC]">
-                      <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center justify-between mb-3">
                         <h4 className="text-[10px] font-black uppercase tracking-wider text-[#667085]">Customer Sign-Off</h4>
-                        <span className="text-[9px] font-bold bg-[#EFF5FC] text-[#004898] px-2 py-0.5 rounded-full border border-[#B3D1F2]">
-                          ACCEPTED
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${r.customerSigned ? 'bg-[#EFF5FC] text-[#004898] border-[#B3D1F2]' : 'bg-[#FEF0C7] text-[#B54708] border-[#FDE68A]'}`}>
+                          {r.customerSigned ? 'SIGNED ON SITE' : 'NOT PRESENT'}
                         </span>
                       </div>
-                      <div className="flex items-end justify-between">
-                        <div>
-                          <div className="text-xs font-black text-[#172033]">{t.customerSignerName || 'Alex Rivera'}</div>
-                          <div className="text-[10px] text-[#667085] font-bold mt-0.5">Facility Manager</div>
-                        </div>
-                        <span className="font-serif italic text-sm font-bold text-[#172033]">
-                          ✍️ {t.customerSignerName?.split(' ')[0] || 'Alex'}
-                        </span>
-                      </div>
+                      <div className="text-xs font-black text-[#172033]">{r.customerSignerDetails || r.customerSignerName || '—'}</div>
+                      {r.customerSignedAt && <div className="text-[10px] text-[#667085] font-bold mt-0.5">{signDate(r.customerSignedAt)}</div>}
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Right Column: Status & Log */}
@@ -266,14 +256,29 @@ export const TicketDetailsModal = () => {
                 </div>
               </div>
 
-              {/* PDF Button if Resolved */}
-              {(t.status === 'Resolved' || t.status === 'Closed') && (
+              {/* PDF Button — whenever a report exists */}
+              {t.serviceReport && (
                 <button
                   onClick={() => generateServiceReportPDF(t)}
                   className="w-full btn bg-white hover:bg-[#F8FAFC] border-2 border-[#004898] text-[#004898] font-black text-xs py-3 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all"
                 >
                   <FileText className="w-4 h-4" />
                   <span>Download Service Report PDF</span>
+                </button>
+              )}
+
+              {/* Reassign a Pending ticket — changes ONLY this ticket: Pending -> Reassigned */}
+              {role === 'admin' && t.status === 'Pending' && (
+                <button
+                  onClick={() => {
+                    if (window.confirm(`Mark ${t.id} as Reassigned? The technician's report stays on record. No new ticket is created — raise one manually if the work must continue.`)) {
+                      reassignPending(t.id);
+                    }
+                  }}
+                  className="w-full btn bg-[#B54708] hover:bg-[#93370D] text-white font-black text-xs py-3 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all"
+                >
+                  <UserX className="w-4 h-4" />
+                  <span>Reassign (Pending → Reassigned)</span>
                 </button>
               )}
 

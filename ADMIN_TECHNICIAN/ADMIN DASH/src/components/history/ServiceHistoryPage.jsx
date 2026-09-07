@@ -16,10 +16,11 @@ export const ServiceHistoryPage = () => {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Date view: default to today. Empty string = all dates.
-  const [selectedDate, setSelectedDate] = useState(localDateKey(new Date()));
+  // Empty string = all dates (default — do not scope to today).
+  const [selectedDate, setSelectedDate] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
   const [techFilter, setTechFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -33,13 +34,14 @@ export const ServiceHistoryPage = () => {
 
   if (simulatedLoading) return <TableSkeleton rows={5} />;
 
-  const CLOSED = ['Resolved', 'Closed', 'Cancelled', 'Customer Signed / Completed', 'Completed'];
+  // History = every ticket that has reached a terminal / on-hold state.
+  const HISTORY_STATUSES = ['Completed', 'Pending', 'Reassigned', 'Cancelled', 'Resolved', 'Closed'];
   const loggedTechId = (currentUser?.id || '').toLowerCase().trim();
 
-  // Every closed ticket the current user is allowed to see (admins: all;
-  // technicians: only their own).
+  // Tickets the current user is allowed to see (admins: all; technicians: only
+  // the ones assigned to them — so a tech's Reassigned jobs stay in their history).
   const allHistory = tickets.filter(t => {
-    if (!CLOSED.includes(t.status)) return false;
+    if (!HISTORY_STATUSES.includes(t.status)) return false;
     if (role !== 'tech') return true;
     return loggedTechId && (t.assignedToId || '').toLowerCase().trim() === loggedTechId;
   });
@@ -50,13 +52,11 @@ export const ServiceHistoryPage = () => {
   const companies = [...new Set(allHistory.map(t => t.customer).filter(Boolean))].sort();
   const techs = [...new Set(allHistory.map(t => t.assignedTo).filter(Boolean))].sort();
 
-  // A company or technician filter shows ALL matching tickets to date (ignores
-  // the date restriction). Otherwise the list is scoped to the selected date
-  // (or all dates when the date field is cleared).
-  const anyEntityFilter = !!companyFilter || !!techFilter;
+  const statusScoped = statusFilter === 'ALL'
+    ? allHistory
+    : allHistory.filter(t => t.status === statusFilter);
 
-  const dateScoped = allHistory.filter(t => {
-    if (anyEntityFilter) return true;
+  const dateScoped = statusScoped.filter(t => {
     if (!selectedDate) return true;
     return completedKey(t) === selectedDate;
   });
@@ -69,9 +69,13 @@ export const ServiceHistoryPage = () => {
     return (
       (t.ticketNumber || '').toLowerCase().includes(q) ||
       (t.customer || '').toLowerCase().includes(q) ||
+      (t.location || '').toLowerCase().includes(q) ||
+      (t.area || '').toLowerCase().includes(q) ||
       (t.room || '').toLowerCase().includes(q) ||
       (t.title || '').toLowerCase().includes(q) ||
-      (t.assignedTo || '').toLowerCase().includes(q)
+      (t.issueType || '').toLowerCase().includes(q) ||
+      (t.assignedTo || '').toLowerCase().includes(q) ||
+      (t.serviceReport?.workDone || '').toLowerCase().includes(q)
     );
   });
 
@@ -92,7 +96,7 @@ export const ServiceHistoryPage = () => {
         <div className="flex items-center gap-4">
           <div className="bg-[#EFF8FF] border border-[#B3D1F2] rounded-xl px-4 py-2.5 flex flex-col justify-center">
             <span className="text-[10px] font-bold text-[#175CD3] uppercase tracking-wider">
-              {anyEntityFilter ? 'Matching (all time)' : selectedDate ? 'On this date' : 'All archived'}
+              {selectedDate ? 'On this date' : 'All archived'}
             </span>
             <span className="text-lg font-black text-[#004898] leading-none mt-0.5">{historyTickets.length}</span>
           </div>
@@ -168,6 +172,18 @@ export const ServiceHistoryPage = () => {
           />
         </div>
 
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898] shrink-0"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="Completed">Completed</option>
+          <option value="Pending">Pending</option>
+          <option value="Reassigned">Reassigned</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+
         <div className="flex items-center gap-2 shrink-0">
           <div className="relative">
             <CalendarIcon className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -175,11 +191,10 @@ export const ServiceHistoryPage = () => {
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              disabled={anyEntityFilter}
-              className="pl-9 pr-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898] disabled:opacity-50"
+              className="pl-9 pr-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898]"
             />
           </div>
-          {selectedDate && !anyEntityFilter && (
+          {selectedDate && (
             <button
               onClick={() => setSelectedDate('')}
               className="text-xs font-bold text-[#004898] hover:underline"
@@ -207,21 +222,15 @@ export const ServiceHistoryPage = () => {
           {techs.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        {(companyFilter || techFilter) && (
+        {(companyFilter || techFilter || statusFilter !== 'ALL' || selectedDate) && (
           <button
-            onClick={() => { setCompanyFilter(''); setTechFilter(''); }}
+            onClick={() => { setCompanyFilter(''); setTechFilter(''); setStatusFilter('ALL'); setSelectedDate(''); }}
             className="text-xs font-bold text-[#D92D20] hover:underline shrink-0"
           >
             Clear filters
           </button>
         )}
       </div>
-
-      {anyEntityFilter && (
-        <p className="text-xs text-[#667085] -mt-2">
-          Showing all matching tickets to date (date filter ignored while a company or technician filter is active).
-        </p>
-      )}
 
       {/* Modern Table/List View */}
       <div className="bg-white rounded-2xl border border-[#E4E7EC] shadow-sm overflow-hidden">

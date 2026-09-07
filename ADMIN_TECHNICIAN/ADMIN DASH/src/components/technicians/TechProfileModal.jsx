@@ -51,7 +51,7 @@ export const TechProfileModal = () => {
 
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
           {/* Performance Summary Cards */}
-          <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="grid grid-cols-4 gap-3 text-center">
             <div className="p-3 rounded-xl bg-[#EFF5FC] border border-[#B3D1F2]">
               <span className="text-2xl font-extrabold text-[#004898]">{tech.activeJobsCount}</span>
               <p className="text-xs text-[#667085]">Active Jobs</p>
@@ -59,6 +59,10 @@ export const TechProfileModal = () => {
             <div className="p-3 rounded-xl bg-[#ECFDF3] border border-[#ABE5C6]">
               <span className="text-2xl font-extrabold text-[#027A48]">{tech.completedJobsCount}</span>
               <p className="text-xs text-[#667085]">Completed</p>
+            </div>
+            <div className="p-3 rounded-xl bg-[#FFFAEB] border border-[#FDE68A]">
+              <span className="text-2xl font-extrabold text-[#B54708]">{tech.reassignedJobsCount ?? 0}</span>
+              <p className="text-xs text-[#667085]">Reassigned</p>
             </div>
             <div className="p-3 rounded-xl bg-[#F8FAFC] border">
               <span className="text-2xl font-extrabold text-[#172033]">{tech.completionRate}</span>

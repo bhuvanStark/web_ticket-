@@ -38,32 +38,47 @@ async function readApiData(response, operation) {
   return payload?.data ?? payload ?? [];
 }
 
+// The admin/technician portal shows six workflow labels:
+//   Unassigned -> Assigned -> Active -> (Pending) -> Completed / Reassigned
+// Every DB value (current + legacy) is folded onto one of them for display.
 const STATUS_MAP = {
-  'request_received': 'Unassigned',
-  'under_review': 'Under Review',
+  // canonical
   'unassigned': 'Unassigned',
   'assigned': 'Assigned',
-  'technician_on_the_way': 'Technician On The Way',
-  'service_in_progress': 'Service In Progress',
-  'service_completed': 'Awaiting Customer Signature',
-  'pending_customer_signoff': 'Awaiting Customer Signature',
-  'pending_next_visit': 'Pending Next Visit',
-  'resolved': 'Resolved',
-  'closed': 'Closed',
+  'active': 'Active',
+  'pending': 'Pending',
+  'completed': 'Completed',
+  'reassigned': 'Reassigned',
+  // legacy -> canonical
+  'request_received': 'Unassigned',
+  'under_review': 'Unassigned',
+  'technician_on_the_way': 'Active',
+  'service_in_progress': 'Active',
+  'service_completed': 'Active',
+  'pending_next_visit': 'Pending',
+  'pending_customer_signoff': 'Active',
+  'resolved': 'Completed',
+  'closed': 'Completed',
   'cancelled': 'Cancelled'
 };
 
 const STATUS_TO_DB = {
+  // canonical labels the UI writes
   'Unassigned': 'unassigned',
-  'Under Review': 'under_review',
   'Assigned': 'assigned',
-  'Technician On The Way': 'technician_on_the_way',
-  'Service In Progress': 'service_in_progress',
-  'Service Completed - Pending Customer Sign-Off': 'pending_customer_signoff',
-  'Awaiting Customer Signature': 'pending_customer_signoff',
-  'Pending Next Visit': 'pending_next_visit',
-  'Resolved': 'resolved',
-  'Closed': 'closed',
+  'Active': 'active',
+  'Pending': 'pending',
+  'Completed': 'completed',
+  'Reassigned': 'reassigned',
+  // legacy labels still map to a sane DB value for any older caller
+  'Under Review': 'unassigned',
+  'Technician On The Way': 'active',
+  'Service In Progress': 'active',
+  'Service Completed - Pending Customer Sign-Off': 'completed',
+  'Awaiting Customer Signature': 'completed',
+  'Pending Next Visit': 'pending',
+  'Resolved': 'completed',
+  'Closed': 'completed',
   'Cancelled': 'cancelled'
 };
 
@@ -142,6 +157,7 @@ export function transformDbTicketToAdmin(row) {
         techSignedAt: r.tech_signed_at || null,
         customerSigned: !!r.customer_signed,
         customerSignerName: r.customer_signer_name || '',
+        customerSignerDetails: r.customer_signer_details || '',
         customerSignedAt: r.customer_signed_at || null
       };
     })()
@@ -253,11 +269,30 @@ export async function submitServiceReportInApi(ticketDbId, report) {
       nature_of_complaint: report.natureOfComplaint || null,
       work_done: report.workDone || '',
       parts_material: report.partsMaterial || null,
-      tech_signer_name: report.techSignerName || null
+      tech_signer_name: report.techSignerName || null,
+      // Customer sign-off captured on the technician's device.
+      customer_signer_details: report.customerSignerDetails || null,
+      customer_signer_name: report.customerSignerName || report.customerSignerDetails || null,
+      customer_present: report.customerPresent !== false,
+      // 'completed' (default) or 'pending' — the report itself is saved
+      // identically either way; only the ticket status differs.
+      outcome: report.outcome === 'pending' ? 'pending' : 'completed'
     })
   });
   if (!res.ok) throw new Error('Failed to submit service report');
   return readApiData(res, 'submit service report');
+}
+
+// Admin moves a Pending ticket to Reassigned. Only this ticket changes; no new
+// ticket is created and no DB link is made.
+export async function reassignPendingInApi(ticketDbId) {
+  const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/status`, {
+    method: 'PATCH',
+    headers: authHeaders(true),
+    body: JSON.stringify({ status: 'reassigned', notes: 'Pending job reassigned by admin.' })
+  });
+  if (!res.ok) throw new Error('Failed to reassign ticket');
+  return readApiData(res, 'reassign ticket');
 }
 
 // 8. Create Service Request

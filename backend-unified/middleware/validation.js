@@ -157,15 +157,24 @@ export const validateStatusUpdate = (req, res, next) => {
   if (!status || status.trim().length === 0) errors.push('status is required');
 
   const validStatuses = [
+    // Canonical workflow vocabulary.
+    'unassigned',
+    'assigned',
+    'active',
+    'pending',
+    'completed',
+    'reassigned',
+    // Legacy values still accepted so historical callers never error.
     'request_received',
     'under_review',
-    'assigned',
     'technician_on_the_way',
-      'service_in_progress',
-      'pending_next_visit',
-      'pending_customer_signoff',
+    'service_in_progress',
+    'service_completed',
+    'pending_next_visit',
+    'pending_customer_signoff',
     'resolved',
-    'closed'
+    'closed',
+    'cancelled'
   ];
 
   if (status && !validStatuses.includes(status)) {

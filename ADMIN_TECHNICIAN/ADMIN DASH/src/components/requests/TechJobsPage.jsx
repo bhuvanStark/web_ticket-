@@ -114,11 +114,11 @@ export const TechJobsPage = () => {
                 <span>Current Field Status: <strong className="text-[#004898] ml-1">{activeJob.status}</strong></span>
               </div>
 
-              {/* Two actions only: Accept the job, then Complete the report. */}
+              {/* Accept the job, then fill the report (Complete or Pending is chosen inside the form). */}
               <div className="flex flex-wrap items-center gap-3">
                 {(activeJob.status === 'Assigned' || activeJob.status === 'Unassigned') && (
                   <button
-                    onClick={() => updateTicketStatus(activeJob.id, 'Service In Progress', `Job accepted by ${currentUser.name}`)}
+                    onClick={() => updateTicketStatus(activeJob.id, 'Active', `Job accepted by ${currentUser.name}`)}
                     className="px-5 py-2.5 bg-[#004898] text-white font-extrabold text-sm hover:bg-[#003673] rounded-xl shadow-sm flex items-center gap-2 transition-colors"
                   >
                     <UserCheck className="w-4 h-4" />
@@ -126,28 +126,33 @@ export const TechJobsPage = () => {
                   </button>
                 )}
 
-                {activeJob.status === 'Service In Progress' && (
+                {activeJob.status === 'Active' && (
                   <button
                     onClick={() => { setSelectedTicketId(activeJob.id); setIsServiceFormOpen(true); }}
                     className="px-5 py-2.5 bg-[#12B76A] text-white font-extrabold text-sm hover:bg-[#0E9384] rounded-xl shadow-sm flex items-center gap-2 transition-colors"
                   >
                     <FileCheck className="w-4 h-4" />
-                    <span>Complete Service Form</span>
+                    <span>Fill Service Report</span>
                   </button>
                 )}
 
                 {/* Status Banners */}
-                {activeJob.status === 'Awaiting Customer Signature' && (
-                  <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#EFF5FC] text-[#004898] border border-[#B3D1F2] rounded-xl font-bold text-sm shadow-sm">
-                    <FileText className="w-5 h-5 text-[#004898]" />
-                    <span>Service Report Sent to Customer App • Awaiting Signature</span>
-                  </div>
-                )}
-
-                {(activeJob.status === 'Customer Signed / Completed' || activeJob.status === 'Customer Signed' || activeJob.status === 'Resolved' || activeJob.status === 'Closed') && (
+                {activeJob.status === 'Completed' && (
                   <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#ECFDF3] text-[#027A48] border border-[#ABE5C6] rounded-xl font-bold text-sm shadow-sm">
                     <CheckCircle className="w-5 h-5 text-[#027A48]" />
-                    <span>✓ Customer Digitally Signed & Final Service Record Completed</span>
+                    <span>✓ Service Report Submitted & Ticket Completed</span>
+                  </div>
+                )}
+                {activeJob.status === 'Pending' && (
+                  <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#FFFAEB] text-[#B54708] border border-[#FDE68A] rounded-xl font-bold text-sm shadow-sm">
+                    <FileText className="w-5 h-5 text-[#B54708]" />
+                    <span>Report submitted · Job Pending — awaiting admin</span>
+                  </div>
+                )}
+                {activeJob.status === 'Reassigned' && (
+                  <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#F2F4F7] text-[#475467] border border-[#E4E7EC] rounded-xl font-bold text-sm shadow-sm">
+                    <FileText className="w-5 h-5 text-[#475467]" />
+                    <span>Ticket Reassigned by admin — your report stays on record</span>
                   </div>
                 )}
               </div>
@@ -270,7 +275,7 @@ export const TechJobsPage = () => {
                       <h3 className="font-extrabold text-sm text-[#172033]">Service Report Sign-off</h3>
                     </div>
                     <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${activeJob.serviceReport.customerSigned ? 'bg-[#ECFDF5] text-[#047857] border-[#A7F3D0]' : 'bg-[#FEF0C7] text-[#B54708] border-[#FEDF89]'}`}>
-                      {activeJob.serviceReport.customerSigned ? '✓ SIGNED BY CUSTOMER' : '⏳ AWAITING CUSTOMER'}
+                      {activeJob.serviceReport.customerSigned ? '✓ SIGNED BY CUSTOMER' : 'CUSTOMER NOT PRESENT'}
                     </span>
                   </div>
 
@@ -282,9 +287,10 @@ export const TechJobsPage = () => {
                       </span>
                     </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-[#F8FAFC] border border-[#E4E7EC]">
-                      <span className="text-[#667085]">Customer signed</span>
-                      <span className={`font-extrabold ${activeJob.serviceReport.customerSigned ? 'text-[#027A48]' : 'text-[#B42318]'}`}>
-                        {activeJob.serviceReport.customerSigned ? `Yes · ${activeJob.serviceReport.customerSignerName || ''}` : 'No'}
+                      <span className="text-[#667085]">Customer</span>
+                      <span className={`font-extrabold ${activeJob.serviceReport.customerSigned ? 'text-[#027A48]' : 'text-[#B54708]'}`}>
+                        {activeJob.serviceReport.customerSignerDetails || activeJob.serviceReport.customerSignerName || '—'}
+                        {activeJob.serviceReport.customerSigned ? ' · signed' : ' · not present'}
                       </span>
                     </div>
                   </div>

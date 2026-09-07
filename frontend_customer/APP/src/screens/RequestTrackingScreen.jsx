@@ -1,22 +1,19 @@
 import React, { useState } from 'react';
 import {
-  MessageSquare, CheckCircle, MapPin, Monitor, FileText, PenTool, Building, User
+  MessageSquare, CheckCircle, MapPin, Monitor, FileText, Building, User
 } from 'lucide-react';
 import { generateServiceReportPDF } from '../utils/pdfGenerator';
-import { CustomerSignatureModal } from '../components/CustomerSignatureModal';
 
 export function RequestTrackingScreen({
   ticket,
   user,
-  onBack,
-  onUpdateTicket
+  onBack
 }) {
   // Company shown on a ticket comes from the ticket's own customer record when
   // available, otherwise the logged-in account. Deliberately does NOT fall back
   // to customerName, which holds the person's name rather than the company.
   const companyAccountName = ticket?.company || ticket?.companyName || user?.company || '—';
   const [activeTab, setActiveTab] = useState('status');
-  const [showSignModal, setShowSignModal] = useState(false);
 
   if (!ticket) {
     return (
@@ -39,22 +36,22 @@ export function RequestTrackingScreen({
   }
 
   const report = ticket.serviceReport || null;
-  const isCompleted = !!ticket.isCompleted || ticket.currentStepIndex === 1;
-  const needsSignature = !!ticket.awaitingCustomerSignature && !isCompleted;
+  const isCompleted = !!ticket.isCompleted || ticket.currentStepIndex === 2;
+  // The completed service report can be viewed / downloaded as soon as the
+  // technician submits it. The customer never signs in this app.
+  const reportReady = !!ticket.reportReady || isCompleted;
 
-  const handleSignComplete = async (updatedTicket) => {
-    if (onUpdateTicket) return await onUpdateTicket(updatedTicket);
-    return updatedTicket;
-  };
-
-  // Two-state customer timeline.
+  // Three-state customer timeline: Received -> In Progress -> Completed.
   const steps = [
-    { label: 'Request Submitted', desc: 'Service request created' },
-    { label: 'Completed', desc: 'Service completed & report signed' }
+    { label: 'Received', desc: 'Service request received' },
+    { label: 'In Progress', desc: 'Technician working on the request' },
+    { label: 'Completed', desc: 'Service completed & report ready' }
   ];
-  const stepIndex = isCompleted ? 1 : 0;
+  const stepIndex = typeof ticket.currentStepIndex === 'number'
+    ? ticket.currentStepIndex
+    : (isCompleted ? 2 : 0);
 
-  const statusLabel = isCompleted ? 'Completed' : needsSignature ? 'Awaiting Your Signature' : 'Request Submitted';
+  const statusLabel = ticket.status || (isCompleted ? 'Completed' : 'Received');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-bg)' }}>
@@ -104,11 +101,11 @@ export function RequestTrackingScreen({
         </div>
       </div>
 
-      {/* Tabs Bar — the Equipment & Details tab only appears once the report is signed */}
+      {/* Tabs Bar — the Equipment & Details tab appears once the report is ready */}
       <div style={{ display: 'flex', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)' }}>
         {[
           { key: 'status', label: 'Timeline Status' },
-          ...(isCompleted ? [{ key: 'details', label: 'Equipment & Details' }] : [])
+          ...(reportReady ? [{ key: 'details', label: 'Equipment & Details' }] : [])
         ].map((tab) => (
           <button
             key={tab.key}
@@ -134,58 +131,38 @@ export function RequestTrackingScreen({
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
 
         {/* ================= TIMELINE TAB ================= */}
-        {(activeTab === 'status' || !isCompleted) && (
+        {(activeTab === 'status' || !reportReady) && (
           <div>
-            {/* Report pending customer signature */}
-            {needsSignature && (
+            {/* Report ready to view (technician completed on site) */}
+            {reportReady && !isCompleted && (
               <div
-                onClick={() => setShowSignModal(true)}
                 style={{
                   marginBottom: '18px',
                   padding: '16px',
                   backgroundColor: '#EFF5FC',
-                  border: '2px solid #004898',
+                  border: '2px solid #B3D1F2',
                   borderRadius: '14px',
-                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
+                  gap: '12px',
                   boxShadow: '0 4px 12px rgba(0,72,152,0.1)'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ padding: '10px', backgroundColor: '#004898', color: '#ffffff', borderRadius: '10px' }}>
-                    <PenTool size={22} />
-                  </div>
-                  <div>
-                    <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: '#004898' }}>
-                      Service Report Ready for Your Signature
-                    </h4>
-                    <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#344054' }}>
-                      The field service report is complete. Review the work done and sign to close the ticket.
-                    </p>
-                  </div>
+                <div style={{ padding: '10px', backgroundColor: '#004898', color: '#ffffff', borderRadius: '10px' }}>
+                  <FileText size={22} />
                 </div>
-                <button
-                  onClick={() => setShowSignModal(true)}
-                  style={{
-                    backgroundColor: '#004898',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '8px 14px',
-                    fontSize: '12px',
-                    fontWeight: '800',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  Review &amp; Sign &rarr;
-                </button>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: '#004898' }}>
+                    Service Report Available
+                  </h4>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#344054' }}>
+                    View the field service report in the Equipment &amp; Details tab.
+                  </p>
+                </div>
               </div>
             )}
 
-            {/* Signed & completed */}
+            {/* Completed */}
             {isCompleted && (
               <div
                 style={{
@@ -205,10 +182,10 @@ export function RequestTrackingScreen({
                 </div>
                 <div>
                   <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: '#027A48' }}>
-                    Service Completed &amp; Report Signed
+                    Service Completed
                   </h4>
                   <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#344054' }}>
-                    You can download the signed service report from the Equipment &amp; Details tab.
+                    You can download your service report from the Equipment &amp; Details tab.
                   </p>
                 </div>
               </div>
@@ -251,17 +228,17 @@ export function RequestTrackingScreen({
           </div>
         )}
 
-        {/* ================= DETAILS TAB (only after sign-off) ================= */}
-        {isCompleted && activeTab === 'details' && (
+        {/* ================= DETAILS TAB (once the report is ready) ================= */}
+        {reportReady && activeTab === 'details' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="card" style={{ background: '#ECFDF5', border: '1px solid #A7F3D0' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
                 <div>
                   <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#047857' }}>
-                    Signed Field Service Report
+                    Field Service Report
                   </h4>
                   <p style={{ fontSize: '11px', color: '#065F46', marginTop: '2px' }}>
-                    Work summary, parts used and both sign-off records.
+                    Work summary, parts used and sign-off records.
                   </p>
                 </div>
                 <button
@@ -304,9 +281,12 @@ export function RequestTrackingScreen({
                   <span>Technician signed</span>
                   <span style={{ fontWeight: '700', color: report.techSigned ? '#047857' : '#B42318' }}>{report.techSigned ? 'Yes' : 'No'}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                  <span>Customer signed</span>
-                  <span style={{ fontWeight: '700', color: report.customerSigned ? '#047857' : '#B42318' }}>{report.customerSigned ? 'Yes' : 'No'}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  <span style={{ flexShrink: 0 }}>Customer sign-off</span>
+                  <span style={{ fontWeight: '700', color: report.customerSigned ? '#047857' : '#B54708', textAlign: 'right' }}>
+                    {report.customerSignerDetails || report.customerSignerName || '—'}
+                    {report.customerSigned ? ' · signed' : ' · not present'}
+                  </span>
                 </div>
               </div>
             )}
@@ -337,15 +317,6 @@ export function RequestTrackingScreen({
           </div>
         )}
       </div>
-
-      {/* Customer Signature Modal — sign-only */}
-      <CustomerSignatureModal
-        isOpen={showSignModal}
-        onClose={() => setShowSignModal(false)}
-        ticket={ticket}
-        user={user}
-        onSignComplete={handleSignComplete}
-      />
     </div>
   );
 }

@@ -108,18 +108,18 @@ export const TechJobDetailsModal = () => {
             </div>
           </div>
 
-          {/* Active Workflow Stepper Bar (Hide if completed) */}
-          {activeJob.status !== 'Resolved' && activeJob.status !== 'Closed' && activeJob.status !== 'Customer Signed / Completed' && activeJob.status !== 'Customer Signed' && (
+          {/* Active Workflow Stepper Bar (only while the job is still open) */}
+          {!['Completed', 'Reassigned'].includes(activeJob.status) && (
             <div className="p-5 bg-white border border-[#E4E7EC] rounded-2xl shadow-sm">
               <div className="text-[11px] font-bold uppercase tracking-widest text-[#667085] mb-4 flex items-center justify-between">
                 <span>Current Field Status: <strong className="text-[#004898] ml-1">{activeJob.status}</strong></span>
               </div>
 
-              {/* Two actions only: Accept, then Complete report. */}
+              {/* Accept the job, then fill the report (Complete / Pending chosen inside the form). */}
               <div className="flex flex-wrap items-center gap-3">
                 {(activeJob.status === 'Assigned' || activeJob.status === 'Unassigned') && (
                   <button
-                    onClick={() => updateTicketStatus(activeJob.id, 'Service In Progress', `Job accepted by ${currentUser.name}`)}
+                    onClick={() => updateTicketStatus(activeJob.id, 'Active', `Job accepted by ${currentUser.name}`)}
                     className="px-5 py-2.5 bg-[#004898] text-white font-extrabold text-sm hover:bg-[#003673] rounded-xl shadow-sm flex items-center gap-2 transition-colors"
                   >
                     <UserCheck className="w-4 h-4" />
@@ -127,7 +127,7 @@ export const TechJobDetailsModal = () => {
                   </button>
                 )}
 
-                {activeJob.status === 'Service In Progress' && (
+                {activeJob.status === 'Active' && (
                   <button
                     onClick={() => {
                       setSelectedTicketId(activeJob.id);
@@ -137,8 +137,15 @@ export const TechJobDetailsModal = () => {
                     className="px-5 py-2.5 bg-[#12B76A] text-white font-extrabold text-sm hover:bg-[#0E9384] rounded-xl shadow-sm flex items-center gap-2 transition-colors"
                   >
                     <FileCheck className="w-4 h-4" />
-                    <span>Complete Service Form</span>
+                    <span>Fill Service Report</span>
                   </button>
+                )}
+
+                {activeJob.status === 'Pending' && (
+                  <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#FFFAEB] text-[#B54708] border border-[#FDE68A] rounded-xl font-bold text-sm">
+                    <FileText className="w-5 h-5" />
+                    <span>Report submitted · Job Pending — awaiting admin</span>
+                  </div>
                 )}
               </div>
             </div>
@@ -179,15 +186,16 @@ export const TechJobDetailsModal = () => {
             </div>
           )}
 
-          {/* Service Completion Report & Sign-off Section (If completed) */}
-          {(activeJob.status === 'Customer Signed / Completed' || activeJob.status === 'Customer Signed' || activeJob.status === 'Resolved' || activeJob.status === 'Closed' || activeJob.status === 'Awaiting Customer Signature') && (
+          {/* Service Report & Sign-off Section — shown whenever a report exists
+              (Completed, Pending, or Reassigned). */}
+          {activeJob.serviceReport && (
             <div className="space-y-6">
-              
+
               {/* Service Details */}
               <div className="bg-white rounded-2xl border border-[#E4E7EC] shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-[#E4E7EC] bg-gradient-to-r from-[#EFF5FC] to-white flex items-center gap-2">
                   <FileText className="w-5 h-5 text-[#004898]" />
-                  <h3 className="font-extrabold text-[#172033]">Service Completion Details</h3>
+                  <h3 className="font-extrabold text-[#172033]">Service Report{activeJob.status === 'Pending' ? ' (Pending)' : activeJob.status === 'Reassigned' ? ' (Reassigned)' : ' Details'}</h3>
                 </div>
                 
                 <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">

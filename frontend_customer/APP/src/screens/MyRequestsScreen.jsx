@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { Search, Filter, Monitor, Clock, CheckCircle, ChevronRight, AlertCircle, MapPin, UserCheck, ShieldCheck, PenTool, Download, Building, User } from 'lucide-react';
-import { CustomerSignatureModal } from '../components/CustomerSignatureModal';
 import { generatePDF } from '../utils/pdfGenerator';
 
-export function MyRequestsScreen({ tickets = [], onSelectTicket, onUpdateTicket }) {
+export function MyRequestsScreen({ tickets = [], onSelectTicket }) {
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'completed' | 'all'
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTicketForSign, setSelectedTicketForSign] = useState(null);
@@ -11,7 +10,7 @@ export function MyRequestsScreen({ tickets = [], onSelectTicket, onUpdateTicket 
   const isResolvedOrClosed = (s) => {
     if (!s) return false;
     const str = s.toString().toLowerCase();
-    return str.includes('resolve') || str.includes('close');
+    return str.includes('complet') || str.includes('resolve') || str.includes('close');
   };
 
   const filteredTickets = tickets.filter((t) => {
@@ -107,7 +106,7 @@ export function MyRequestsScreen({ tickets = [], onSelectTicket, onUpdateTicket 
             const roomName = ticket.roomName || ticket.room || (isEpabxTicket ? 'EPABX' : '—');
             const locName = ticket.locationName || ticket.location || '—';
             const completed = isResolvedOrClosed(ticket.status) || isResolvedOrClosed(ticket.dbStatus);
-            const needsSignature = (ticket.status?.includes('Pending Customer') || ticket.serviceReport?.status === 'Pending Customer Signature') && !ticket.customerSignature;
+            const needsSignature = false;
 
             return (
               <div
@@ -143,8 +142,8 @@ export function MyRequestsScreen({ tickets = [], onSelectTicket, onUpdateTicket 
                       gap: '4px'
                     }}
                   >
-                    {needsSignature ? <PenTool size={11} /> : completed ? <CheckCircle size={11} /> : <Clock size={11} />}
-                    <span>{needsSignature ? 'Pending Signature' : completed ? 'Closed & Signed' : ticket.status}</span>
+                    {completed ? <CheckCircle size={11} /> : <Clock size={11} />}
+                    <span>{completed ? 'Completed' : (ticket.status || 'Received')}</span>
                   </span>
                 </div>
 

@@ -79,7 +79,7 @@ export const createServiceRequest = async (requestData) => {
     const basePayload = Object.fromEntries(
       Object.entries({
         ...requestData,
-        status: 'request_received',
+        status: 'unassigned',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }).filter(([, value]) => value !== undefined && value !== null && value !== '')
@@ -127,15 +127,24 @@ export const createServiceRequest = async (requestData) => {
 export const updateServiceRequestStatus = async (requestId, status, notes = null) => {
   try {
     const validStatuses = [
+      // Canonical workflow vocabulary.
+      'unassigned',
+      'assigned',
+      'active',
+      'pending',
+      'completed',
+      'reassigned',
+      // Legacy values still accepted so historical callers / rows never error.
       'request_received',
       'under_review',
-      'assigned',
       'technician_on_the_way',
       'service_in_progress',
+      'service_completed',
       'pending_next_visit',
       'pending_customer_signoff',
       'resolved',
-      'closed'
+      'closed',
+      'cancelled'
     ];
 
     if (!validStatuses.includes(status)) {
@@ -146,7 +155,9 @@ export const updateServiceRequestStatus = async (requestId, status, notes = null
       status,
       updated_at: new Date().toISOString()
     };
-    if (status === 'resolved' || status === 'closed') {
+    // Stamp the completion date on every terminal outcome (migration 014 adds
+    // the column). 'reassigned' counts as terminal for that technician.
+    if (['completed', 'reassigned', 'resolved', 'closed'].includes(status)) {
       updateData.actual_completion_date = new Date().toISOString();
     }
 
@@ -173,7 +184,9 @@ export const updateServiceRequestStatus = async (requestId, status, notes = null
 };
 
 // Technician submits the field service report: upsert the single report row for
-// this request, mark it tech-signed, and move the ticket to awaiting-customer.
+// this request, mark it tech-signed, capture the customer sign-off, and move the
+// ticket to its chosen outcome — 'completed' (default) or 'pending'. The report
+// row is written identically for both outcomes.
 export const submitServiceReport = async (requestId, report) => {
   try {
     const nowIso = new Date().toISOString();
@@ -184,6 +197,12 @@ export const submitServiceReport = async (requestId, report) => {
       .eq('service_request_id', requestId)
       .maybeSingle();
 
+    // Customer sign-off is captured by the technician on site. The contact line
+    // ("Name - Phone") is always recorded; the customer signature is recorded
+    // only when the customer was present (customer_present !== false).
+    const customerPresent = report.customer_present !== false;
+    const customerName = report.customer_signer_name || report.customer_signer_details || null;
+
     const payload = {
       system: report.system,
       nature_of_complaint: report.nature_of_complaint,
@@ -192,6 +211,10 @@ export const submitServiceReport = async (requestId, report) => {
       tech_signed: true,
       tech_signed_at: nowIso,
       tech_signer_name: report.tech_signer_name,
+      customer_signer_details: report.customer_signer_details || null,
+      customer_signer_name: customerName,
+      customer_signed: customerPresent,
+      customer_signed_at: customerPresent ? nowIso : null,
       updated_at: nowIso
     };
 
@@ -215,10 +238,17 @@ export const submitServiceReport = async (requestId, report) => {
       saved = data;
     }
 
+    const outcome = report.outcome === 'pending' ? 'pending' : 'completed';
+    const signNote = customerPresent
+      ? 'signed on site.'
+      : '(customer not present to sign).';
+
     await updateServiceRequestStatus(
       requestId,
-      'pending_customer_signoff',
-      'Field service report submitted. Awaiting customer signature.'
+      outcome,
+      outcome === 'pending'
+        ? `Field service report submitted, job left pending ${signNote}`
+        : `Field service report submitted and ${signNote}`
     );
 
     return saved;
@@ -376,6 +406,7 @@ export const getPendingRequests = async (customerId = null) => {
         locations (id, name),
         rooms (id, name)
       `)
+      .neq('status', 'completed')
       .neq('status', 'resolved')
       .neq('status', 'closed')
       .order('created_at', { ascending: false });
@@ -439,7 +470,7 @@ export const getRequestStatistics = async (customerId = null) => {
       stats.by_priority[req.priority] = (stats.by_priority[req.priority] || 0) + 1;
 
       // Count pending
-      if (req.status !== 'resolved' && req.status !== 'closed') {
+      if (req.status !== 'completed' && req.status !== 'resolved' && req.status !== 'closed') {
         stats.pending++;
       }
 

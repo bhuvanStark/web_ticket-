@@ -226,9 +226,14 @@ export const handleRequestStatusChange = async (requestId, oldStatus, newStatus,
   try {
     const customerId = requestData.customer_id;
     const templateMap = {
+      // Canonical workflow statuses.
+      'unassigned': 'request_received',
+      'assigned': 'technician_assigned',
+      'active': 'service_in_progress',
+      'completed': 'request_resolved',
+      // Legacy statuses (historical rows / callers).
       'request_received': 'request_received',
       'under_review': 'request_confirmed',
-      'assigned': 'technician_assigned',
       'technician_on_the_way': 'technician_on_way',
       'service_in_progress': 'service_in_progress',
       'pending_customer_signoff': 'pending_signoff',

@@ -303,7 +303,9 @@ router.get('/:id/report', validateUUID, async (req, res) => {
 });
 
 // Technician submits the field service report. Creates or updates the single
-// report row, marks it tech-signed, and moves the ticket to awaiting-customer.
+// report row, marks it tech-signed, captures the customer sign-off on the
+// technician's device, and moves the ticket to its chosen outcome —
+// 'completed' (default) or 'pending'. The report row is identical either way.
 router.post('/:id/report', validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
@@ -312,11 +314,18 @@ router.post('/:id/report', validateUUID, async (req, res) => {
       nature_of_complaint,
       work_done,
       parts_material,
-      tech_signer_name
+      tech_signer_name,
+      customer_signer_details,
+      customer_signer_name,
+      customer_present,
+      outcome
     } = req.body;
 
     if (!work_done || work_done.trim().length === 0) {
       return res.status(400).json({ success: false, error: 'work_done is required' });
+    }
+    if (!customer_signer_details || customer_signer_details.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'customer_signer_details (name + phone) is required' });
     }
 
     const data = await serviceRequestService.submitServiceReport(id, {
@@ -324,7 +333,11 @@ router.post('/:id/report', validateUUID, async (req, res) => {
       nature_of_complaint: nature_of_complaint || null,
       work_done: work_done.trim(),
       parts_material: parts_material || null,
-      tech_signer_name: tech_signer_name || null
+      tech_signer_name: tech_signer_name || null,
+      customer_signer_details: customer_signer_details.trim(),
+      customer_signer_name: (customer_signer_name || customer_signer_details).trim(),
+      customer_present: customer_present !== false,
+      outcome: outcome === 'pending' ? 'pending' : 'completed'
     });
 
     res.status(201).json({ success: true, data, message: 'Service report submitted' });
@@ -387,7 +400,7 @@ router.delete('/:id', validateUUID, async (req, res) => {
     // Admins may delete a request in any status. Non-admin callers can only
     // delete requests that have not started being worked on yet.
     if (req.user?.role !== 'admin') {
-      const deletableStatuses = ['request_received', 'under_review', 'pending'];
+      const deletableStatuses = ['unassigned', 'request_received', 'under_review', 'pending'];
       if (!deletableStatuses.includes(existing.status)) {
         return res.status(400).json({
           success: false,

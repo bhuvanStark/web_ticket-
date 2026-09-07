@@ -12,6 +12,7 @@ import {
   updateTicketStatusInApi,
   createServiceRequestInApiAdmin,
   submitServiceReportInApi,
+  reassignPendingInApi,
   deleteServiceRequestFromApi,
   subscribeToAdminServiceRequests
 } from '../services/adminApiService';
@@ -257,7 +258,7 @@ export const AppProvider = ({ children }) => {
           const mappedDbCusts = dbCustomers.map(c => {
             const customerTickets = (dbTickets || []).filter(ticket => ticket.customerId === c.id);
             const customerLocationIds = new Set(customerTickets.map(ticket => ticket.locationId).filter(Boolean));
-            const completedStatuses = new Set(['Resolved', 'Closed']);
+            const completedStatuses = new Set(['Completed', 'Resolved', 'Closed']);
             const latestTicket = [...customerTickets].sort((a, b) =>
               new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
             )[0];
@@ -298,7 +299,7 @@ export const AppProvider = ({ children }) => {
               customerId: linkedTicket?.customerId || r.customer_id || null,
               customerName: linkedTicket?.customer || r.customer_name || '',
               installedSystems: Array.isArray(r.installed_systems) ? r.installed_systems : [],
-              openRequestsCount: roomTickets.filter(ticket => !['Resolved', 'Closed'].includes(ticket.status)).length,
+              openRequestsCount: roomTickets.filter(ticket => !['Completed', 'Resolved', 'Closed'].includes(ticket.status)).length,
               status: r.status || 'Operational',
               equipmentCount: Array.isArray(r.installed_systems) ? r.installed_systems.length : 0
             };
@@ -318,10 +319,13 @@ export const AppProvider = ({ children }) => {
             phone: t.phone || '',
             rating: null,
             activeJobsCount: (dbTickets || []).filter(ticket =>
-              ticket.assignedToId === t.id && !['Resolved', 'Closed'].includes(ticket.status)
+              ticket.assignedToId === t.id && !['Completed', 'Reassigned', 'Resolved', 'Closed'].includes(ticket.status)
             ).length,
             completedJobsCount: (dbTickets || []).filter(ticket =>
-              ticket.assignedToId === t.id && ['Resolved', 'Closed'].includes(ticket.status)
+              ticket.assignedToId === t.id && ['Completed', 'Resolved', 'Closed'].includes(ticket.status)
+            ).length,
+            reassignedJobsCount: (dbTickets || []).filter(ticket =>
+              ticket.assignedToId === t.id && ticket.status === 'Reassigned'
             ).length,
             completionRate: '0%',
             avgResponseTime: '—',
@@ -744,11 +748,9 @@ export const AppProvider = ({ children }) => {
     updateAndSyncTickets(prev => prev.map(t => {
       if (isSameTicket(t, ticketId)) {
         let statusTitle = `Status changed to ${newStatus}`;
-        if (newStatus === 'Job Accepted') statusTitle = `Job accepted & scheduled by ${currentUser.name}.`;
-        if (newStatus === 'Technician On The Way') statusTitle = `Technician started travel (${currentUser.name}).`;
-        if (newStatus === 'Service In Progress') statusTitle = `Technician checked in & service started (${currentUser.name}).`;
-        if (newStatus === 'Resolved') statusTitle = 'Service completed & issue resolved.';
-        if (newStatus === 'Closed') statusTitle = 'Customer confirmed & ticket closed.';
+        if (newStatus === 'Assigned') statusTitle = `Technician assigned by ${currentUser.name}.`;
+        if (newStatus === 'Active') statusTitle = `Job accepted & service started (${currentUser.name}).`;
+        if (newStatus === 'Completed') statusTitle = 'Service completed & report submitted.';
 
         const updatedTimeline = [
           ...(t.timeline || []),
@@ -773,7 +775,8 @@ export const AppProvider = ({ children }) => {
   };
 
   // Submit Technician Service Report — persists to the service_reports table
-  // (tech-signed) and moves the ticket to awaiting customer signature.
+  // (tech-signed + customer sign-off captured on the technician's device) and
+  // moves the ticket to Completed.
   const submitServiceReport = async (ticketId, reportData) => {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const targetTicket = tickets.find(t => isSameTicket(t, ticketId));
@@ -783,6 +786,11 @@ export const AppProvider = ({ children }) => {
       return false;
     }
 
+    const customerPresent = reportData.customerPresent !== false;
+    const customerDetails = reportData.customerSignerDetails || '';
+    const outcome = reportData.outcome === 'pending' ? 'pending' : 'completed';
+    const nextStatus = outcome === 'pending' ? 'Pending' : 'Completed';
+
     let savedReport;
     try {
       savedReport = await submitServiceReportInApi(targetTicket.dbId, {
@@ -790,7 +798,11 @@ export const AppProvider = ({ children }) => {
         natureOfComplaint: reportData.natureOfComplaint,
         workDone: reportData.workDone,
         partsMaterial: reportData.partsMaterial,
-        techSignerName: reportData.techSignerName || currentUser?.name
+        techSignerName: reportData.techSignerName || currentUser?.name,
+        customerSignerDetails: customerDetails,
+        customerSignerName: reportData.customerSignerName || customerDetails,
+        customerPresent,
+        outcome
       });
     } catch (err) {
       showToast(`Service report failed: ${err.message}`, 'error');
@@ -801,7 +813,7 @@ export const AppProvider = ({ children }) => {
       if (isSameTicket(t, ticketId)) {
         return {
           ...t,
-          status: 'Awaiting Customer Signature',
+          status: nextStatus,
           serviceReport: {
             system: savedReport?.system || reportData.system || '',
             natureOfComplaint: savedReport?.nature_of_complaint || reportData.natureOfComplaint || '',
@@ -809,15 +821,20 @@ export const AppProvider = ({ children }) => {
             partsMaterial: savedReport?.parts_material || reportData.partsMaterial || '',
             techSigned: true,
             techSignerName: savedReport?.tech_signer_name || currentUser?.name || '',
-            customerSigned: false,
-            customerSignerName: ''
+            customerSigned: savedReport ? !!savedReport.customer_signed : customerPresent,
+            customerSignerName: savedReport?.customer_signer_name || customerDetails,
+            customerSignerDetails: savedReport?.customer_signer_details || customerDetails
           },
           timeline: [
             ...(t.timeline || []),
             {
               time: timeStr,
-              title: 'Field service report submitted.',
-              subtitle: 'Report sent to the customer app for signature.'
+              title: outcome === 'pending'
+                ? 'Field service report submitted — job left pending.'
+                : 'Field service report submitted.',
+              subtitle: customerPresent
+                ? `Signed on site by ${customerDetails || 'the customer'}.`
+                : `Customer not present (${customerDetails || 'contact recorded'}).`
             }
           ]
         };
@@ -825,7 +842,52 @@ export const AppProvider = ({ children }) => {
       return t;
     }));
 
-    showToast(`Service report for ${ticketId} sent to the customer for signature.`, 'success');
+    showToast(
+      outcome === 'pending'
+        ? `Service report for ${ticketId} submitted. Ticket marked Pending.`
+        : `Service report for ${ticketId} submitted. Ticket completed.`,
+      'success'
+    );
+    return true;
+  };
+
+  // Admin moves a Pending ticket to Reassigned. Only this ticket changes — no
+  // new ticket is created. The ticket keeps its assigned technician so
+  // technician stats can compare Completed vs Reassigned.
+  const reassignPending = async (ticketId) => {
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const targetTicket = tickets.find(t => isSameTicket(t, ticketId));
+
+    if (!targetTicket?.dbId) {
+      showToast('Cannot reassign a request that is not stored on the server.', 'error');
+      return false;
+    }
+    try {
+      await reassignPendingInApi(targetTicket.dbId);
+    } catch (err) {
+      showToast(`Reassign failed: ${err.message}`, 'error');
+      return false;
+    }
+
+    updateAndSyncTickets(prev => prev.map(t => {
+      if (isSameTicket(t, ticketId)) {
+        return {
+          ...t,
+          status: 'Reassigned',
+          timeline: [
+            ...(t.timeline || []),
+            {
+              time: timeStr,
+              title: 'Ticket reassigned by admin.',
+              subtitle: 'Pending job closed for reassignment. Raise a new ticket if the work needs to continue.'
+            }
+          ]
+        };
+      }
+      return t;
+    }));
+
+    showToast(`Ticket ${ticketId} marked Reassigned.`, 'success');
     return true;
   };
 
@@ -989,7 +1051,7 @@ export const AppProvider = ({ children }) => {
 
   const reportsData = useMemo(() => {
     const totalRequests = tickets.length;
-    const resolvedStatuses = new Set(['Resolved', 'Closed']);
+    const resolvedStatuses = new Set(['Completed', 'Resolved', 'Closed']);
     const resolved = tickets.filter(ticket => resolvedStatuses.has(ticket.status));
     const percentages = count => totalRequests ? `${Math.round((count / totalRequests) * 100)}%` : '0%';
     const groupTickets = (field, fallback) => Object.entries(tickets.reduce((groups, ticket) => {
@@ -1098,6 +1160,7 @@ export const AppProvider = ({ children }) => {
         assignTechnicianToSlot,
         updateTicketStatus,
         submitServiceReport,
+        reassignPending,
         markTicketPendingHandover,
         requestTechnicianReplacement,
         deleteTicket,

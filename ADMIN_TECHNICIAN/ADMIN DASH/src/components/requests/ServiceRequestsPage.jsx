@@ -179,8 +179,10 @@ export const ServiceRequestsPage = () => {
             <option value="ALL">All Statuses</option>
             <option value="Unassigned">Unassigned</option>
             <option value="Assigned">Assigned</option>
-            <option value="Service In Progress">Service In Progress</option>
-            <option value="Resolved">Resolved</option>
+            <option value="Active">Active</option>
+            <option value="Pending">Pending</option>
+            <option value="Completed">Completed</option>
+            <option value="Reassigned">Reassigned</option>
           </select>
 
           {/* Priority Filter */}
