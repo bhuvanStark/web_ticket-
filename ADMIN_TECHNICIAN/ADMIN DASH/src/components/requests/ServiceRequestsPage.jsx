@@ -22,6 +22,7 @@ import { Avatar } from '../common/Avatar';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { ErrorState } from '../common/ErrorState';
 import { EmptyState } from '../common/EmptyState';
+import { INDIA_STATES } from '../../utils/indiaStates';
 
 export const ServiceRequestsPage = () => {
   const {
@@ -196,16 +197,14 @@ export const ServiceRequestsPage = () => {
             <option value="Low">Low</option>
           </select>
 
-          {/* Location Filter */}
+          {/* Location Filter — by state */}
           <select
             value={locationFilter}
             onChange={(e) => setLocationFilter(e.target.value)}
             className="form-select text-xs font-semibold"
           >
             <option value="ALL">All Locations</option>
-            <option value="Bengaluru">Bengaluru HQ</option>
-            <option value="Chennai">Chennai Office</option>
-            <option value="Hyderabad">Hyderabad Office</option>
+            {INDIA_STATES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 

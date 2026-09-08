@@ -95,6 +95,31 @@ export const TechJobDetailsModal = () => {
                 </div>
                 <div className="font-bold text-[#172033] text-sm">{activeJob.room}</div>
               </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#667085]">Service Type</span>
+                <div className="font-bold text-[#004898] text-sm">{activeJob.serviceType || 'AV'}</div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#667085]">Issue Type</span>
+                <div className="font-bold text-[#172033] text-sm">{activeJob.issueType || '—'}</div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#667085]">Mode</span>
+                <div className="font-bold text-[#172033] text-sm">{activeJob.serviceMode || 'On-site'}</div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#667085]">Requested</span>
+                <div className="font-bold text-[#172033] text-sm">{activeJob.assignedTime || activeJob.requestTime || '—'}</div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#667085]">Contact</span>
+                <div className="font-bold text-[#172033] text-sm break-words">{activeJob.contact || '—'}</div>
+              </div>
             </div>
 
             <div>
@@ -193,9 +218,14 @@ export const TechJobDetailsModal = () => {
 
               {/* Service Details */}
               <div className="bg-white rounded-2xl border border-[#E4E7EC] shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-[#E4E7EC] bg-gradient-to-r from-[#EFF5FC] to-white flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-[#004898]" />
-                  <h3 className="font-extrabold text-[#172033]">Service Report{activeJob.status === 'Pending' ? ' (Pending)' : activeJob.status === 'Reassigned' ? ' (Reassigned)' : ' Details'}</h3>
+                <div className="px-5 py-4 border-b border-[#E4E7EC] bg-gradient-to-r from-[#EFF5FC] to-white flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-[#004898]" />
+                    <h3 className="font-extrabold text-[#172033]">Service Report{activeJob.status === 'Pending' ? ' (Pending)' : activeJob.status === 'Reassigned' ? ' (Reassigned)' : ' Details'}</h3>
+                  </div>
+                  <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-full border bg-[#EFF5FC] text-[#004898] border-[#B3D1F2]">
+                    {activeJob.serviceMode === 'Remote' ? 'REMOTE' : 'ON-SITE'}
+                  </span>
                 </div>
                 
                 <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">

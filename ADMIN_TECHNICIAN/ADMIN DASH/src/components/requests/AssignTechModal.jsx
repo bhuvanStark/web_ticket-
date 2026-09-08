@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, Monitor, Wifi } from 'lucide-react';
+import { X, Monitor, Wifi, Search } from 'lucide-react';
 
 export const AssignTechModal = () => {
   const {
@@ -14,8 +14,16 @@ export const AssignTechModal = () => {
 
   // The admin picks the service mode here — it is stored on the ticket.
   const [mode, setMode] = useState('onsite'); // 'onsite' | 'remote'
+  const [search, setSearch] = useState('');
 
   if (!isAssignModalOpen || !selectedTicket) return null;
+
+  const q = search.trim().toLowerCase();
+  const visibleTechs = q
+    ? technicians.filter(t =>
+        (t.name || '').toLowerCase().includes(q) ||
+        (t.email || '').toLowerCase().includes(q))
+    : technicians;
 
   const handleClose = () => {
     setIsAssignModalOpen(false);
@@ -79,9 +87,26 @@ export const AssignTechModal = () => {
           </p>
         </div>
 
+        {/* Technician search */}
+        <div className="px-5 pt-4">
+          <div className="relative">
+            <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search technician by name or email…"
+              className="w-full pl-9 pr-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
+            />
+          </div>
+        </div>
+
         {/* Technician list */}
         <div className="p-5 space-y-3 max-h-96 overflow-y-auto">
-          {technicians.map((tech) => {
+          {visibleTechs.length === 0 && (
+            <p className="text-xs text-[#98A2B3] text-center py-4">No technician matches “{search}”.</p>
+          )}
+          {visibleTechs.map((tech) => {
             const isSelected = selectedTicket.assignedTo === tech.name;
             return (
               <div

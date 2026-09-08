@@ -177,7 +177,7 @@ export const TechDashboard = () => {
                   <StatusBadge status={t.status} />
                   <span className="flex items-center gap-1 text-[11px] font-bold text-[#667085] bg-[#F8FAFC] border border-[#E4E7EC] px-2 py-0.5 rounded-md">
                     <Clock className="w-3 h-3" /> 
-                    {t.assignedTime || '09:30 AM'}
+                    {t.assignedTime || t.requestTime || '09:30 AM'}
                   </span>
                 </div>
                 

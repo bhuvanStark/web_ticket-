@@ -92,7 +92,7 @@ export const TechJobsPage = () => {
                   <div className="flex items-center gap-1.5">
                     <StatusBadge status={t.status} />
                     <span className="text-[10px] font-bold text-[#004898] bg-[#EFF5FC] px-2 py-0.5 rounded border border-[#B3D1F2]">
-                      {t.assignedTime || '09:30 AM'}
+                      {t.assignedTime || t.requestTime || '09:30 AM'}
                     </span>
                   </div>
                 </div>
@@ -249,9 +249,29 @@ export const TechJobsPage = () => {
                 <div className="flex-1 min-w-[140px] space-y-1 sm:pl-4">
                   <div className="flex items-center gap-1.5 text-[#667085]">
                     <Wrench className="w-3.5 h-3.5" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Equipment</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Service Type</span>
                   </div>
-                  <div className="font-bold text-[#004898] text-sm">{activeJob.equipment || 'AV System'}</div>
+                  <div className="font-bold text-[#004898] text-sm">{activeJob.serviceType || 'AV'}</div>
+                </div>
+              </div>
+
+              {/* Ticket meta — all from the created ticket */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-[#F8FAFC] rounded-lg p-3 border border-[#F2F4F7]">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#667085] mb-1">Issue Type</div>
+                  <div className="font-bold text-[#172033]">{activeJob.issueType || '—'}</div>
+                </div>
+                <div className="bg-[#F8FAFC] rounded-lg p-3 border border-[#F2F4F7]">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#667085] mb-1">Mode</div>
+                  <div className="font-bold text-[#172033]">{activeJob.serviceMode || 'On-site'}</div>
+                </div>
+                <div className="bg-[#F8FAFC] rounded-lg p-3 border border-[#F2F4F7]">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#667085] mb-1">Requested</div>
+                  <div className="font-bold text-[#172033]">{activeJob.assignedTime || activeJob.requestTime || '—'}</div>
+                </div>
+                <div className="bg-[#F8FAFC] rounded-lg p-3 border border-[#F2F4F7]">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#667085] mb-1">Contact</div>
+                  <div className="font-bold text-[#172033] break-words">{activeJob.contact || '—'}</div>
                 </div>
               </div>
 
@@ -269,14 +289,19 @@ export const TechJobsPage = () => {
               {/* Report sign-off status (booleans only — no signature images) */}
               {activeJob.serviceReport && (
                 <div className="pt-2">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="w-5 h-5 text-[#004898]" />
                       <h3 className="font-extrabold text-sm text-[#172033]">Service Report Sign-off</h3>
                     </div>
-                    <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${activeJob.serviceReport.customerSigned ? 'bg-[#ECFDF5] text-[#047857] border-[#A7F3D0]' : 'bg-[#FEF0C7] text-[#B54708] border-[#FEDF89]'}`}>
-                      {activeJob.serviceReport.customerSigned ? '✓ SIGNED BY CUSTOMER' : 'CUSTOMER NOT PRESENT'}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-full border bg-[#EFF5FC] text-[#004898] border-[#B3D1F2]">
+                        {activeJob.serviceMode === 'Remote' ? 'REMOTE' : 'ON-SITE'}
+                      </span>
+                      <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${activeJob.serviceReport.customerSigned ? 'bg-[#ECFDF5] text-[#047857] border-[#A7F3D0]' : 'bg-[#FEF0C7] text-[#B54708] border-[#FEDF89]'}`}>
+                        {activeJob.serviceReport.customerSigned ? '✓ SIGNED BY CUSTOMER' : 'CUSTOMER NOT PRESENT'}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="bg-white p-5 rounded-xl border border-[#E4E7EC] shadow-sm grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">

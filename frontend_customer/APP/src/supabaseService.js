@@ -107,6 +107,7 @@ export function transformDbTicketToFrontend(row) {
     title: row.issue_title,
     description: row.issue_description,
     serviceType: row.service_type === 'onsite_service' ? 'On-site Service' : 'Remote Support',
+    serviceMode: row.service_type === 'remote_support' ? 'Remote' : 'On-site',
     // Which support line: 'av' | 'epabx'.
     supportCategory: row.support_category || 'av',
     supportLine: row.support_category === 'epabx' ? 'EPABX Support' : 'AV Support',

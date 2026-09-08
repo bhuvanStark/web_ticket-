@@ -110,13 +110,34 @@ export const TicketDetailsModal = () => {
             {/* Left Column: Details & Reports */}
             <div className="lg:col-span-2 space-y-8">
               
+              {/* Ticket facts — service type, issue type, mode, contact (from the created ticket) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  ['Service Type', t.serviceType || 'AV'],
+                  ['Issue Type', t.issueType || '—'],
+                  ['Mode', t.serviceMode || 'On-site'],
+                  ['Requested', t.assignedTime || t.requestTime || '—'],
+                ].map(([k, v]) => (
+                  <div key={k} className="bg-white rounded-xl border border-[#E4E7EC] p-3">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-[#667085] mb-1">{k}</div>
+                    <div className="text-sm font-bold text-[#172033]">{v}</div>
+                  </div>
+                ))}
+                {t.contact && (
+                  <div className="bg-white rounded-xl border border-[#E4E7EC] p-3 col-span-2 sm:col-span-4">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-[#667085] mb-1">Contact</div>
+                    <div className="text-sm font-bold text-[#172033] break-words">{t.contact}</div>
+                  </div>
+                )}
+              </div>
+
               {/* Customer Description */}
               <div className="space-y-3">
                 <h3 className="text-[11px] font-black uppercase tracking-widest text-[#667085]">Customer Description</h3>
                 <div className="bg-white p-5 rounded-2xl border border-[#E4E7EC] shadow-sm relative overflow-hidden">
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#004898]"></div>
                   <p className="text-sm text-[#344054] leading-relaxed italic">
-                    "{t.customerDescription || "The camera turns on but does not appear in Teams. Please send someone to check the cables."}"
+                    "{t.customerDescription || '—'}"
                   </p>
                 </div>
               </div>
@@ -133,6 +154,7 @@ export const TicketDetailsModal = () => {
                       <CheckCircle className="w-5 h-5 text-[#059669]" />
                       <h3 className="font-extrabold text-[#172033]">
                         Field Service Report
+                        <span className="ml-2 text-[10px] font-bold bg-[#EFF5FC] text-[#004898] px-2 py-0.5 rounded-full border border-[#B3D1F2]">{t.serviceMode === 'Remote' ? 'REMOTE' : 'ON-SITE'}</span>
                         {t.status === 'Pending' && <span className="ml-2 text-[10px] font-bold bg-[#FEF0C7] text-[#B54708] px-2 py-0.5 rounded-full border border-[#FDE68A]">PENDING</span>}
                         {t.status === 'Reassigned' && <span className="ml-2 text-[10px] font-bold bg-[#F2F4F7] text-[#475467] px-2 py-0.5 rounded-full border border-[#E4E7EC]">REASSIGNED</span>}
                       </h3>

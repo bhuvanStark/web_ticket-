@@ -120,6 +120,8 @@ export function transformDbTicketToAdmin(row) {
     room: row.room_name || row.rooms?.name || (row.support_category === 'epabx' ? '—' : 'Unknown room'),
     roomId: row.room_id || null,
     area: row.area || '',
+    // Free-text Name - Phone - Email typed by the admin when raising the ticket.
+    contact: row.contact || '',
     equipment: row.equipment?.name || null,
     equipmentId: row.equipment_id,
     issueType: row.issue_category || 'Uncategorized',
@@ -131,6 +133,9 @@ export function transformDbTicketToAdmin(row) {
     priority: row.priority ? row.priority.charAt(0).toUpperCase() + row.priority.slice(1) : 'High',
     preferredDate: row.preferred_date || null,
     preferredSlot: row.preferred_time || null,
+    // Time to show against the ticket: the requested slot if given, else the
+    // time the request came in. Never a hard-coded default here.
+    requestTime: row.preferred_time || timeStr,
     status: STATUS_MAP[row.status] || (row.status ? row.status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : (row.technician?.full_name ? 'Assigned' : 'Unassigned')),
     assignedToId: row.technician?.id || null,
     assignedTo: row.technician?.full_name || null,
@@ -322,6 +327,7 @@ export async function createServiceRequestInApiAdmin(newTicketData) {
     if (!isEpabx && newTicketData.roomName) {
       payload.room_name = newTicketData.roomName;
     }
+    if (newTicketData.contact) payload.contact = newTicketData.contact;
     if (newTicketData.preferredDate) payload.preferred_date = newTicketData.preferredDate;
     if (newTicketData.preferredTime) payload.preferred_time = newTicketData.preferredTime;
     if (newTicketData.area) payload.area = newTicketData.area;

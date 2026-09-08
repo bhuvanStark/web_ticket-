@@ -267,6 +267,7 @@ export function RequestTrackingScreen({
                   Service Report
                 </h4>
                 {[
+                  ['Service', ticket.serviceMode || (ticket.serviceType === 'Remote Support' ? 'Remote' : 'On-site')],
                   ['System', report.system],
                   ['Nature of Complaint', report.natureOfComplaint],
                   ['Work Done', report.workDone],

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, PlusCircle } from 'lucide-react';
+import { X, PlusCircle, AlertCircle } from 'lucide-react';
+import { StateSelect } from '../common/StateSelect';
 
 // Issue categories per support line — kept in sync with the customer app's
 // BookServiceWizard so an admin-raised ticket is categorised identically.
@@ -44,6 +45,9 @@ export const CreateTicketModal = () => {
   const [facilityLocation, setFacilityLocation] = useState('');
   const [roomName, setRoomName] = useState('');
 
+  // Free text: Name - Phone - Email in one field. Stored verbatim, shown to the tech.
+  const [contact, setContact] = useState('');
+
   const [title, setTitle] = useState('');
   // 'AV' | 'EPABX' — drives the issue-category list and whether a room is asked.
   const [serviceType, setServiceType] = useState('AV');
@@ -52,16 +56,26 @@ export const CreateTicketModal = () => {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
 
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  // Clear a stale error banner whenever the popup is (re)opened.
+  useEffect(() => {
+    if (isCreateTicketOpen) setFormError('');
+  }, [isCreateTicketOpen]);
+
   if (!isCreateTicketOpen) return null;
 
   const isEpabx = serviceType === 'EPABX';
   const issueCategories = isEpabx ? EPABX_ISSUE_CATEGORIES : AV_ISSUE_CATEGORIES;
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const handleSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (submitting) return;
+
     if (!title.trim()) return;
     if (!customerOrg.trim() || !facilityLocation.trim()) {
-      alert('Enter the customer organisation and facility location.');
+      alert('Enter the customer organisation and select the facility location (state).');
       return;
     }
     if (!isEpabx && !roomName) {
@@ -69,22 +83,33 @@ export const CreateTicketModal = () => {
       return;
     }
 
-    createServiceRequest({
-      title,
-      customerOrg: customerOrg.trim(),
-      facilityLocation: facilityLocation.trim(),
-      // EPABX tickets carry no room; AV tickets require the selected one.
-      roomName: isEpabx ? null : roomName,
-      serviceType,
-      issueType,
-      area: area.trim() || null,
-      // Sent as separate columns; the modal already keeps them split.
-      preferredDate: selectedDate || null,
-      preferredTime: selectedTime || null,
-      attachments: []
-    });
-
-    setIsCreateTicketOpen(false);
+    setSubmitting(true);
+    setFormError('');
+    try {
+      // Wait for the database write to actually succeed before closing.
+      await createServiceRequest({
+        title,
+        customerOrg: customerOrg.trim(),
+        facilityLocation: facilityLocation.trim(),
+        // EPABX tickets carry no room; AV tickets require the selected one.
+        roomName: isEpabx ? null : roomName,
+        contact: contact.trim() || null,
+        serviceType,
+        issueType,
+        area: area.trim() || null,
+        // Sent as separate columns; the modal already keeps them split.
+        preferredDate: selectedDate || null,
+        preferredTime: selectedTime || null,
+        attachments: []
+      });
+      // Success: createServiceRequest already showed the success toast.
+      setIsCreateTicketOpen(false);
+    } catch (err) {
+      // Failure: keep the popup open with everything the admin typed, show why.
+      setFormError(err?.message || 'Could not create the ticket. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -103,13 +128,21 @@ export const CreateTicketModal = () => {
           </div>
           <button
             onClick={() => setIsCreateTicketOpen(false)}
-            className="p-1 text-[#667085] hover:text-[#172033] rounded-lg cursor-pointer"
+            disabled={submitting}
+            className="p-1 text-[#667085] hover:text-[#172033] rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+          {formError && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318]">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <p className="text-xs font-semibold">{formError}</p>
+            </div>
+          )}
+
           {/* Customer / Location / Room cascade — Room only for AV */}
           <div className="p-4 rounded-xl border border-[#E4E7EC] space-y-3">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#004898]">
@@ -129,13 +162,11 @@ export const CreateTicketModal = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#172033] mb-1">Facility Location</label>
-                <input
-                  type="text"
+                <label className="block text-xs font-bold text-[#172033] mb-1">Facility Location <span className="font-normal text-[#98A2B3]">(state)</span></label>
+                <StateSelect
                   value={facilityLocation}
-                  onChange={(e) => setFacilityLocation(e.target.value)}
-                  placeholder="e.g. Chennai Office - 2nd Floor"
-                  className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none"
+                  onChange={setFacilityLocation}
+                  placeholder="Select a state…"
                 />
               </div>
 
@@ -162,6 +193,17 @@ export const CreateTicketModal = () => {
                   value={area}
                   onChange={(e) => setArea(e.target.value)}
                   placeholder="e.g. 3rd Floor East Wing, Reception"
+                  className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898]"
+                />
+              </div>
+
+              <div className={isEpabx ? 'sm:col-span-2' : 'sm:col-span-3'}>
+                <label className="block text-xs font-bold text-[#172033] mb-1">Contact <span className="font-normal text-[#98A2B3]">(optional — Name - Phone - Email)</span></label>
+                <input
+                  type="text"
+                  value={contact}
+                  onChange={(e) => setContact(e.target.value)}
+                  placeholder="e.g. Ramesh Kumar - 9876543210 - ramesh@abc.com"
                   className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898]"
                 />
               </div>
@@ -247,15 +289,18 @@ export const CreateTicketModal = () => {
           <button
             type="button"
             onClick={() => setIsCreateTicketOpen(false)}
-            className="px-4 py-2.5 text-xs font-bold text-[#475467] hover:text-[#172033] hover:bg-[#F2F4F7] rounded-lg transition-all cursor-pointer"
+            disabled={submitting}
+            className="px-4 py-2.5 text-xs font-bold text-[#475467] hover:text-[#172033] hover:bg-[#F2F4F7] rounded-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleSubmit}
-            className="px-6 py-2.5 bg-[#004898] hover:bg-[#003673] text-white font-extrabold text-xs rounded-lg transition-all shadow-xs cursor-pointer"
+            disabled={submitting}
+            className="px-6 py-2.5 bg-[#004898] hover:bg-[#003673] text-white font-extrabold text-xs rounded-lg transition-all shadow-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Create Service Ticket
+            {submitting ? 'Creating…' : 'Create Service Ticket'}
           </button>
         </div>
       </div>

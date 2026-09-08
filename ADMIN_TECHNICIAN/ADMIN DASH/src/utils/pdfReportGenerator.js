@@ -1,3 +1,5 @@
+import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
+
 // Renders the field service report as a printable page. All content comes from
 // the real ticket + service_reports data — no fabricated content, and no
 // signature images (only whether each party signed).
@@ -16,6 +18,9 @@ export function generateServiceReportPDF(ticket) {
   const location = esc(ticket?.location || ticket?.locationName || '—');
   const room = ticket?.room || ticket?.roomName;
   const supportLine = (ticket?.supportCategory === 'epabx' || ticket?.serviceType === 'EPABX') ? 'EPABX Support' : 'AV Support';
+  const serviceMode = ticket?.serviceMode === 'Remote' ? 'Remote' : 'On-site';
+  const issueType = esc(ticket?.issueType || '—');
+  const contact = esc(ticket?.contact || '');
   const issue = esc(ticket?.title || ticket?.issue || '—');
   const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -29,7 +34,7 @@ export function generateServiceReportPDF(ticket) {
       <style>
         body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; color: #0F172A; margin: 0; padding: 40px; background: #FFF; }
         .report-header { border-bottom: 3px solid #004898; padding-bottom: 16px; margin-bottom: 24px; }
-        .logo-title { font-size: 22px; font-weight: 800; color: #004898; }
+        .logo-img { height: 34px; width: auto; display: block; margin-bottom: 6px; }
         .logo-sub { font-size: 12px; color: #64748B; }
         table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }
         th, td { text-align: left; padding: 8px 10px; border: 1px solid #E2E8F0; vertical-align: top; }
@@ -51,7 +56,7 @@ export function generateServiceReportPDF(ticket) {
       <div class="print-bar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
 
       <div class="report-header">
-        <div class="logo-title">TaskTel</div>
+        <img class="logo-img" src="${TASKTEL_LOGO_DATA_URI}" alt="TaskTel" />
         <div class="logo-sub">Field Service Report</div>
       </div>
 
@@ -60,8 +65,11 @@ export function generateServiceReportPDF(ticket) {
         ${row('Report Date', dateStr)}
         ${row('Customer', customer)}
         ${row('Support Line', supportLine)}
+        ${row('Service Mode', serviceMode)}
+        ${row('Issue Type', issueType)}
         ${row('Location', location)}
         ${room ? row('Room', room) : ''}
+        ${contact ? row('Contact', contact) : ''}
         ${row('Reported Issue', issue)}
       </table>
 

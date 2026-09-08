@@ -33,7 +33,8 @@ const EPABX_SYSTEMS = [
   'SIP ATH 3800',
   'HiPath 3550',
   'HiPath 1150',
-  'HiPath 1190'
+  'HiPath 1190',
+  'Other'
 ];
 
 export const TechServiceFormModal = () => {
@@ -61,9 +62,14 @@ export const TechServiceFormModal = () => {
   const systemOptions = isEpabx ? EPABX_SYSTEMS : AV_SYSTEMS;
 
   const [system, setSystem] = useState(systemOptions[0]);
+  // When System = "Other", the tech types a custom name that is saved as the
+  // report's system value.
+  const [customSystem, setCustomSystem] = useState('');
   const [natureOfComplaint, setNatureOfComplaint] = useState('');
   const [workDone, setWorkDone] = useState('');
   const [partsMaterial, setPartsMaterial] = useState('');
+
+  const serviceModeLabel = selectedTicket?.serviceMode === 'Remote' ? 'Remote' : 'On-site';
 
   if (!isServiceFormOpen || !selectedTicket) return null;
 
@@ -142,6 +148,10 @@ export const TechServiceFormModal = () => {
 
   // outcome: 'completed' (default) or 'pending'. Same report either way.
   const submitWithOutcome = async (outcome) => {
+    if (system === 'Other' && !customSystem.trim()) {
+      alert('Enter the custom system name.');
+      return;
+    }
     if (!workDone.trim()) {
       alert('Please describe the work done.');
       return;
@@ -162,7 +172,7 @@ export const TechServiceFormModal = () => {
     // Drawn signatures are not stored — only that each party signed, plus the
     // customer's typed name + phone.
     const saved = await submitServiceReport(selectedTicket.id, {
-      system,
+      system: system === 'Other' ? customSystem.trim() : system,
       natureOfComplaint,
       workDone: workDone.trim(),
       partsMaterial,
@@ -195,9 +205,14 @@ export const TechServiceFormModal = () => {
               </p>
             </div>
           </div>
-          <button onClick={() => setIsServiceFormOpen(false)} className="p-1 text-[#667085] hover:text-[#172033]">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-full border bg-[#EFF5FC] text-[#004898] border-[#B3D1F2]">
+              {serviceModeLabel === 'Remote' ? 'REMOTE' : 'ON-SITE'}
+            </span>
+            <button onClick={() => setIsServiceFormOpen(false)} className="p-1 text-[#667085] hover:text-[#172033]">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
@@ -211,6 +226,15 @@ export const TechServiceFormModal = () => {
             >
               {systemOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
             </select>
+            {system === 'Other' && (
+              <input
+                type="text"
+                value={customSystem}
+                onChange={(e) => setCustomSystem(e.target.value)}
+                placeholder="Enter the system / equipment name"
+                className="w-full mt-2 px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
+              />
+            )}
           </div>
 
           {/* 2. Nature of Complaint */}

@@ -86,6 +86,7 @@ router.post('/', validateServiceRequest, async (req, res) => {
       customer_org,
       facility_location,
       room_name,
+      contact,
       issue_category,
       issue_title,
       issue_description,
@@ -116,6 +117,8 @@ router.post('/', validateServiceRequest, async (req, res) => {
       customer_org: customer_org || null,
       facility_location: facility_location || null,
       room_name: resolvedRoomName,
+      // Free-text Name - Phone - Email, shown to the assigned technician.
+      contact: contact || null,
       issue_category,
       issue_title,
       issue_description,
