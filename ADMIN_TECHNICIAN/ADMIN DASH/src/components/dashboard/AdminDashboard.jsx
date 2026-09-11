@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Ticket,
@@ -12,6 +12,7 @@ import {
   Plus
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
+import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
 
 export const AdminDashboard = () => {
   const {
@@ -24,6 +25,8 @@ export const AdminDashboard = () => {
     globalSearchQuery
   } = useApp();
 
+  const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
+
   const searchQuery = (globalSearchQuery || '').trim().toLowerCase();
 
   // Metrics
@@ -31,7 +34,10 @@ export const AdminDashboard = () => {
   // "Total Requests" = every ticket raised, all time.
   const totalRequestsCount = tickets.length;
   const unassignedCount = tickets.filter(t => !isClosed(t) && (t.status === 'Unassigned' || !t.assignedTo)).length;
-  const inProgressCount = tickets.filter(t => t.status === 'Service In Progress' || t.status === 'Technician On The Way').length;
+  // Canonical workflow is Unassigned -> Assigned -> Active -> (Pending) -> Completed / Reassigned
+  // (see adminApiService.STATUS_MAP). "Active" means a technician has accepted
+  // and is actively working the ticket.
+  const activeCount = tickets.filter(t => t.status === 'Active').length;
   const today = new Date().toDateString();
   const completedTodayCount = tickets.filter(t =>
     isClosed(t) &&
@@ -66,10 +72,18 @@ export const AdminDashboard = () => {
     });
   };
 
+  // AV / EPABX scoping — applies only to the two list sections below, not the
+  // KPI cards. `supportCategory` ('av' | 'epabx') is the real field the ticket
+  // was raised under; no hard-coded ticket data.
+  const matchesServiceType = (t) =>
+    serviceTypeFilter === 'ALL' || t.supportCategory === serviceTypeFilter;
+
   // Sections data with live search query filtering and timestamp sorting.
   // Completed tickets never appear on the dashboard — they live in Service History.
-  const activeJobs = sortTicketsByTime(tickets.filter(t => !isClosed(t) && (t.status === 'Assigned' || t.status === 'Technician On The Way' || t.status === 'Service In Progress' || t.status === 'Awaiting Customer Signature') && matchesSearch(t)));
-  const unassignedRequests = sortTicketsByTime(tickets.filter(t => !isClosed(t) && (t.status === 'Unassigned' || !t.assignedTo) && matchesSearch(t)));
+  // "Assigned Field Service" = assigned to a technician but not yet accepted.
+  // Once accepted the ticket moves to 'Active' and disappears from this list.
+  const assignedFieldService = sortTicketsByTime(tickets.filter(t => t.status === 'Assigned' && matchesSearch(t) && matchesServiceType(t)));
+  const unassignedRequests = sortTicketsByTime(tickets.filter(t => !isClosed(t) && (t.status === 'Unassigned' || !t.assignedTo) && matchesSearch(t) && matchesServiceType(t)));
 
   return (
     <div className="space-y-6">
@@ -114,12 +128,12 @@ export const AdminDashboard = () => {
 
         <div className="card p-5 border-l-4 border-l-[#0284C7]">
           <div className="flex items-center justify-between text-[#667085] mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">In Progress</span>
+            <span className="text-xs font-bold uppercase tracking-wider">Active</span>
             <div className="p-2 rounded-lg bg-[#F0F9FF] text-[#026AA7]">
               <Clock className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-3xl font-extrabold text-[#026AA7]">{inProgressCount}</div>
+          <div className="text-3xl font-extrabold text-[#026AA7]">{activeCount}</div>
         </div>
 
         <button
@@ -137,6 +151,12 @@ export const AdminDashboard = () => {
           <div className="text-3xl font-extrabold text-[#027A48]">{completedTodayCount}</div>
           <div className="text-[11px] font-semibold text-[#027A48] mt-1">View in Service History &rarr;</div>
         </button>
+      </div>
+
+      {/* AV / EPABX Filter — scopes the two list sections below */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">Filter by Service Type</span>
+        <ServiceTypeToggle value={serviceTypeFilter} onChange={setServiceTypeFilter} />
       </div>
 
       {/* Main Grid Sections */}
@@ -157,7 +177,7 @@ export const AdminDashboard = () => {
                 onClick={() => setActivePage('requests')}
                 className="text-xs font-bold text-[#004898] hover:underline flex items-center gap-1 shrink-0"
               >
-                View All ({unassignedCount})
+                View All ({unassignedRequests.length})
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -208,12 +228,12 @@ export const AdminDashboard = () => {
             </div>
           </div>
 
-          {/* Section: Active Service Jobs */}
+          {/* Section: Assigned Field Service — assigned but not yet accepted by the technician */}
           <div className="card overflow-hidden">
             <div className="card-header px-5 py-4">
               <div>
-                <h3 className="card-title text-base font-extrabold">Active Field Service Jobs</h3>
-                <p className="text-xs text-[#667085] mt-0.5">Currently assigned and in-progress field tickets</p>
+                <h3 className="card-title text-base font-extrabold">Assigned Field Service</h3>
+                <p className="text-xs text-[#667085] mt-0.5">Dispatched to a technician, awaiting acceptance</p>
               </div>
               <button
                 onClick={() => setActivePage('requests')}
@@ -224,7 +244,12 @@ export const AdminDashboard = () => {
               </button>
             </div>
             <div className="divide-y divide-[#E4E7EC]">
-              {activeJobs.map((t) => (
+              {assignedFieldService.length === 0 ? (
+                <div className="p-6 text-center text-xs text-[#667085]">
+                  No tickets are currently dispatched and awaiting acceptance.
+                </div>
+              ) : (
+              assignedFieldService.map((t) => (
                 <div
                   key={t.id}
                   onClick={() => setSelectedTicketId(t.id)}
@@ -251,7 +276,7 @@ export const AdminDashboard = () => {
                     <ArrowRight className="w-4 h-4 text-[#98A2B3] group-hover:text-[#004898]" />
                   </div>
                 </div>
-              ))}
+              )))}
             </div>
           </div>
         </div>

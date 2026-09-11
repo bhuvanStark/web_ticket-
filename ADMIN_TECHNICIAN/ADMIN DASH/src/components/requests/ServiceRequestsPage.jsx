@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Search,
@@ -7,6 +7,8 @@ import {
   Eye,
   UserPlus,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   X,
   Ticket,
   MapPin,
@@ -23,6 +25,9 @@ import { TableSkeleton } from '../common/SkeletonLoader';
 import { ErrorState } from '../common/ErrorState';
 import { EmptyState } from '../common/EmptyState';
 import { INDIA_STATES } from '../../utils/indiaStates';
+import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
+
+const PAGE_SIZE = 15;
 
 export const ServiceRequestsPage = () => {
   const {
@@ -46,6 +51,14 @@ export const ServiceRequestsPage = () => {
   const [techFilter, setTechFilter] = useState('ALL');
   const [issueFilter, setIssueFilter] = useState('ALL');
   const [customerFilter, setCustomerFilter] = useState('ALL');
+  const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset to page 1 whenever the result set could have shifted. Declared
+  // before the early returns below so hook order stays stable across renders.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter, priorityFilter, customerFilter, locationFilter, techFilter, issueFilter, serviceTypeFilter]);
 
   if (simulatedLoading) {
     return <TableSkeleton rows={6} />;
@@ -90,7 +103,10 @@ export const ServiceRequestsPage = () => {
       issueFilter === 'ALL' ||
       (t.issueType || '').toLowerCase().includes(issueFilter.toLowerCase());
 
-    return matchesSearch && matchesStatus && matchesPriority && matchesCustomer && matchesLocation && matchesTech && matchesIssue;
+    const matchesServiceType =
+      serviceTypeFilter === 'ALL' || t.supportCategory === serviceTypeFilter;
+
+    return matchesSearch && matchesStatus && matchesPriority && matchesCustomer && matchesLocation && matchesTech && matchesIssue && matchesServiceType;
   });
 
   const sortedTickets = [...filteredTickets].sort((a, b) => {
@@ -109,7 +125,8 @@ export const ServiceRequestsPage = () => {
     customerFilter !== 'ALL' ||
     locationFilter !== 'ALL' ||
     techFilter !== 'ALL' ||
-    issueFilter !== 'ALL';
+    issueFilter !== 'ALL' ||
+    serviceTypeFilter !== 'ALL';
 
   const clearFilters = () => {
     setSearch('');
@@ -119,7 +136,20 @@ export const ServiceRequestsPage = () => {
     setLocationFilter('ALL');
     setTechFilter('ALL');
     setIssueFilter('ALL');
+    setServiceTypeFilter('ALL');
   };
+
+  const totalPages = Math.max(1, Math.ceil(sortedTickets.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageTickets = sortedTickets.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // Compact page-number list: all pages when few, otherwise first/last +
+  // a window around the current page with "…" gaps.
+  const pageNumbers = (() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages = new Set([1, 2, totalPages - 1, totalPages, safePage - 1, safePage, safePage + 1]);
+    return [...pages].filter(p => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+  })();
 
   return (
     <div className="space-y-6">
@@ -208,11 +238,16 @@ export const ServiceRequestsPage = () => {
           </select>
         </div>
 
-        {hasActiveFilters && (
-          <div className="flex items-center justify-between pt-2.5 border-t border-[#E4E7EC] text-xs">
-            <span className="text-[#667085]">
-              Showing <strong className="text-[#004898]">{filteredTickets.length}</strong> of {tickets.length} total tickets
-            </span>
+        <div className="flex items-center justify-between flex-wrap gap-3 pt-1">
+          <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">Service Type</span>
+          <ServiceTypeToggle value={serviceTypeFilter} onChange={setServiceTypeFilter} />
+        </div>
+
+        <div className="flex items-center justify-between pt-2.5 border-t border-[#E4E7EC] text-xs">
+          <span className="text-[#667085]">
+            Showing <strong className="text-[#004898]">{filteredTickets.length}</strong> of {tickets.length} total tickets
+          </span>
+          {hasActiveFilters && (
             <button
               onClick={clearFilters}
               className="text-[#F04438] font-bold hover:underline flex items-center gap-1"
@@ -220,8 +255,8 @@ export const ServiceRequestsPage = () => {
               <X className="w-3.5 h-3.5" />
               <span>Clear Filters</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Main Spacious Table */}
@@ -239,8 +274,9 @@ export const ServiceRequestsPage = () => {
           }
         />
       ) : (
+        <>
         <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden bg-white">
-          <table className="table w-full">
+          <table className="table w-full table-fixed">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
                 <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[25%]">Ticket Details</th>
@@ -252,19 +288,19 @@ export const ServiceRequestsPage = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F2F4F7]">
-              {sortedTickets.map((t) => (
-                <tr key={t.id} className="hover:bg-[#F8FAFC] transition-all">
-                  
-                  {/* Ticket Details (Title + ID + Date) */}
-                  <td className="px-5 py-4">
+              {pageTickets.map((t) => (
+                <tr key={t.id} className="hover:bg-[#F8FAFC] transition-all align-top">
+
+                  {/* Ticket Details (Title + ID + Date) — wraps naturally instead of truncating to one line */}
+                  <td className="px-5 py-4" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>
                     <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-bold text-[#172033] line-clamp-1" title={t.title}>
+                      <span className="text-xs font-bold text-[#172033] leading-snug">
                         {t.title}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button
                           onClick={() => setSelectedTicketId(t.id)}
-                          className="px-2 py-0.5 rounded bg-[#EFF5FC] text-[#004898] hover:bg-[#D6E6F7] font-mono font-bold text-[10px] transition-all border border-[#B3D1F2] cursor-pointer"
+                          className="px-2 py-0.5 rounded bg-[#EFF5FC] text-[#004898] hover:bg-[#D6E6F7] font-mono font-bold text-[10px] transition-all border border-[#B3D1F2] cursor-pointer shrink-0"
                         >
                           {t.id}
                         </button>
@@ -275,16 +311,16 @@ export const ServiceRequestsPage = () => {
                     </div>
                   </td>
 
-                  {/* Client & Location (Customer + Room/Building) */}
-                  <td className="px-5 py-4">
+                  {/* Client & Location (Customer + Room/Building) — long values wrap instead of truncating */}
+                  <td className="px-5 py-4" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>
                     <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5 font-bold text-[#172033] text-xs">
-                        <Building2 className="w-3.5 h-3.5 text-[#004898] shrink-0" />
-                        <span className="truncate">{t.customer}</span>
+                      <div className="flex items-start gap-1.5 font-bold text-[#172033] text-xs">
+                        <Building2 className="w-3.5 h-3.5 text-[#004898] shrink-0 mt-0.5" />
+                        <span>{t.customer}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-[#667085]">
-                        <MapPin className="w-3.5 h-3.5 text-[#98A2B3] shrink-0 opacity-0" />
-                        <span className="truncate">{t.room} • {t.location}</span>
+                      <div className="flex items-start gap-1.5 text-[10px] text-[#667085]">
+                        <MapPin className="w-3.5 h-3.5 text-[#98A2B3] shrink-0 opacity-0 mt-0.5" />
+                        <span>{t.room} • {t.location}</span>
                       </div>
                     </div>
                   </td>
@@ -371,6 +407,55 @@ export const ServiceRequestsPage = () => {
             </tbody>
           </table>
         </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+            <span className="text-xs text-[#667085]">
+              Page <strong className="text-[#172033]">{safePage}</strong> of {totalPages}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                className="p-2 rounded-lg border border-[#E4E7EC] text-[#475467] hover:bg-[#F8FAFC] disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              {pageNumbers.map((p, idx) => {
+                const prev = pageNumbers[idx - 1];
+                const showGap = prev !== undefined && p - prev > 1;
+                return (
+                  <React.Fragment key={p}>
+                    {showGap && <span className="px-1 text-xs text-[#98A2B3]">…</span>}
+                    <button
+                      onClick={() => setCurrentPage(p)}
+                      className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        p === safePage
+                          ? 'bg-[#004898] text-white'
+                          : 'text-[#475467] border border-[#E4E7EC] hover:bg-[#F8FAFC]'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage === totalPages}
+                className="p-2 rounded-lg border border-[#E4E7EC] text-[#475467] hover:bg-[#F8FAFC] disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
+                title="Next page"
+              >
+                <span>Next</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+        </>
       )}
     </div>
   );

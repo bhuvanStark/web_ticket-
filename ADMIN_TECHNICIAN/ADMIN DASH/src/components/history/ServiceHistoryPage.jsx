@@ -3,6 +3,8 @@ import { useApp } from '../../context/AppContext';
 import { Search, Download, Eye, MapPin, ChevronDown, FileText, FileSpreadsheet, FileJson, Calendar as CalendarIcon } from 'lucide-react';
 import { StatusBadge } from '../common/Badge';
 import { TableSkeleton } from '../common/SkeletonLoader';
+import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
+import { exportServiceHistory } from '../../utils/serviceHistoryExport';
 
 const localDateKey = (d) => {
   const x = new Date(d);
@@ -21,6 +23,7 @@ export const ServiceHistoryPage = () => {
   const [companyFilter, setCompanyFilter] = useState('');
   const [techFilter, setTechFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -61,7 +64,12 @@ export const ServiceHistoryPage = () => {
     return completedKey(t) === selectedDate;
   });
 
-  const filtered = dateScoped.filter(t => {
+  // AV / EPABX — the real support line the ticket was raised under.
+  const serviceTypeScoped = dateScoped.filter(t =>
+    serviceTypeFilter === 'ALL' || t.supportCategory === serviceTypeFilter
+  );
+
+  const filtered = serviceTypeScoped.filter(t => {
     if (companyFilter && t.customer !== companyFilter) return false;
     if (techFilter && t.assignedTo !== techFilter) return false;
     const q = search.toLowerCase();
@@ -115,7 +123,8 @@ export const ServiceHistoryPage = () => {
               <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-[#E4E7EC] overflow-hidden z-20 animate-in fade-in slide-in-from-top-2 duration-200 py-2">
                 <button
                   onClick={() => {
-                    showToast('Exporting Service Audit Log to PDF...', 'info');
+                    exportServiceHistory(filtered, 'pdf');
+                    showToast(`Exporting ${filtered.length} record${filtered.length === 1 ? '' : 's'} to PDF...`, 'info');
                     setIsExportOpen(false);
                   }}
                   className="w-full px-5 py-3 text-left text-sm font-semibold text-[#172033] hover:bg-[#F8FAFC] flex items-center gap-3 transition-colors"
@@ -125,7 +134,8 @@ export const ServiceHistoryPage = () => {
                 </button>
                 <button
                   onClick={() => {
-                    showToast('Exporting Service Audit Log to Excel...', 'info');
+                    exportServiceHistory(filtered, 'excel');
+                    showToast(`Exporting ${filtered.length} record${filtered.length === 1 ? '' : 's'} to Excel...`, 'info');
                     setIsExportOpen(false);
                   }}
                   className="w-full px-5 py-3 text-left text-sm font-semibold text-[#172033] hover:bg-[#F8FAFC] flex items-center gap-3 transition-colors"
@@ -135,7 +145,8 @@ export const ServiceHistoryPage = () => {
                 </button>
                 <button
                   onClick={() => {
-                    showToast('Exporting Service Audit Log to CSV...', 'info');
+                    exportServiceHistory(filtered, 'csv');
+                    showToast(`Exporting ${filtered.length} record${filtered.length === 1 ? '' : 's'} to CSV...`, 'info');
                     setIsExportOpen(false);
                   }}
                   className="w-full px-5 py-3 text-left text-sm font-semibold text-[#172033] hover:bg-[#F8FAFC] flex items-center gap-3 transition-colors"
@@ -145,7 +156,8 @@ export const ServiceHistoryPage = () => {
                 </button>
                 <button
                   onClick={() => {
-                    showToast('Exporting Service Audit Log to DOC...', 'info');
+                    exportServiceHistory(filtered, 'doc');
+                    showToast(`Exporting ${filtered.length} record${filtered.length === 1 ? '' : 's'} to DOC...`, 'info');
                     setIsExportOpen(false);
                   }}
                   className="w-full px-5 py-3 text-left text-sm font-semibold text-[#172033] hover:bg-[#F8FAFC] flex items-center gap-3 transition-colors"
@@ -157,6 +169,12 @@ export const ServiceHistoryPage = () => {
             )}
           </div>
         </div>
+      </div>
+
+      {/* AV / EPABX Filter */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">Filter by Service Type</span>
+        <ServiceTypeToggle value={serviceTypeFilter} onChange={setServiceTypeFilter} />
       </div>
 
       {/* Filter bar: search + date + company + technician */}
@@ -222,9 +240,9 @@ export const ServiceHistoryPage = () => {
           {techs.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        {(companyFilter || techFilter || statusFilter !== 'ALL' || selectedDate) && (
+        {(companyFilter || techFilter || statusFilter !== 'ALL' || selectedDate || serviceTypeFilter !== 'ALL') && (
           <button
-            onClick={() => { setCompanyFilter(''); setTechFilter(''); setStatusFilter('ALL'); setSelectedDate(''); }}
+            onClick={() => { setCompanyFilter(''); setTechFilter(''); setStatusFilter('ALL'); setSelectedDate(''); setServiceTypeFilter('ALL'); }}
             className="text-xs font-bold text-[#D92D20] hover:underline shrink-0"
           >
             Clear filters

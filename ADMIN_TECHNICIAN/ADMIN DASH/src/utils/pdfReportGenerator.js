@@ -22,7 +22,16 @@ export function generateServiceReportPDF(ticket) {
   const issueType = esc(ticket?.issueType || '—');
   const contact = esc(ticket?.contact || '');
   const issue = esc(ticket?.title || ticket?.issue || '—');
-  const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  // Never stamp the report with "now" — always the technician's actual
+  // completion time, taken from the stored data. Fall back to the
+  // technician's sign-off time if the completion date wasn't recorded, and
+  // never fabricate a date for a ticket that isn't actually completed.
+  const isCompleted = ticket?.status === 'Completed';
+  const completionSource = ticket?.completedAt || ticket?.actualCompletionDate || r.techSignedAt;
+  const dateStr = isCompleted && completionSource
+    ? new Date(completionSource).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '—';
 
   const row = (k, v) => `<tr><th>${k}</th><td>${esc(v || '—')}</td></tr>`;
 
@@ -62,7 +71,7 @@ export function generateServiceReportPDF(ticket) {
 
       <table>
         ${row('Service Ticket', ticketId)}
-        ${row('Report Date', dateStr)}
+        ${row('Completion Date', dateStr)}
         ${row('Customer', customer)}
         ${row('Support Line', supportLine)}
         ${row('Service Mode', serviceMode)}
