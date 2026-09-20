@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, Download, Eye, MapPin, ChevronDown, FileText, FileSpreadsheet, FileJson, Calendar as CalendarIcon } from 'lucide-react';
+import { Search, Download, Eye, MapPin, ChevronDown, FileText, FileSpreadsheet, FileJson, Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { StatusBadge } from '../common/Badge';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
@@ -12,18 +12,25 @@ const localDateKey = (d) => {
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 };
 
+const PAGE_SIZE = 15;
+
 export const ServiceHistoryPage = () => {
-  const { tickets, setSelectedTicketId, simulatedLoading, showToast, role, currentUser } = useApp();
+  const {
+    tickets, setSelectedTicketId, simulatedLoading, showToast, role, currentUser, myProjectActivities,
+    pendingHistoryDate, setPendingHistoryDate
+  } = useApp();
   const [search, setSearch] = useState('');
   const [isExportOpen, setIsExportOpen] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Empty string = all dates (default — do not scope to today).
-  const [selectedDate, setSelectedDate] = useState('');
+  // Empty string = all dates (default — do not scope to today), unless the
+  // "Completed Today" dashboard card set a pending date for this mount.
+  const [selectedDate, setSelectedDate] = useState(pendingHistoryDate || '');
   const [companyFilter, setCompanyFilter] = useState('');
   const [techFilter, setTechFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -35,15 +42,62 @@ export const ServiceHistoryPage = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Consume the dashboard's "today" date exactly once, then clear it so a
+  // later sidebar nav to this page isn't stuck defaulting to today.
+  useEffect(() => {
+    if (pendingHistoryDate) {
+      setSelectedDate(pendingHistoryDate);
+      setPendingHistoryDate(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter, serviceTypeFilter, selectedDate, companyFilter, techFilter]);
+
   if (simulatedLoading) return <TableSkeleton rows={5} />;
 
   // History = every ticket that has reached a terminal / on-hold state.
   const HISTORY_STATUSES = ['Completed', 'Pending', 'Reassigned', 'Cancelled', 'Resolved', 'Closed'];
   const loggedTechId = (currentUser?.id || '').toLowerCase().trim();
 
+  // Project Category (V1) — a technician's own completed/cancelled Daily
+  // Project Activities, normalized to the same shape this page already
+  // reads for tickets, so they merge into the same list. Derived entirely
+  // from `myProjectActivities`, never from `tickets` — a Projects API
+  // problem only means this list is empty, it can never affect ticket
+  // history. Admin-only (all-projects) history stays out of scope for V1;
+  // see ProjectDetailsModal's own Activity History for that.
+  const projectHistory = role === 'tech'
+    ? (myProjectActivities || [])
+        .filter(a => a.status === 'Completed' || a.status === 'Cancelled')
+        .map(a => ({
+          id: a.id,
+          // Shown in the "Ticket" column in place of the raw activity uuid —
+          // tickets never set this field, so their column is unaffected.
+          displayId: a.project?.id || a.id,
+          customer: a.project?.customer || '—',
+          location: a.project?.location || '',
+          room: '',
+          area: '',
+          title: a.project?.name || 'Project Activity',
+          assignedTo: currentUser?.name || 'You',
+          assignedToId: loggedTechId,
+          status: a.status,
+          completedAt: a.completed_at,
+          createdAt: a.created_at,
+          createdDate: a.created_at,
+          supportCategory: null, // not applicable — excluded from AV/EPABX-scoped views
+          serviceReport: { workDone: a.completion_notes || '' },
+          recordType: 'project_activity'
+        }))
+    : [];
+
   // Tickets the current user is allowed to see (admins: all; technicians: only
-  // the ones assigned to them — so a tech's Reassigned jobs stay in their history).
-  const allHistory = tickets.filter(t => {
+  // the ones assigned to them — so a tech's Reassigned jobs stay in their
+  // history), merged with their own project activity history above.
+  const allHistory = [...tickets, ...projectHistory].filter(t => {
     if (!HISTORY_STATUSES.includes(t.status)) return false;
     if (role !== 'tech') return true;
     return loggedTechId && (t.assignedToId || '').toLowerCase().trim() === loggedTechId;
@@ -88,6 +142,19 @@ export const ServiceHistoryPage = () => {
   });
 
   const historyTickets = filtered;
+
+  // Pagination — same 15-per-page / numbered / Prev-Next / ellipsis pattern
+  // as ServiceRequestsPage.jsx. Exports below always use `filtered` (the
+  // full filtered set), never `pageTickets` — pagination only affects what's
+  // shown in the table.
+  const totalPages = Math.max(1, Math.ceil(historyTickets.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageTickets = historyTickets.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageNumbers = (() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages = new Set([1, 2, totalPages - 1, totalPages, safePage - 1, safePage, safePage + 1]);
+    return [...pages].filter(p => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+  })();
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -266,21 +333,23 @@ export const ServiceHistoryPage = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E4E7EC]">
-              {filtered.length === 0 ? (
+              {historyTickets.length === 0 ? (
                 <tr>
                   <td colSpan="7" className="py-12 text-center text-[#667085] text-sm">
                     No history found matching your search.
                   </td>
                 </tr>
               ) : (
-                filtered.map((t) => (
-                  <tr 
-                    key={t.id} 
-                    onClick={() => setSelectedTicketId(t.id)}
-                    className="hover:bg-[#F8FAFC] transition-colors cursor-pointer group"
+                pageTickets.map((t) => {
+                  const isProjectActivity = t.recordType === 'project_activity';
+                  return (
+                  <tr
+                    key={t.id}
+                    onClick={isProjectActivity ? undefined : () => setSelectedTicketId(t.id)}
+                    className={`transition-colors group ${isProjectActivity ? '' : 'hover:bg-[#F8FAFC] cursor-pointer'}`}
                   >
                     <td className="py-4 px-6">
-                      <span className="font-mono text-xs font-bold text-[#004898]">{t.id}</span>
+                      <span className="font-mono text-xs font-bold text-[#004898]">{t.displayId || t.id}</span>
                     </td>
                     <td className="py-4 px-6">
                       <h4 className="text-sm font-extrabold text-[#172033]">{t.customer}</h4>
@@ -290,7 +359,12 @@ export const ServiceHistoryPage = () => {
                       </div>
                     </td>
                     <td className="py-4 px-6">
-                      <p className="text-sm font-bold text-[#172033] truncate max-w-[220px]" title={t.title}>{t.title}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-bold text-[#172033] truncate max-w-[220px]" title={t.title}>{t.title}</p>
+                        {isProjectActivity && (
+                          <span className="text-[9px] font-bold text-[#004898] bg-[#EFF5FC] border border-[#B3D1F2] px-1.5 py-0.5 rounded-full shrink-0">Project</span>
+                        )}
+                      </div>
                       <p className="text-xs text-[#667085] truncate max-w-[220px] mt-0.5" title={t.serviceReport?.workDone}>
                         {t.serviceReport?.workDone || '—'}
                       </p>
@@ -305,17 +379,67 @@ export const ServiceHistoryPage = () => {
                       <StatusBadge status={t.status} />
                     </td>
                     <td className="py-4 px-6 text-right">
-                      <button className="w-8 h-8 rounded-full flex items-center justify-center text-[#98A2B3] group-hover:bg-[#004898] group-hover:text-white transition-all cursor-pointer">
-                        <Eye className="w-4 h-4" />
-                      </button>
+                      {!isProjectActivity && (
+                        <button className="w-8 h-8 rounded-full flex items-center justify-center text-[#98A2B3] group-hover:bg-[#004898] group-hover:text-white transition-all cursor-pointer">
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Pagination — same pattern as ServiceRequestsPage.jsx (15/page,
+          numbered, Prev/Next, ellipsis). Exports above always use the full
+          `filtered` set, unaffected by the current page. */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+          <span className="text-xs text-[#667085]">
+            Page <strong className="text-[#172033]">{safePage}</strong> of {totalPages}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={safePage === 1}
+              className="w-8 h-8 flex items-center justify-center rounded-lg border border-[#E4E7EC] text-[#667085] hover:border-[#B3D1F2] hover:text-[#004898] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            {pageNumbers.map((p, idx) => {
+              const prev = pageNumbers[idx - 1];
+              const showGap = prev !== undefined && p - prev > 1;
+              return (
+                <React.Fragment key={p}>
+                  {showGap && <span className="px-1 text-xs text-[#98A2B3]">…</span>}
+                  <button
+                    onClick={() => setCurrentPage(p)}
+                    className={`w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold transition-colors ${
+                      p === safePage ? 'bg-[#004898] text-white' : 'border border-[#E4E7EC] text-[#475467] hover:border-[#B3D1F2] hover:text-[#004898]'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={safePage === totalPages}
+              className="h-8 px-3 flex items-center gap-1 rounded-lg border border-[#E4E7EC] text-xs font-bold text-[#667085] hover:border-[#B3D1F2] hover:text-[#004898] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <span>Next</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

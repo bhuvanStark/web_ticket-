@@ -1,8 +1,8 @@
 import unifiedClient from '../api/unifiedClient';
 
-const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || 'http://localhost:5000/api';
+export const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
-const authHeaders = (json = false) => ({
+export const authHeaders = (json = false) => ({
   ...(json ? { 'Content-Type': 'application/json' } : {}),
   ...(localStorage.getItem('admin_access_token')
     ? { Authorization: `Bearer ${localStorage.getItem('admin_access_token')}` }
@@ -12,7 +12,9 @@ const authHeaders = (json = false) => ({
 // Every call in this module is authenticated. On a 401 (expired access token)
 // refresh once through the shared client and retry the request a single time —
 // same contract as unifiedClient.fetch, and it cannot loop.
-async function authFetch(url, options = {}) {
+// Exported so other API service modules (e.g. projectApiService.js) can reuse
+// the exact same 401-retry logic instead of duplicating it.
+export async function authFetch(url, options = {}) {
   let res = await fetch(url, options);
   if (res.status === 401) {
     try {
@@ -30,7 +32,7 @@ async function authFetch(url, options = {}) {
   return res;
 }
 
-async function readApiData(response, operation) {
+export async function readApiData(response, operation) {
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.success === false) {
     throw new Error(payload?.message || payload?.error || `Failed to ${operation}`);
@@ -165,7 +167,16 @@ export function transformDbTicketToAdmin(row) {
         customerSignerDetails: r.customer_signer_details || '',
         customerSignedAt: r.customer_signed_at || null
       };
-    })()
+    })(),
+    // Additional (non-primary) technicians on this ticket. The primary owner
+    // stays assignedTo/assignedToId above; these get a limited technician-side
+    // view (see TechJobsPage/TechDashboard/TechJobDetailsModal).
+    secondaryTechnicians: (row.secondary_assignments || []).map(a => ({
+      id: a.technician?.id || a.technician_id,
+      name: a.technician?.full_name || 'Technician',
+      role: a.technician?.role_title || null,
+      mode: a.service_mode === 'remote_support' ? 'Remote' : 'On-site'
+    }))
   };
 }
 
@@ -244,6 +255,33 @@ export async function assignTechnicianInApi(ticketDbId, techDbId, mode = 'onsite
     console.error('assignTechnician error:', error.message);
     throw error;
   }
+}
+
+// 6b. Add an ADDITIONAL technician to a ticket that already has a primary.
+export async function addTechnicianInApi(ticketDbId, techDbId, mode = 'onsite') {
+  const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/add-technician`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify({ technician_id: techDbId, mode })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to add technician');
+  }
+  return payload;
+}
+
+// 6c. Remove an ADDITIONAL technician from a ticket (never the primary).
+export async function removeTechnicianFromApi(ticketDbId, techDbId) {
+  const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/technicians/${techDbId}`, {
+    method: 'DELETE',
+    headers: authHeaders()
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to remove technician');
+  }
+  return payload;
 }
 
 // 7. Update Ticket Status
@@ -412,6 +450,31 @@ export async function createAdminCustomer(payload) {
   if (!res.ok) throw new Error('Failed to create customer');
   return await res.json();
 }
+// Admin Roles page — "Add Admin" / "Admin Roster".
+export async function fetchAdminAdmins() {
+  try {
+    const res = await authFetch(`${API_BASE_URL}/admin/admins`, { headers: authHeaders() });
+    const data = await readApiData(res, 'fetch admins');
+    return data || [];
+  } catch (error) {
+    console.warn('fetchAdminAdmins error:', error.message);
+    return [];
+  }
+}
+
+export async function createAdminInApi({ full_name, email, department }) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify({ full_name, email, department: department || null })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to create admin');
+  }
+  return payload?.data;
+}
+
 export async function updateAdminCustomer(id, payload) {
   const res = await authFetch(`${API_BASE_URL}/customers/${id}`, {
     method: 'PATCH',

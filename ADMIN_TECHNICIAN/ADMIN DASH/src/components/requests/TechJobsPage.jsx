@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   MapPin,
@@ -10,10 +10,13 @@ import {
   UserCheck,
   FileText,
   ShieldCheck,
-  Download
+  Download,
+  Ticket,
+  Briefcase
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { generateServiceReportPDF } from '../../utils/pdfReportGenerator';
+import { ProjectActivitiesPanel } from './ProjectActivitiesPanel';
 
 export const TechJobsPage = () => {
   const {
@@ -25,6 +28,11 @@ export const TechJobsPage = () => {
     setIsServiceFormOpen
   } = useApp();
 
+  // Project Category (V1) — a separate tab, not a second workflow bolted
+  // onto the ticket stepper below. Everything under 'tickets' is completely
+  // unmodified from before this feature existed.
+  const [viewMode, setViewMode] = useState('tickets'); // 'tickets' | 'projects'
+
   const isSameId = (a, b) => {
     if (!a || !b) return false;
     return a.toString().replace(/^#/, '').toLowerCase().trim() === b.toString().replace(/^#/, '').toLowerCase().trim();
@@ -33,8 +41,20 @@ export const TechJobsPage = () => {
   // Match strictly on the assigned technician's id — see TechDashboard.
   const loggedTechId = (currentUser?.id || '').toLowerCase().trim();
 
+  // A job is "mine" either as the primary owner, or as an additional
+  // (secondary) technician added via TicketDetailsModal's "Add Technician".
+  // isPrimaryForMe is tagged onto each job so the detail pane can hide
+  // status-changing controls for a secondary technician (limited, read-mostly
+  // view: ticket details, current status, and the final report only).
+  const isMine = (t) =>
+    (t.assignedToId || '').toLowerCase().trim() === loggedTechId ||
+    (t.secondaryTechnicians || []).some(st => (st.id || '').toLowerCase().trim() === loggedTechId);
+
   const myJobs = loggedTechId
-    ? tickets.filter(t => (t.assignedToId || '').toLowerCase().trim() === loggedTechId)
+    ? tickets.filter(isMine).map(t => ({
+        ...t,
+        isPrimaryForMe: (t.assignedToId || '').toLowerCase().trim() === loggedTechId
+      }))
     : [];
 
   // No fallback to the full ticket list: a technician with no assigned jobs
@@ -67,6 +87,32 @@ export const TechJobsPage = () => {
         </p>
       </div>
 
+      {/* Service Tickets / Project Activities tab — same pill pattern used
+          elsewhere in the app (e.g. Installations). */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setViewMode('tickets')}
+          className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+            viewMode === 'tickets' ? 'bg-[#004898] text-white shadow-xs' : 'bg-[#F6F8FB] text-[#667085] hover:text-[#172033]'
+          }`}
+        >
+          <Ticket className="w-3.5 h-3.5" />
+          <span>Service Tickets</span>
+        </button>
+        <button
+          onClick={() => setViewMode('projects')}
+          className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+            viewMode === 'projects' ? 'bg-[#004898] text-white shadow-xs' : 'bg-[#F6F8FB] text-[#667085] hover:text-[#172033]'
+          }`}
+        >
+          <Briefcase className="w-3.5 h-3.5" />
+          <span>Project Activities</span>
+        </button>
+      </div>
+
+      {viewMode === 'projects' && <ProjectActivitiesPanel />}
+
+      {viewMode === 'tickets' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Job Selector List */}
         <div className="space-y-3">
@@ -114,7 +160,16 @@ export const TechJobsPage = () => {
                 <span>Current Field Status: <strong className="text-[#004898] ml-1">{activeJob.status}</strong></span>
               </div>
 
-              {/* Accept the job, then fill the report (Complete or Pending is chosen inside the form). */}
+              {/* Accept the job, then fill the report (Complete or Pending is chosen inside the form).
+                  Additional (non-primary) technicians get a read-only banner instead — they can see
+                  status and the final report, but only the primary technician controls status or
+                  submits the report. */}
+              {activeJob.isPrimaryForMe === false ? (
+                <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#F8FAFC] text-[#475467] border border-[#E4E7EC] rounded-xl font-bold text-sm shadow-sm">
+                  <FileText className="w-5 h-5 text-[#475467]" />
+                  <span>You're an additional technician on this ticket — status and the final report are managed by the primary technician.</span>
+                </div>
+              ) : (
               <div className="flex flex-wrap items-center gap-3">
                 {(activeJob.status === 'Assigned' || activeJob.status === 'Unassigned') && (
                   <button
@@ -156,6 +211,7 @@ export const TechJobsPage = () => {
                   </div>
                 )}
               </div>
+              )}
             </div>
 
             {/* PREVIOUS TECHNICIAN HANDOVER BANNER */}
@@ -333,6 +389,7 @@ export const TechJobsPage = () => {
           </div>
         ) : null}
       </div>
+      )}
 
     </div>
   );

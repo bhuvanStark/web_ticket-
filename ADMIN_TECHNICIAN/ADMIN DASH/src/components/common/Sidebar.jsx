@@ -4,6 +4,7 @@ import { Avatar } from './Avatar';
 import {
   LayoutDashboard,
   Ticket,
+  Briefcase,
   Users,
   MapPin,
   Tv,
@@ -32,7 +33,8 @@ export const Sidebar = () => {
     role, baseRole, switchRole, activePage, setActivePage, currentUser, handleLogout,
     isSidebarCollapsed, setIsSidebarCollapsed, enabledModules, rolePermissions,
     tickets, customers, rooms, technicians, verifyTechnicianPassword,
-    setSelectedTicketId, setSelectedCustomerId, setSelectedRoomId, setSelectedTechId
+    setSelectedTicketId, setSelectedCustomerId, setSelectedRoomId, setSelectedTechId,
+    setSelectedProjectId
   } = useApp();
 
   const [showTechSelector, setShowTechSelector] = useState(false);
@@ -86,6 +88,7 @@ export const Sidebar = () => {
     if (setSelectedCustomerId) setSelectedCustomerId(null);
     if (setSelectedRoomId) setSelectedRoomId(null);
     if (setSelectedTechId) setSelectedTechId(null);
+    if (setSelectedProjectId) setSelectedProjectId(null);
     setActivePage(pageId);
   };
 
@@ -93,6 +96,7 @@ export const Sidebar = () => {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'approvals', label: 'Approvals & Alerts', icon: BellRing, module: 'approvals' },
     { id: 'requests', label: 'Service Requests', icon: Ticket, module: 'requests' },
+    { id: 'projects', label: 'Projects', icon: Briefcase, module: 'projects' },
     { id: 'customers', label: 'Customers', icon: Users, module: 'customers' },
     { id: 'rooms', label: 'Rooms & Equipment', icon: Tv, module: 'rooms' },
     { id: 'technicians', label: 'Technicians', icon: Wrench, module: 'technicians' },

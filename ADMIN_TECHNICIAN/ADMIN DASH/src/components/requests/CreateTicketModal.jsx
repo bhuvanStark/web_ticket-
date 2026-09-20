@@ -25,11 +25,13 @@ const EPABX_ISSUE_CATEGORIES = [
 ];
 
 // Fixed AV room choices for this form — not tied to any location or customer.
+// 'Other' reveals a free-text input below the select for a custom room name.
 const AV_ROOMS = [
   'Huddle Room',
   'Board Room',
   'Training Room',
-  'Town Hall'
+  'Town Hall',
+  'Other'
 ];
 
 export const CreateTicketModal = () => {
@@ -44,6 +46,8 @@ export const CreateTicketModal = () => {
   const [customerOrg, setCustomerOrg] = useState('');
   const [facilityLocation, setFacilityLocation] = useState('');
   const [roomName, setRoomName] = useState('');
+  // Only used when roomName === 'Other' — the admin's typed custom room name.
+  const [customRoomName, setCustomRoomName] = useState('');
 
   // Free text: Name - Phone - Email in one field. Stored verbatim, shown to the tech.
   const [contact, setContact] = useState('');
@@ -82,6 +86,10 @@ export const CreateTicketModal = () => {
       alert('Select a room for this AV ticket.');
       return;
     }
+    if (!isEpabx && roomName === 'Other' && !customRoomName.trim()) {
+      alert('Enter a custom room name for this AV ticket.');
+      return;
+    }
 
     setSubmitting(true);
     setFormError('');
@@ -91,8 +99,9 @@ export const CreateTicketModal = () => {
         title,
         customerOrg: customerOrg.trim(),
         facilityLocation: facilityLocation.trim(),
-        // EPABX tickets carry no room; AV tickets require the selected one.
-        roomName: isEpabx ? null : roomName,
+        // EPABX tickets carry no room; AV tickets require the selected one
+        // (or the typed custom name when "Other" was picked).
+        roomName: isEpabx ? null : (roomName === 'Other' ? customRoomName.trim() : roomName),
         contact: contact.trim() || null,
         serviceType,
         issueType,
@@ -183,6 +192,15 @@ export const CreateTicketModal = () => {
                       <option key={r} value={r}>{r}</option>
                     ))}
                   </select>
+                  {roomName === 'Other' && (
+                    <input
+                      type="text"
+                      value={customRoomName}
+                      onChange={(e) => setCustomRoomName(e.target.value)}
+                      placeholder="Enter the room name"
+                      className="w-full mt-2 px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898]"
+                    />
+                  )}
                 </div>
               )}
 

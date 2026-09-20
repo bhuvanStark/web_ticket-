@@ -41,6 +41,11 @@ export const TechJobDetailsModal = () => {
 
   if (!activeJob) return null;
 
+  // Additional (non-primary) technicians get a read-only view of this same
+  // ticket — see TechJobsPage.jsx for the fuller explanation.
+  const loggedTechId = (currentUser?.id || '').toLowerCase().trim();
+  const isPrimaryForMe = (activeJob.assignedToId || '').toLowerCase().trim() === loggedTechId;
+
   const previousHandover = activeJob?.previousTechnicianWork || activeJob?.lastHandover || (activeJob?.handoverLogs && activeJob.handoverLogs[0]);
 
   return (
@@ -140,7 +145,14 @@ export const TechJobDetailsModal = () => {
                 <span>Current Field Status: <strong className="text-[#004898] ml-1">{activeJob.status}</strong></span>
               </div>
 
-              {/* Accept the job, then fill the report (Complete / Pending chosen inside the form). */}
+              {/* Accept the job, then fill the report (Complete / Pending chosen inside the form).
+                  An additional (non-primary) technician gets a read-only banner instead. */}
+              {!isPrimaryForMe ? (
+                <div className="w-full flex items-center gap-2 px-3.5 py-3 bg-[#F8FAFC] text-[#475467] border border-[#E4E7EC] rounded-xl font-bold text-sm">
+                  <FileText className="w-5 h-5" />
+                  <span>You're an additional technician here — status and the report are managed by the primary technician.</span>
+                </div>
+              ) : (
               <div className="flex flex-wrap items-center gap-3">
                 {(activeJob.status === 'Assigned' || activeJob.status === 'Unassigned') && (
                   <button
@@ -173,6 +185,7 @@ export const TechJobDetailsModal = () => {
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
 

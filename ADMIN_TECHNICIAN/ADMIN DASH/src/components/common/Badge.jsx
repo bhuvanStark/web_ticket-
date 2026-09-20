@@ -24,6 +24,13 @@ export const StatusBadge = ({ status }) => {
     badgeClasses = 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
     dotColor = 'bg-[#2E90FA]';
     label = 'Active';
+  } else if (safeStatus === 'Accepted') {
+    // Project Category (V1) daily activity status — a technician has
+    // accepted the activity but not yet completed it. Additive only: no
+    // ticket status ever produces this string.
+    badgeClasses = 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
+    dotColor = 'bg-[#2E90FA]';
+    label = 'Accepted';
   } else if (safeStatus === 'Assigned') {
     badgeClasses = 'bg-[#F0F9FF] text-[#026AA2] border-[#B9E6FE]';
     dotColor = 'bg-[#0BA5EC]';

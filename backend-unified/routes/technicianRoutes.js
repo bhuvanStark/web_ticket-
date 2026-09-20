@@ -1,7 +1,8 @@
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
 import { requireTechnician, requireAuth } from '../middleware/auth.js';
-import { validateUUID, validateStatusUpdate, validatePagination } from '../middleware/validation.js';
+import { validateUUID, validateStatusUpdate, validatePagination, validateActivityComplete } from '../middleware/validation.js';
+import * as projectActivityService from '../services/projectActivityService.js';
 
 const router = express.Router();
 
@@ -496,6 +497,48 @@ router.get('/analytics/performance', requireTechnician, async (req, res) => {
       error: 'Error',
       message: error.message
     });
+  }
+});
+
+// ============================================
+// PROJECT CATEGORY (V1) — additive. Mirrors the /assigned-requests pattern
+// above (own records only, ownership-checked), but for Daily Project
+// Activities instead of Service Tickets. Acceptance (Assigned -> Accepted)
+// reuses the generic /api/project-activities/:id/status endpoint, exactly
+// like ticket "accept" reuses the generic ticket status PATCH — no separate
+// accept route is needed here.
+// ============================================
+
+// GET own project activities, every status — the frontend slices this into
+// Assigned/Accepted (dashboard/jobs) vs Completed/Cancelled (history).
+router.get('/project-activities', requireTechnician, async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { data, error } = await supabase
+      .from('project_activities')
+      .select('*, project(id, name, customer, location)')
+      .eq('technician_id', userId)
+      .order('scheduled_date', { ascending: false });
+    if (error) throw error;
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// Light completion: notes + completed_at only, no service-report shape.
+router.patch('/project-activities/:id/complete', requireTechnician, validateUUID, validateActivityComplete, async (req, res) => {
+  try {
+    const data = await projectActivityService.completeActivity(req.params.id, {
+      actorUserId: req.user.userId,
+      completion_notes: req.body.completion_notes
+    });
+    res.json({ success: true, data, message: 'Activity completed' });
+  } catch (error) {
+    if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+    if (error.code === 'FORBIDDEN') return res.status(403).json({ success: false, error: error.message });
+    if (error.code === 'INVALID_TRANSITION') return res.status(409).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
   }
 });
 

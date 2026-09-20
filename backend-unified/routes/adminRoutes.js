@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { supabase } from '../config/supabaseClient.js';
 import { query } from '../config/database.js';
-import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { requireAdmin, requireAuth, hashPassword } from '../middleware/auth.js';
 import { validateUUID, validateStatusUpdate, validateAssignTechnician, validatePagination } from '../middleware/validation.js';
 
 const router = express.Router();
@@ -694,6 +694,72 @@ router.put('/settings', requireAdmin, async (req, res) => {
     return res.json({ success: true, data: rows[0] });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// ============================================
+// ADMIN ROSTER (Admin Roles page — "Add Admin" / "Admin Roster")
+// ============================================
+
+// Admins onboarded through the dashboard get this password until they change
+// it; it is hashed like any other, never stored in plain text. Mirrors
+// technicians.js's DEFAULT_TECHNICIAN_PASSWORD pattern.
+const DEFAULT_ADMIN_PASSWORD = '123456';
+
+// Public roster fields only — password hashes are never selected.
+router.get('/admins', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('admins')
+      .select('id, email, full_name, department, is_active, created_at')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admins', requireAdmin, async (req, res) => {
+  try {
+    const { full_name, email, department } = req.body;
+
+    if (!full_name || !email) {
+      return res.status(400).json({ success: false, error: 'full_name and email are required' });
+    }
+
+    const { data: existing } = await supabase
+      .from('admins')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'Admin with this email already exists' });
+    }
+
+    // Always store a real bcrypt hash — an empty/plaintext value would make
+    // the account impossible to log into.
+    const passwordHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+
+    const { data, error } = await supabase
+      .from('admins')
+      .insert([{
+        full_name,
+        email,
+        department: department || null,
+        password_hash: passwordHash,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select('id, email, full_name, department, is_active, created_at')
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ success: true, data, message: 'Admin created successfully' });
+  } catch (error) {
+    console.error('Error creating admin:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

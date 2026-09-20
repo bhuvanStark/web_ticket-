@@ -8,10 +8,12 @@ import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const ROWS = (records) => records.map(t => ({
-  ticket: t.id || t.ticketNumber || '—',
+  ticket: t.displayId || t.id || t.ticketNumber || '—',
   customer: t.customer || '—',
   location: [t.location, t.room].filter(Boolean).join(' • ') || '—',
-  serviceType: t.serviceType || (t.supportCategory === 'epabx' ? 'EPABX' : 'AV'),
+  // Project Category (V1) rows carry recordType + no supportCategory —
+  // label them distinctly rather than defaulting to 'AV'.
+  serviceType: t.recordType === 'project_activity' ? 'Project' : (t.serviceType || (t.supportCategory === 'epabx' ? 'EPABX' : 'AV')),
   title: t.title || '—',
   workDone: t.serviceReport?.workDone || '—',
   technician: t.assignedTo || '—',

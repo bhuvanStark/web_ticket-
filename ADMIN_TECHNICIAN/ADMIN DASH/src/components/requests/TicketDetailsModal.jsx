@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import {
   X,
   UserCheck,
+  UserPlus,
   Calendar,
   Trash2,
   Download,
@@ -20,6 +21,8 @@ export const TicketDetailsModal = () => {
     setSelectedTicketId,
     isAssignModalOpen,
     setIsAssignModalOpen,
+    setAssignModalMode,
+    removeTechnician,
     updateTicketStatus,
     reassignPending,
     role,
@@ -57,13 +60,23 @@ export const TicketDetailsModal = () => {
             {role === 'admin' && (
               <>
                 <button
-                  onClick={() => setIsAssignModalOpen(true)}
+                  onClick={() => { setAssignModalMode('assign'); setIsAssignModalOpen(true); }}
                   className="btn btn-primary font-bold shadow-sm"
                   title="Assign or change technician for this ticket"
                 >
                   <UserCheck className="w-4 h-4" />
                   <span>{t.assignedTo ? 'Reassign Tech' : 'Assign Technician'}</span>
                 </button>
+                {t.assignedTo && (
+                  <button
+                    onClick={() => { setAssignModalMode('add'); setIsAssignModalOpen(true); }}
+                    className="btn bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#B3D1F2] font-bold shadow-sm"
+                    title="Add an additional technician to this ticket"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>Add Technician</span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     if (window.confirm(`Are you sure you want to delete ticket ${t.id}? This action cannot be undone.`)) {
@@ -247,6 +260,38 @@ export const TicketDetailsModal = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Additional technicians — never the primary owner above. */}
+                {t.secondaryTechnicians && t.secondaryTechnicians.length > 0 && (
+                  <div className="pt-4 border-t border-[#E4E7EC]">
+                    <h3 className="text-[11px] font-black uppercase tracking-widest text-[#667085] mb-3">
+                      Additional Technicians
+                    </h3>
+                    <div className="space-y-2">
+                      {t.secondaryTechnicians.map((st) => (
+                        <div key={st.id} className="flex items-center justify-between gap-2 bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg px-3 py-2">
+                          <div>
+                            <div className="text-xs font-extrabold text-[#172033]">{st.name}</div>
+                            <div className="text-[10px] font-bold text-[#667085]">{st.mode}</div>
+                          </div>
+                          {role === 'admin' && (
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Remove ${st.name} as an additional technician on ${t.id}?`)) {
+                                  removeTechnician(t.id, st.id);
+                                }
+                              }}
+                              className="p-1 text-[#98A2B3] hover:text-[#D92D20] rounded-md transition-colors"
+                              title="Remove additional technician"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Activity Timeline */}

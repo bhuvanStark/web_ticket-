@@ -3,7 +3,8 @@ import { pool } from './database.js';
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const TABLES = new Set([
   'admins', 'customer_preferences', 'customers', 'equipment', 'locations',
-  'notifications', 'password_resets', 'rooms', 'service_reports', 'service_requests',
+  'notifications', 'password_resets', 'project_activities', 'projects', 'rooms',
+  'service_reports', 'service_requests', 'service_request_technicians',
   'service_updates', 'team_members', 'technicians'
 ]);
 
@@ -15,13 +16,18 @@ const RELATIONS = {
     technician: { table: 'technicians', local: 'assigned_technician_id', foreign: 'id', many: false },
     technicians: { table: 'technicians', local: 'assigned_technician_id', foreign: 'id', many: false },
     service_updates: { table: 'service_updates', local: 'id', foreign: 'service_request_id', many: true },
-    service_reports: { table: 'service_reports', local: 'id', foreign: 'service_request_id', many: true }
+    service_reports: { table: 'service_reports', local: 'id', foreign: 'service_request_id', many: true },
+    // Additional (non-primary) technicians on a ticket — see migration 017.
+    secondary_assignments: { table: 'service_request_technicians', local: 'id', foreign: 'service_request_id', many: true }
   },
   service_updates: {
     service_requests: { table: 'service_requests', local: 'service_request_id', foreign: 'id', many: false }
   },
   service_reports: {
     service_requests: { table: 'service_requests', local: 'service_request_id', foreign: 'id', many: false }
+  },
+  service_request_technicians: {
+    technician: { table: 'technicians', local: 'technician_id', foreign: 'id', many: false }
   },
   customers: {
     locations: { table: 'locations', local: 'id', foreign: 'customer_id', many: true },
@@ -35,6 +41,14 @@ const RELATIONS = {
   },
   technicians: {
     service_requests: { table: 'service_requests', local: 'id', foreign: 'assigned_technician_id', many: true }
+  },
+  // Project Category (V1) — additive, no changes to any relation above.
+  projects: {
+    admin: { table: 'admins', local: 'responsible_admin_id', foreign: 'id', many: false }
+  },
+  project_activities: {
+    project: { table: 'projects', local: 'project_id', foreign: 'id', many: false },
+    technician: { table: 'technicians', local: 'technician_id', foreign: 'id', many: false }
   }
 };
 

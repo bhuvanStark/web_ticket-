@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { TechJobDetailsModal } from '../requests/TechJobDetailsModal';
+import { Briefcase } from 'lucide-react';
 
 export const TechDashboard = () => {
   const {
@@ -23,7 +24,9 @@ export const TechDashboard = () => {
     setSelectedTicketId,
     activePage,
     setActivePage,
-    updateTicketStatus
+    updateTicketStatus,
+    myProjectActivities,
+    updateActivityStatus
   } = useApp();
 
   // Match strictly on the assigned technician's id. Matching on names (even
@@ -31,9 +34,14 @@ export const TechDashboard = () => {
   // ticket assigned to "Balaji".
   const loggedTechId = (currentUser?.id || '').toLowerCase().trim();
 
-  const myTickets = loggedTechId
-    ? tickets.filter(t => (t.assignedToId || '').toLowerCase().trim() === loggedTechId)
-    : [];
+  // A ticket is "mine" either as the primary owner, or as an additional
+  // (secondary) technician — added via TicketDetailsModal's "Add Technician".
+  const isMine = (t) => {
+    if ((t.assignedToId || '').toLowerCase().trim() === loggedTechId) return true;
+    return (t.secondaryTechnicians || []).some(st => (st.id || '').toLowerCase().trim() === loggedTechId);
+  };
+
+  const myTickets = loggedTechId ? tickets.filter(isMine) : [];
 
   const [statusFilter, setStatusFilter] = useState('All');
 
@@ -195,6 +203,72 @@ export const TechDashboard = () => {
             </div>
           ))}
         </div>
+
+      {/* Project Category (V1) — the technician's own Assigned/Accepted
+          Daily Project Activities. Additive section, separate from the
+          Service Ticket list above; a Projects API hiccup only empties this
+          block, it never affects the tickets above. */}
+      {(myProjectActivities || []).some(a => a.status === 'Assigned' || a.status === 'Accepted') && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2 mb-3">
+            <Briefcase className="w-4 h-4 text-[#004898]" />
+            <h3 className="text-lg font-extrabold text-[#172033]">Today's Project Activities</h3>
+          </div>
+          <div className="flex flex-col gap-3">
+            {myProjectActivities
+              .filter(a => a.status === 'Assigned' || a.status === 'Accepted')
+              .map((a) => (
+                <div
+                  key={a.id}
+                  className="bg-white border border-[#E4E7EC] rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm"
+                >
+                  <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-[13px] font-extrabold text-[#004898] font-mono">{a.project?.id}</span>
+                      <h4 className="text-[15px] font-extrabold text-[#172033] truncate">{a.project?.name}</h4>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold text-[#667085]">
+                      <span className="flex items-center gap-1">
+                        <Building2 className="w-3.5 h-3.5 text-[#98A2B3]" />
+                        <span className="text-[#475467]">{a.project?.customer}</span>
+                      </span>
+                      <span className="w-1 h-1 bg-[#D0D5DD] rounded-full mx-1"></span>
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-[#98A2B3]" />
+                        <span className="text-[#475467]">{a.project?.location}</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between gap-3 shrink-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-[#F2F4F7]">
+                    <div className="flex items-center gap-2.5">
+                      <StatusBadge status={a.status} />
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-[#667085] bg-[#F8FAFC] border border-[#E4E7EC] px-2 py-0.5 rounded-md">
+                        <Clock className="w-3 h-3" />
+                        {new Date(a.scheduled_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} · {a.scheduled_time}
+                      </span>
+                    </div>
+                    {a.status === 'Assigned' ? (
+                      <button
+                        onClick={() => updateActivityStatus(a.id, 'Accepted')}
+                        className="bg-[#F8FAFC] hover:bg-[#004898] text-[#004898] hover:text-white border border-[#E4E7EC] hover:border-[#004898] rounded-xl px-4 py-2 text-xs font-extrabold flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" /> Accept
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setActivePage('my-jobs')}
+                        className="bg-[#F8FAFC] hover:bg-[#004898] text-[#004898] hover:text-white border border-[#E4E7EC] hover:border-[#004898] rounded-xl px-4 py-2 text-xs font-extrabold flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        Complete <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

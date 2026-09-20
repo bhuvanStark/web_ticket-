@@ -9,7 +9,10 @@ export const AssignTechModal = () => {
     setIsAssignModalOpen,
     setSelectedTicketId,
     technicians,
-    assignTechnician
+    assignTechnician,
+    addTechnician,
+    assignModalMode,
+    setAssignModalMode
   } = useApp();
 
   // The admin picks the service mode here — it is stored on the ticket.
@@ -18,20 +21,37 @@ export const AssignTechModal = () => {
 
   if (!isAssignModalOpen || !selectedTicket) return null;
 
+  const isAddMode = assignModalMode === 'add';
+
   const q = search.trim().toLowerCase();
+  // In "add additional technician" mode, hide the primary and anyone already
+  // added — a technician can't be added to the same ticket twice.
+  const alreadyOnTicket = new Set([
+    selectedTicket.assignedToId,
+    ...(selectedTicket.secondaryTechnicians || []).map(st => st.id)
+  ].filter(Boolean));
+  const baseTechs = isAddMode ? technicians.filter(t => !alreadyOnTicket.has(t.id)) : technicians;
   const visibleTechs = q
-    ? technicians.filter(t =>
+    ? baseTechs.filter(t =>
         (t.name || '').toLowerCase().includes(q) ||
         (t.email || '').toLowerCase().includes(q))
-    : technicians;
+    : baseTechs;
 
   const handleClose = () => {
     setIsAssignModalOpen(false);
     setSelectedTicketId(null);
+    // Reset back to the default assign/reassign flow — the other call sites
+    // (e.g. ServiceRequestsPage's assigned-engineer cell) open this same
+    // modal without setting a mode, so "add" must never leak into them.
+    setAssignModalMode('assign');
   };
 
   const assign = (techId) => {
-    assignTechnician(selectedTicket.id, techId, mode);
+    if (isAddMode) {
+      addTechnician(selectedTicket.id, techId, mode);
+    } else {
+      assignTechnician(selectedTicket.id, techId, mode);
+    }
     handleClose();
   };
 
@@ -42,7 +62,9 @@ export const AssignTechModal = () => {
         <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-center justify-between">
           <div>
             <h3 className="font-extrabold text-base text-[#172033]">
-              {selectedTicket.assignedTo ? `Reassign Technician (Was: ${selectedTicket.assignedTo})` : 'Assign Technician'}
+              {isAddMode
+                ? 'Add Additional Technician'
+                : (selectedTicket.assignedTo ? `Reassign Technician (Was: ${selectedTicket.assignedTo})` : 'Assign Technician')}
             </h3>
             <p className="text-xs text-[#667085]">
               Ticket <span className="font-mono text-[#004898] font-bold">{selectedTicket.id}</span>
@@ -104,10 +126,14 @@ export const AssignTechModal = () => {
         {/* Technician list */}
         <div className="p-5 space-y-3 max-h-96 overflow-y-auto">
           {visibleTechs.length === 0 && (
-            <p className="text-xs text-[#98A2B3] text-center py-4">No technician matches “{search}”.</p>
+            <p className="text-xs text-[#98A2B3] text-center py-4">
+              {search
+                ? `No technician matches “${search}”.`
+                : (isAddMode ? 'Every active technician is already on this ticket.' : 'No technicians available.')}
+            </p>
           )}
           {visibleTechs.map((tech) => {
-            const isSelected = selectedTicket.assignedTo === tech.name;
+            const isSelected = !isAddMode && selectedTicket.assignedTo === tech.name;
             return (
               <div
                 key={tech.id}
@@ -131,7 +157,7 @@ export const AssignTechModal = () => {
                     </span>
                   ) : (
                     <div className="text-[11px] font-bold text-[#004898] bg-[#F6F8FB] group-hover:bg-[#004898] group-hover:text-white px-3 py-1.5 rounded-lg transition-all border border-[#E4E7EC] group-hover:border-[#004898]">
-                      Assign ({mode === 'remote' ? 'Remote' : 'On-site'})
+                      {isAddMode ? 'Add' : 'Assign'} ({mode === 'remote' ? 'Remote' : 'On-site'})
                     </div>
                   )}
                 </div>

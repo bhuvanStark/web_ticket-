@@ -9,6 +9,8 @@ import {
   fetchAdminRooms,
   fetchAdminTechnicians,
   assignTechnicianInApi,
+  addTechnicianInApi,
+  removeTechnicianFromApi,
   updateTicketStatusInApi,
   createServiceRequestInApiAdmin,
   submitServiceReportInApi,
@@ -16,6 +18,22 @@ import {
   deleteServiceRequestFromApi,
   subscribeToAdminServiceRequests
 } from '../services/adminApiService';
+
+// Project Category (V1) — a separate module from Service Tickets. Imported
+// independently so a failure anywhere in this module can never affect the
+// ticket data above (see the isolated fetch/poll effects below).
+import {
+  fetchProjects,
+  fetchMyProjectActivitiesInApi,
+  createProjectInApi,
+  updateProjectInApi,
+  markProjectCompleteInApi,
+  deleteProjectInApi,
+  assignProjectActivitiesInApi,
+  updateActivityStatusInApi,
+  completeActivityInApi,
+  reassignActivityInApi
+} from '../services/projectApiService';
 
 // Reuse the same context object across Vite hot updates. Without this, a provider
 // refresh can briefly leave already-mounted consumers attached to the old context.
@@ -128,14 +146,39 @@ export const AppProvider = ({ children }) => {
   const [installations, setInstallations] = useState([]);
   const [isApiLoading, setIsApiLoading] = useState(true);
 
+  // Project Category (V1) — separate state from `tickets`, fetched and
+  // polled independently (see effects below) so a Projects API problem can
+  // never block or delay ticket data. `projects` holds every project
+  // regardless of status (ProjectsPage filters tabs client-side, same as
+  // ticket pages already do). `myProjectActivities` is technician-only: the
+  // logged-in technician's own Daily Project Activities, every status.
+  const [projects, setProjects] = useState([]);
+  const [myProjectActivities, setMyProjectActivities] = useState([]);
+
   // Modals & Panels State
   const [selectedTicketId, setSelectedTicketId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [selectedTechId, setSelectedTechId] = useState(null);
   const [isCreateTicketOpen, setIsCreateTicketOpen] = useState(false);
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  // 'assign' = first assignment / Reassign (existing flow). 'add' = add an
+  // ADDITIONAL technician alongside the existing primary. Same popup, same
+  // On-site/Remote picker — see AssignTechModal.jsx.
+  const [assignModalMode, setAssignModalMode] = useState('assign');
   const [isServiceFormOpen, setIsServiceFormOpen] = useState(false);
+
+  // Set just before navigating to Service History from the "Completed Today"
+  // dashboard card, so that page can default its date filter to today. Read
+  // once on mount, then cleared — a later sidebar nav to History is
+  // unaffected and stays on "All dates".
+  const [pendingHistoryDate, setPendingHistoryDate] = useState(null);
+
+  // Project Category (V1) modal state — mirrors the ticket modal pattern above.
+  const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+  const [projectModalMode, setProjectModalMode] = useState('create'); // 'create' | 'edit'
+  const [isAssignProjectTeamModalOpen, setIsAssignProjectTeamModalOpen] = useState(false);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -144,6 +187,7 @@ export const AppProvider = ({ children }) => {
   const [enabledModules, setEnabledModules] = useState({
     approvals: true,
     requests: true,
+    projects: true,
     customers: true,
     rooms: true,
     technicians: true,
@@ -159,6 +203,7 @@ export const AppProvider = ({ children }) => {
     'Super Admin': {
       dashboard: true,
       requests: true,
+      projects: true,
       customers: true,
       rooms: true,
       technicians: true,
@@ -174,6 +219,7 @@ export const AppProvider = ({ children }) => {
     'Service Manager': {
       dashboard: true,
       requests: true,
+      projects: true,
       customers: true,
       rooms: true,
       technicians: true,
@@ -189,6 +235,7 @@ export const AppProvider = ({ children }) => {
     'Dispatcher': {
       dashboard: true,
       requests: true,
+      projects: true,
       customers: true,
       rooms: true,
       technicians: false,
@@ -362,7 +409,12 @@ export const AppProvider = ({ children }) => {
     };
   }, []);
 
-  // Poll PostgreSQL for ticket updates
+  // Poll PostgreSQL for ticket updates — and, on the exact same interval,
+  // Project Category (V1) data. This reuses the one existing interval
+  // rather than starting a second polling loop, but each fetch below is
+  // independently try/caught: fetchLiveTickets is completely unmodified
+  // from before, and a failure in the Projects fetch can never throw here or
+  // affect it (nor vice versa) — Projects is never a dependency of tickets.
   useEffect(() => {
     const fetchLiveTickets = async () => {
       try {
@@ -373,10 +425,41 @@ export const AppProvider = ({ children }) => {
       }
     };
 
-    fetchLiveTickets();
-    const interval = setInterval(fetchLiveTickets, 3000);
+    // Admin-only on the backend, and isolated: `projects` simply keeps its
+    // last-known value (or []) if this ever fails, and nothing else in the
+    // app is affected. Skipped entirely for a technician session — that
+    // endpoint would just 403 for them, same as any other admin-only route.
+    const fetchLiveProjects = async () => {
+      if (role !== 'admin') return;
+      try {
+        const dbProjects = await fetchProjects({});
+        setProjects(Array.isArray(dbProjects) ? dbProjects : []);
+      } catch (err) {
+        console.warn('Admin polling projects error (isolated from tickets):', err);
+      }
+    };
+
+    // Technician-only: their own Daily Project Activities. Also isolated.
+    const fetchLiveMyActivities = async () => {
+      if (role !== 'tech') return;
+      try {
+        const activities = await fetchMyProjectActivitiesInApi();
+        setMyProjectActivities(Array.isArray(activities) ? activities : []);
+      } catch (err) {
+        console.warn('Technician polling project activities error (isolated from tickets):', err);
+      }
+    };
+
+    const tick = () => {
+      fetchLiveTickets();
+      fetchLiveProjects();
+      fetchLiveMyActivities();
+    };
+
+    tick();
+    const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [role]);
 
   // Load the shared dashboard configuration (module toggles + role permissions)
   // from the backend so the Settings page choices survive a refresh. Only admin
@@ -696,6 +779,66 @@ export const AppProvider = ({ children }) => {
     }));
 
     showToast(`Assigned ${ticketId} to ${tech?.name || 'Technician'} — ${modeLabel}`, 'success');
+    return true;
+  };
+
+  // Add an ADDITIONAL technician to a ticket that already has a primary
+  // (assignTechnician above). Never changes the primary owner. Refetches the
+  // full ticket list afterward so secondaryTechnicians is correctly
+  // re-hydrated from the backend rather than hand-built optimistically.
+  const addTechnician = async (ticketId, techId, mode = 'onsite') => {
+    const tech = technicians.find(t => t.id === techId || t.name === techId);
+    const targetTicket = tickets.find(t => isSameTicket(t, ticketId));
+    const modeLabel = mode === 'remote' ? 'Remote' : 'On-site';
+
+    if (!targetTicket?.dbId || !tech?.id) {
+      showToast('A real request and technician are required.', 'error');
+      return false;
+    }
+    try {
+      await addTechnicianInApi(targetTicket.dbId, tech.id, mode);
+    } catch (err) {
+      showToast(`Could not add technician: ${err.message}`, 'error');
+      return false;
+    }
+
+    try {
+      const refreshedTickets = await fetchAdminServiceRequests();
+      setTickets(Array.isArray(refreshedTickets) ? refreshedTickets : []);
+    } catch {
+      // Non-fatal: the add already succeeded server-side; the next natural
+      // refresh will pick it up.
+    }
+
+    showToast(`Added ${tech?.name || 'Technician'} to ${ticketId} — ${modeLabel}`, 'success');
+    return true;
+  };
+
+  // Remove an ADDITIONAL technician from a ticket. Never touches the primary
+  // — that still requires Reassign.
+  const removeTechnician = async (ticketId, techId) => {
+    const tech = technicians.find(t => t.id === techId || t.name === techId);
+    const targetTicket = tickets.find(t => isSameTicket(t, ticketId));
+
+    if (!targetTicket?.dbId || !techId) {
+      showToast('A real request and technician are required.', 'error');
+      return false;
+    }
+    try {
+      await removeTechnicianFromApi(targetTicket.dbId, techId);
+    } catch (err) {
+      showToast(`Could not remove technician: ${err.message}`, 'error');
+      return false;
+    }
+
+    try {
+      const refreshedTickets = await fetchAdminServiceRequests();
+      setTickets(Array.isArray(refreshedTickets) ? refreshedTickets : []);
+    } catch {
+      // Non-fatal — same reasoning as addTechnician above.
+    }
+
+    showToast(`Removed ${tech?.name || 'technician'} from ${ticketId}`, 'success');
     return true;
   };
 
@@ -1044,7 +1187,142 @@ export const AppProvider = ({ children }) => {
     showToast(`Created new ticket ${finalFormattedTicket.id} successfully!`, 'success');
   };
 
+  // ============================================
+  // PROJECT CATEGORY (V1) — additive. Every mutator below follows the same
+  // guard -> try/catch -> optimistic-patch -> toast -> return-bool shape as
+  // the ticket mutators above, but touches only `projects`/
+  // `myProjectActivities` state — never `tickets`.
+  // ============================================
+
+  const createProject = async (payload) => {
+    try {
+      const created = await createProjectInApi(payload);
+      setProjects(prev => [created, ...prev]);
+      showToast(`Project ${created.id} created successfully.`, 'success');
+      return created;
+    } catch (err) {
+      showToast(`Could not create project: ${err.message}`, 'error');
+      return null;
+    }
+  };
+
+  const updateProject = async (projectId, payload) => {
+    try {
+      const updated = await updateProjectInApi(projectId, payload);
+      setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, ...updated } : p)));
+      showToast(`Project ${projectId} updated.`, 'success');
+      return true;
+    } catch (err) {
+      showToast(`Could not update project: ${err.message}`, 'error');
+      return false;
+    }
+  };
+
+  // Date + Time + multiple technicians -> one independent activity per
+  // technician. All-or-nothing: a conflict rejects the whole assignment.
+  const assignProjectTeam = async (projectId, { date, time, technicianIds }) => {
+    try {
+      await assignProjectActivitiesInApi(projectId, { scheduledDate: date, scheduledTime: time, technicianIds });
+    } catch (err) {
+      showToast(`Assignment failed: ${err.message}`, 'error');
+      return false;
+    }
+    // Re-fetch this project's active activities rather than hand-rolling the
+    // merge — createActivitiesBulk's response and the project summary's
+    // active_activities shape are both server-derived; refetching keeps them
+    // in sync with zero risk of drifting apart.
+    try {
+      const refreshed = await fetchProjects({});
+      setProjects(Array.isArray(refreshed) ? refreshed : []);
+    } catch {
+      // Isolated: the assignment itself already succeeded; a refresh hiccup
+      // here just means the summary catches up on the next 3s poll.
+    }
+    showToast(`Assigned ${technicianIds.length} technician(s) for ${date}.`, 'success');
+    return true;
+  };
+
+  const markProjectComplete = async (projectId) => {
+    try {
+      const updated = await markProjectCompleteInApi(projectId);
+      setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, ...updated } : p)));
+      showToast(`Project ${projectId} marked complete.`, 'success');
+      return true;
+    } catch (err) {
+      showToast(err.code === 'UNRESOLVED_ACTIVITIES'
+        ? `Cannot complete ${projectId}: it still has active daily activities.`
+        : `Could not complete project: ${err.message}`, 'error');
+      return false;
+    }
+  };
+
+  const deleteProject = async (projectId) => {
+    try {
+      await deleteProjectInApi(projectId);
+    } catch (err) {
+      showToast(err.code === 'HAS_ACTIVITIES'
+        ? `Cannot delete ${projectId}: it has activity history.`
+        : `Delete failed: ${err.message}`, 'error');
+      return false;
+    }
+    setProjects(prev => prev.filter(p => p.id !== projectId));
+    if (selectedProjectId === projectId) setSelectedProjectId(null);
+    showToast(`Project ${projectId} deleted.`, 'info');
+    return true;
+  };
+
+  // Assigned -> Accepted (technician "accept", same generic mechanism the
+  // ticket system uses) or -> Cancelled.
+  const updateActivityStatus = async (activityId, status) => {
+    try {
+      await updateActivityStatusInApi(activityId, status);
+    } catch (err) {
+      showToast(`Status update failed: ${err.message}`, 'error');
+      return false;
+    }
+    setMyProjectActivities(prev => prev.map(a => (a.id === activityId ? { ...a, status } : a)));
+    showToast(`Activity ${status.toLowerCase()}.`, 'success');
+    return true;
+  };
+
+  // Light completion: notes + completed_at only (no service-report shape).
+  const completeActivity = async (activityId, completionNotes = '') => {
+    try {
+      const updated = await completeActivityInApi(activityId, completionNotes);
+      setMyProjectActivities(prev => prev.map(a => (a.id === activityId ? { ...a, ...updated } : a)));
+      showToast('Activity completed.', 'success');
+      return true;
+    } catch (err) {
+      showToast(err.code === 'INVALID_TRANSITION'
+        ? 'Accept this activity before completing it.'
+        : `Could not complete activity: ${err.message}`, 'error');
+      return false;
+    }
+  };
+
+  // Admin reassigns a daily activity to a different technician. History-safe
+  // on the backend: the original row becomes Cancelled, never deleted.
+  const reassignActivity = async (activityId, newTechnicianId) => {
+    try {
+      await reassignActivityInApi(activityId, newTechnicianId);
+    } catch (err) {
+      showToast(err.code === 'DUPLICATE_ACTIVITY'
+        ? 'That technician already has an activity for this project on this date.'
+        : `Reassignment failed: ${err.message}`, 'error');
+      return false;
+    }
+    try {
+      const refreshed = await fetchProjects({});
+      setProjects(Array.isArray(refreshed) ? refreshed : []);
+    } catch {
+      // Isolated — see assignProjectTeam's comment above.
+    }
+    showToast('Activity reassigned.', 'success');
+    return true;
+  };
+
   const selectedTicket = (tickets || []).find(t => isSameTicket(t, selectedTicketId));
+  const selectedProject = (projects || []).find(p => p.id === selectedProjectId);
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
   const selectedRoom = (rooms || []).find(r => r.id === selectedRoomId || (r.name || '').toLowerCase() === (selectedRoomId || '').toLowerCase());
   const selectedTech = technicians.find(t => t.id === selectedTechId);
@@ -1153,10 +1431,16 @@ export const AppProvider = ({ children }) => {
         setIsCreateTicketOpen,
         isAssignModalOpen,
         setIsAssignModalOpen,
+        assignModalMode,
+        setAssignModalMode,
+        pendingHistoryDate,
+        setPendingHistoryDate,
         isServiceFormOpen,
         setIsServiceFormOpen,
 
         assignTechnician,
+        addTechnician,
+        removeTechnician,
         assignTechnicianToSlot,
         updateTicketStatus,
         submitServiceReport,
@@ -1165,6 +1449,28 @@ export const AppProvider = ({ children }) => {
         requestTechnicianReplacement,
         deleteTicket,
         createServiceRequest,
+
+        // Project Category (V1) — additive, separate from the ticket state above.
+        projects,
+        setProjects,
+        myProjectActivities,
+        selectedProject,
+        selectedProjectId,
+        setSelectedProjectId,
+        isNewProjectModalOpen,
+        setIsNewProjectModalOpen,
+        projectModalMode,
+        setProjectModalMode,
+        isAssignProjectTeamModalOpen,
+        setIsAssignProjectTeamModalOpen,
+        createProject,
+        updateProject,
+        assignProjectTeam,
+        markProjectComplete,
+        deleteProject,
+        updateActivityStatus,
+        completeActivity,
+        reassignActivity,
 
         isSearchOpen,
         setIsSearchOpen,

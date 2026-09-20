@@ -9,7 +9,7 @@ import {
 } from '../middleware/validation.js';
 import * as serviceRequestService from '../services/serviceRequestService.js';
 import * as notificationService from '../services/notificationService.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -28,7 +28,8 @@ router.get('/', async (req, res) => {
         rooms (id, name, room_type, capacity),
         technician:assigned_technician_id (id, full_name, email, phone, role_title, avatar_url),
         service_updates (*),
-        service_reports (*)
+        service_reports (*),
+        secondary_assignments:service_request_technicians(id, technician_id, service_mode, created_at, technician:technician_id(id, full_name, email, phone, role_title, avatar_url))
       `)
       .order('created_at', { ascending: false });
 
@@ -61,7 +62,8 @@ router.get('/:id', validateUUID, async (req, res) => {
         rooms (id, name, room_type, capacity),
         technician:assigned_technician_id (id, full_name, email, phone, role_title, avatar_url),
         service_updates (*),
-        service_reports (*)
+        service_reports (*),
+        secondary_assignments:service_request_technicians(id, technician_id, service_mode, created_at, technician:technician_id(id, full_name, email, phone, role_title, avatar_url))
       `)
       .eq('id', id)
       .single();
@@ -189,6 +191,16 @@ router.post('/:id/assign', validateUUID, async (req, res) => {
       .single();
     if (error) throw error;
 
+    // Data integrity: if this technician was already an ADDITIONAL
+    // technician on this same ticket, remove that now-redundant row so they
+    // don't show up as both primary and secondary.
+    const { error: staleSecondaryError } = await supabase
+      .from('service_request_technicians')
+      .delete()
+      .eq('service_request_id', id)
+      .eq('technician_id', technician.id);
+    if (staleSecondaryError) console.warn('Could not clear stale secondary-technician row:', staleSecondaryError.message);
+
     const modeLabel = serviceType === 'remote_support' ? 'Remote' : 'On-site';
     const { error: updateError } = await supabase.from('service_updates').insert([{
       service_request_id: id,
@@ -208,6 +220,146 @@ router.post('/:id/assign', validateUUID, async (req, res) => {
 
     res.json({ success: true, data, message: 'Technician assigned successfully' });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Add an ADDITIONAL technician to a ticket that already has a primary
+// (assigned_technician_id). The primary owner is unchanged — this only adds
+// a row to service_request_technicians so a second/third technician gets a
+// limited, read-mostly view of the same ticket on the technician side.
+router.post('/:id/add-technician', requireAdmin, validateUUID, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const technicianId = req.body.technician_id;
+    if (!technicianId) {
+      return res.status(400).json({ success: false, error: 'technician_id is required' });
+    }
+
+    const mode = String(req.body.mode || req.body.service_mode || '').toLowerCase();
+    const serviceMode = mode === 'remote' || mode === 'remote_support' ? 'remote_support' : 'onsite_service';
+
+    const { data: ticket, error: ticketError } = await supabase
+      .from('service_requests')
+      .select('id, assigned_technician_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (ticketError) throw ticketError;
+    if (!ticket) return res.status(404).json({ success: false, error: 'Service request not found' });
+    if (!ticket.assigned_technician_id) {
+      return res.status(400).json({ success: false, error: 'Assign a primary technician before adding additional technicians' });
+    }
+    if (ticket.assigned_technician_id === technicianId) {
+      return res.status(400).json({ success: false, error: 'This technician is already the primary on this ticket' });
+    }
+
+    const { data: technician, error: technicianError } = await supabase
+      .from('technicians')
+      .select('id, full_name, is_active')
+      .eq('id', technicianId)
+      .single();
+    if (technicianError || !technician || !technician.is_active) {
+      return res.status(404).json({ success: false, error: 'Active technician not found' });
+    }
+
+    const { data: existing } = await supabase
+      .from('service_request_technicians')
+      .select('id')
+      .eq('service_request_id', id)
+      .eq('technician_id', technicianId)
+      .maybeSingle();
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'Technician already added to this ticket' });
+    }
+
+    const { error: insertError } = await supabase
+      .from('service_request_technicians')
+      .insert([{ service_request_id: id, technician_id: technicianId, service_mode: serviceMode }]);
+    if (insertError) {
+      // 23505 = unique violation (race with a concurrent add) — same request either way.
+      if (insertError.code === '23505') {
+        return res.status(400).json({ success: false, error: 'Technician already added to this ticket' });
+      }
+      throw insertError;
+    }
+
+    const modeLabel = serviceMode === 'remote_support' ? 'Remote' : 'On-site';
+    const { error: updateNoteError } = await supabase.from('service_updates').insert([{
+      service_request_id: id,
+      author_name: 'Admin',
+      notes: `Added ${technician.full_name} as an additional technician (${modeLabel})`
+    }]);
+    if (updateNoteError) console.warn('Could not record additional-technician timeline:', updateNoteError.message);
+
+    const { data, error } = await supabase
+      .from('service_requests')
+      .select(`
+        *,
+        customers (id, name, company_name),
+        locations (id, name, city, address),
+        rooms (id, name, room_type, capacity),
+        technician:assigned_technician_id (id, full_name, email, phone, role_title, avatar_url),
+        service_updates (*),
+        service_reports (*),
+        secondary_assignments:service_request_technicians(id, technician_id, service_mode, created_at, technician:technician_id(id, full_name, email, phone, role_title, avatar_url))
+      `)
+      .eq('id', id)
+      .single();
+    if (error) throw error;
+
+    res.status(201).json({ success: true, data, message: 'Additional technician added successfully' });
+  } catch (error) {
+    console.error('Error adding additional technician:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Remove an ADDITIONAL technician from a ticket. Never touches the primary
+// (assigned_technician_id) — that still requires Reassign.
+const UUID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.delete('/:id/technicians/:techId', requireAdmin, validateUUID, async (req, res) => {
+  try {
+    const { id, techId } = req.params;
+    // validateUUID only checks :id — :techId needs its own check so a bad
+    // value returns a clean 400 instead of a raw Postgres error.
+    if (!UUID_FORMAT.test(techId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUID format for techId' });
+    }
+
+    const { data: existing, error: lookupError } = await supabase
+      .from('service_request_technicians')
+      .select('id, technician_id')
+      .eq('service_request_id', id)
+      .eq('technician_id', techId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'This technician is not an additional assignee on this ticket' });
+    }
+
+    const { data: technician } = await supabase
+      .from('technicians')
+      .select('full_name')
+      .eq('id', techId)
+      .maybeSingle();
+
+    const { error: deleteError } = await supabase
+      .from('service_request_technicians')
+      .delete()
+      .eq('id', existing.id);
+    if (deleteError) throw deleteError;
+
+    const { error: updateNoteError } = await supabase.from('service_updates').insert([{
+      service_request_id: id,
+      author_name: 'Admin',
+      notes: `Removed ${technician?.full_name || 'a technician'} as an additional technician`
+    }]);
+    if (updateNoteError) console.warn('Could not record additional-technician removal timeline:', updateNoteError.message);
+
+    res.json({ success: true, message: 'Additional technician removed successfully' });
+  } catch (error) {
+    console.error('Error removing additional technician:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

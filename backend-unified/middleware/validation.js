@@ -357,6 +357,133 @@ export const validateCompleteRequest = (req, res, next) => {
   next();
 };
 
+// ============================================
+// PROJECT CATEGORY (V1) — additive, no changes to any validator above.
+// ============================================
+
+// Project id is "PRJ-001" text, never a uuid — validateUUID must not be used
+// on /api/projects/:id* routes.
+export const validateProjectId = (req, res, next) => {
+  const { id } = req.params;
+  if (!id || !/^PRJ-\d+$/i.test(id)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: ['Invalid project id format']
+    });
+  }
+  next();
+};
+
+export const validateProject = (req, res, next) => {
+  const { name, customer, location, start_date, end_date } = req.body;
+  const errors = [];
+
+  if (!name || name.trim().length === 0) errors.push('name is required');
+  if (!customer || customer.trim().length === 0) errors.push('customer is required');
+  if (!location || location.trim().length === 0) errors.push('location is required');
+  if (name && name.trim().length > 255) errors.push('name must not exceed 255 characters');
+  if (customer && customer.trim().length > 255) errors.push('customer must not exceed 255 characters');
+  if (location && location.trim().length > 255) errors.push('location must not exceed 255 characters');
+  if (start_date && Number.isNaN(Date.parse(start_date))) errors.push('start_date must be a valid date');
+  if (end_date && Number.isNaN(Date.parse(end_date))) errors.push('end_date must be a valid date');
+  if (
+    start_date && end_date &&
+    !Number.isNaN(Date.parse(start_date)) && !Number.isNaN(Date.parse(end_date)) &&
+    Date.parse(end_date) < Date.parse(start_date)
+  ) {
+    errors.push('end_date must not be before start_date');
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+
+export const validateProjectUpdate = (req, res, next) => {
+  const allowed = ['name', 'customer', 'location', 'start_date', 'end_date', 'description', 'responsible_admin_id'];
+  const errors = [];
+
+  if (!allowed.some((key) => key in req.body)) {
+    errors.push('at least one updatable field is required');
+  }
+  if ('name' in req.body && (!req.body.name || !req.body.name.trim())) errors.push('name cannot be empty');
+  if ('customer' in req.body && (!req.body.customer || !req.body.customer.trim())) errors.push('customer cannot be empty');
+  if ('location' in req.body && (!req.body.location || !req.body.location.trim())) errors.push('location cannot be empty');
+  if ('start_date' in req.body && req.body.start_date && Number.isNaN(Date.parse(req.body.start_date))) errors.push('start_date must be a valid date');
+  if ('end_date' in req.body && req.body.end_date && Number.isNaN(Date.parse(req.body.end_date))) errors.push('end_date must be a valid date');
+  // Only checkable when both dates are present in this same request — a
+  // partial update touching just one of the two can't be range-checked here
+  // without a DB round-trip, which is out of scope for this fix.
+  if (
+    req.body.start_date && req.body.end_date &&
+    !Number.isNaN(Date.parse(req.body.start_date)) && !Number.isNaN(Date.parse(req.body.end_date)) &&
+    Date.parse(req.body.end_date) < Date.parse(req.body.start_date)
+  ) {
+    errors.push('end_date must not be before start_date');
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+
+// Bulk multi-technician daily assignment: one Date + Time + N technicians.
+export const validateAssignActivities = (req, res, next) => {
+  const { scheduled_date, scheduled_time, technician_ids } = req.body;
+  const errors = [];
+
+  if (!scheduled_date || Number.isNaN(Date.parse(scheduled_date))) errors.push('scheduled_date is required and must be a valid date');
+  if (!scheduled_time || !/^\d{2}:\d{2}$/.test(scheduled_time)) errors.push('scheduled_time is required (HH:MM)');
+  if (!Array.isArray(technician_ids) || technician_ids.length === 0) errors.push('technician_ids must be a non-empty array');
+
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+
+// Assigned -> Accepted, or Cancelled. 'Completed' only via the dedicated
+// /complete endpoint, which also requires completion_notes handling.
+export const validateActivityStatusUpdate = (req, res, next) => {
+  const { status } = req.body;
+  const valid = ['Assigned', 'Accepted', 'Cancelled'];
+
+  if (!status || !valid.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: [`status must be one of: ${valid.join(', ')}`]
+    });
+  }
+  next();
+};
+
+export const validateActivityComplete = (req, res, next) => {
+  const { completion_notes } = req.body;
+  if (completion_notes && completion_notes.length > 1000) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: ['completion_notes must not exceed 1000 characters']
+    });
+  }
+  next();
+};
+
+export const validateActivityReassign = (req, res, next) => {
+  if (!req.body.technician_id) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: ['technician_id is required']
+    });
+  }
+  next();
+};
+
 // Service update validation
 export const validateServiceUpdate = (req, res, next) => {
   const { author_name, notes } = req.body;

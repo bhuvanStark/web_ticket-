@@ -22,6 +22,7 @@ export const AdminDashboard = () => {
     setIsAssignModalOpen,
     setIsCreateTicketOpen,
     setActivePage,
+    setPendingHistoryDate,
     globalSearchQuery
   } = useApp();
 
@@ -138,7 +139,14 @@ export const AdminDashboard = () => {
 
         <button
           type="button"
-          onClick={() => setActivePage('history')}
+          onClick={() => {
+            // Default Service History's date filter to today when arriving
+            // from this card — read once by ServiceHistoryPage, then cleared.
+            const now = new Date();
+            const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            setPendingHistoryDate(todayKey);
+            setActivePage('history');
+          }}
           title="View today's completed jobs in Service History"
           className="card p-5 border-l-4 border-l-[#12B76A] text-left w-full hover:shadow-md hover:border-l-[#0E9384] transition-all cursor-pointer"
         >

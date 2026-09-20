@@ -17,6 +17,8 @@ import adminRoutes from './routes/adminRoutes.js';
 import technicianRoutes from './routes/technicianRoutes.js';
 import teamMembersRouter from './routes/teamMembers.js';
 import passwordResetRouter from './routes/passwordReset.js';
+import projectsRouter from './routes/projects.js';
+import projectActivitiesRouter from './routes/projectActivities.js';
 
 // Load environment variables
 dotenv.config();
@@ -92,6 +94,10 @@ app.use('/api/password-reset', passwordResetRouter);
 // ============================================
 
 app.use('/api/service-requests', serviceRequestsRouter);
+// Project Category (V1) — separate module from Service Tickets, sits
+// directly below it in the admin nav. Additive only.
+app.use('/api/projects', projectsRouter);
+app.use('/api/project-activities', projectActivitiesRouter);
 app.use('/api/rooms', roomsRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/locations', locationsRouter);

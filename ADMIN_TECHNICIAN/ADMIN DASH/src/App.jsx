@@ -12,6 +12,7 @@ import { useIsMobile } from './hooks/useMediaQuery';
 // Admin Views
 import { AdminDashboard } from './components/dashboard/AdminDashboard';
 import { ServiceRequestsPage } from './components/requests/ServiceRequestsPage';
+import { ProjectsPage } from './components/projects/ProjectsPage';
 import { CustomersPage } from './components/customers/CustomersPage';
 import { LocationsPage } from './components/locations/LocationsPage';
 import { RoomsEquipmentPage } from './components/assets/RoomsEquipmentPage';
@@ -40,6 +41,9 @@ import { CustomerDetailModal } from './components/customers/CustomerDetailModal'
 import { RoomDetailModal } from './components/assets/RoomDetailModal';
 import { TechProfileModal } from './components/technicians/TechProfileModal';
 import { TechServiceFormModal } from './components/requests/TechServiceFormModal';
+import { ProjectDetailsModal } from './components/projects/ProjectDetailsModal';
+import { NewProjectModal } from './components/projects/NewProjectModal';
+import { AssignProjectTeamModal } from './components/projects/AssignProjectTeamModal';
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
 import { ToastContainer } from './components/common/ToastContainer';
@@ -95,6 +99,8 @@ const MainLayout = () => {
           return <ApprovalsPage />;
         case 'requests':
           return <ServiceRequestsPage />;
+        case 'projects':
+          return <ProjectsPage />;
         case 'customers':
           return <CustomersPage />;
         case 'locations':
@@ -177,6 +183,9 @@ const MainLayout = () => {
       <RoomDetailModal />
       <TechProfileModal />
       <TechServiceFormModal />
+      <ProjectDetailsModal />
+      <NewProjectModal />
+      <AssignProjectTeamModal />
       <GlobalSearchModal />
       <NotificationsDrawer />
       <ToastContainer />

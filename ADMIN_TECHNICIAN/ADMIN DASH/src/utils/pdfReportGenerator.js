@@ -17,6 +17,7 @@ export function generateServiceReportPDF(ticket) {
   const customer = esc(ticket?.customer || ticket?.customerName || '—');
   const location = esc(ticket?.location || ticket?.locationName || '—');
   const room = ticket?.room || ticket?.roomName;
+  const area = ticket?.area || '';
   const supportLine = (ticket?.supportCategory === 'epabx' || ticket?.serviceType === 'EPABX') ? 'EPABX Support' : 'AV Support';
   const serviceMode = ticket?.serviceMode === 'Remote' ? 'Remote' : 'On-site';
   const issueType = esc(ticket?.issueType || '—');
@@ -77,6 +78,7 @@ export function generateServiceReportPDF(ticket) {
         ${row('Service Mode', serviceMode)}
         ${row('Issue Type', issueType)}
         ${row('Location', location)}
+        ${area ? row('Area', area) : ''}
         ${room ? row('Room', room) : ''}
         ${contact ? row('Contact', contact) : ''}
         ${row('Reported Issue', issue)}
