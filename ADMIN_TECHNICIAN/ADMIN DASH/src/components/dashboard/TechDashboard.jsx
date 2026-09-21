@@ -15,6 +15,14 @@ import {
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { TechJobDetailsModal } from '../requests/TechJobDetailsModal';
 import { Briefcase } from 'lucide-react';
+// Attendance Category (V1) — additive, separate module. See
+// AttendanceBanner.jsx: it reads only its own context state, never
+// `tickets` or `myProjectActivities`, so it can never affect anything below
+// it on this page. App.jsx's ErrorBoundary wraps the whole page, which
+// would otherwise take the ticket/project sections down too if this one
+// component threw during render — so it gets its own nested boundary here.
+import { AttendanceBanner } from './AttendanceBanner';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 
 export const TechDashboard = () => {
   const {
@@ -58,6 +66,10 @@ export const TechDashboard = () => {
 
   const inProgressCount = myTickets.filter(t => t.status === 'Service In Progress' || t.status === 'Technician On The Way').length;
   const completedCount = myTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
+  // Project Category (V1) — same Assigned/Accepted scope as the "Today's
+  // Project Activities" list further down, so the card count and the list
+  // it summarizes always agree.
+  const activeProjectActivitiesCount = (myProjectActivities || []).filter(a => a.status === 'Assigned' || a.status === 'Accepted').length;
 
   return (
     <div className="space-y-6">
@@ -69,8 +81,16 @@ export const TechDashboard = () => {
         </p>
       </div>
 
+      {/* Attendance Category (V1) — additive banner, isolated from the
+          ticket/project sections below (see AttendanceBanner.jsx). Its own
+          ErrorBoundary so a render failure here can't take the rest of the
+          page down with it. */}
+      <ErrorBoundary>
+        <AttendanceBanner />
+      </ErrorBoundary>
+
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white rounded-2xl p-6 border border-[#E4E7EC] shadow-sm relative overflow-hidden group hover:border-[#B3D1F2] transition-colors">
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Ticket className="w-16 h-16 text-[#004898]" />
@@ -111,6 +131,23 @@ export const TechDashboard = () => {
           </div>
           <div className="text-4xl font-black text-[#172033] mb-1">{completedCount}</div>
           <p className="text-xs font-medium text-[#667085]">Resolved & signed off</p>
+        </div>
+
+        {/* Project Category (V1) — additive card. Only ever reads
+            myProjectActivities, never tickets, so a Projects API hiccup can
+            never affect the three ticket cards above. */}
+        <div className="bg-white rounded-2xl p-6 border border-[#E4E7EC] shadow-sm relative overflow-hidden group hover:border-[#B3D1F2] transition-colors">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+            <Briefcase className="w-16 h-16 text-[#004898]" />
+          </div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 rounded-xl bg-[#EFF5FC] text-[#004898]">
+              <Briefcase className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">Project Activities</span>
+          </div>
+          <div className="text-4xl font-black text-[#172033] mb-1">{activeProjectActivitiesCount}</div>
+          <p className="text-xs font-medium text-[#667085]">Assigned & accepted activities</p>
         </div>
       </div>
 

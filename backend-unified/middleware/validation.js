@@ -1,3 +1,8 @@
+// isValidDateKey is calendar-strict (rejects e.g. "2026-02-30"), unlike a
+// shape-only regex — used only by the Attendance date validators below; see
+// its doc comment in utils/indiaTime.js for why that distinction matters.
+import { isValidDateKey } from '../utils/indiaTime.js';
+
 // Login validation - used by both admin and technician
 export const validateLogin = (req, res, next) => {
   const { email, password } = req.body;
@@ -480,6 +485,68 @@ export const validateActivityReassign = (req, res, next) => {
       error: 'Validation failed',
       details: ['technician_id is required']
     });
+  }
+  next();
+};
+
+// ============================================
+// ATTENDANCE (V1) — additive, no changes to any validator above.
+// ============================================
+
+const ATTENDANCE_LOCATION_STATUSES = ['gps_captured', 'permission_denied', 'device_unsupported', 'unavailable_error'];
+
+// Same check as validateUUID, but for a route param that isn't literally
+// named `:id` (e.g. /admin/attendance/:technicianId/history).
+export const validateUUIDParam = (paramName) => (req, res, next) => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(req.params[paramName])) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error',
+      message: 'Invalid UUID format'
+    });
+  }
+  next();
+};
+
+export const validateAttendanceCheckIn = (req, res, next) => {
+  const { location_status, location_lat, location_lng, location_accuracy_m } = req.body || {};
+  const errors = [];
+
+  if (location_status && !ATTENDANCE_LOCATION_STATUSES.includes(location_status)) {
+    errors.push(`location_status must be one of: ${ATTENDANCE_LOCATION_STATUSES.join(', ')}`);
+  }
+  if (location_status === 'gps_captured') {
+    if (typeof location_lat !== 'number' || location_lat < -90 || location_lat > 90) errors.push('location_lat must be a valid latitude');
+    if (typeof location_lng !== 'number' || location_lng < -180 || location_lng > 180) errors.push('location_lng must be a valid longitude');
+  }
+  if (location_accuracy_m !== undefined && location_accuracy_m !== null && (typeof location_accuracy_m !== 'number' || location_accuracy_m < 0)) {
+    errors.push('location_accuracy_m must be a non-negative number');
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+
+// date is optional everywhere it's used (defaults to today, India calendar
+// day) — only checked when the caller does pass one. isValidDateKey checks
+// both shape AND calendar validity (e.g. rejects "2026-02-30"), so a bad
+// date is rejected here with a clean 400 instead of reaching Postgres and
+// throwing a raw "date/time field value out of range" 500.
+export const validateAttendanceDateQuery = (req, res, next) => {
+  const { date } = req.query;
+  if (date && !isValidDateKey(date)) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: ['date must be a valid calendar date in YYYY-MM-DD format'] });
+  }
+  next();
+};
+
+export const validateAttendanceDateBody = (req, res, next) => {
+  const { date } = req.body || {};
+  if (date && !isValidDateKey(date)) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: ['date must be a valid calendar date in YYYY-MM-DD format'] });
   }
   next();
 };

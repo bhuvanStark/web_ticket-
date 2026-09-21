@@ -5,12 +5,8 @@ import { StatusBadge } from '../common/Badge';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
 import { exportServiceHistory } from '../../utils/serviceHistoryExport';
-
-const localDateKey = (d) => {
-  const x = new Date(d);
-  if (Number.isNaN(x.getTime())) return '';
-  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
-};
+import { localDateKey } from '../../utils/dateKey';
+import { INDIA_STATES } from '../../utils/indiaStates';
 
 const PAGE_SIZE = 15;
 
@@ -30,6 +26,9 @@ export const ServiceHistoryPage = () => {
   const [techFilter, setTechFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
+  // Same 36 India States/UTs list and 'ALL' sentinel as ServiceRequestsPage's
+  // Location filter, so the two pages behave identically.
+  const [locationFilter, setLocationFilter] = useState('ALL');
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
@@ -54,7 +53,7 @@ export const ServiceHistoryPage = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, statusFilter, serviceTypeFilter, selectedDate, companyFilter, techFilter]);
+  }, [search, statusFilter, serviceTypeFilter, selectedDate, companyFilter, techFilter, locationFilter]);
 
   if (simulatedLoading) return <TableSkeleton rows={5} />;
 
@@ -123,7 +122,13 @@ export const ServiceHistoryPage = () => {
     serviceTypeFilter === 'ALL' || t.supportCategory === serviceTypeFilter
   );
 
-  const filtered = serviceTypeScoped.filter(t => {
+  // By state — same match rule as ServiceRequestsPage's Location filter
+  // (substring match against the free-text location field).
+  const locationScoped = serviceTypeScoped.filter(t =>
+    locationFilter === 'ALL' || (t.location || '').toLowerCase().includes(locationFilter.toLowerCase())
+  );
+
+  const filtered = locationScoped.filter(t => {
     if (companyFilter && t.customer !== companyFilter) return false;
     if (techFilter && t.assignedTo !== techFilter) return false;
     const q = search.toLowerCase();
@@ -307,9 +312,20 @@ export const ServiceHistoryPage = () => {
           {techs.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        {(companyFilter || techFilter || statusFilter !== 'ALL' || selectedDate || serviceTypeFilter !== 'ALL') && (
+        {/* Location — by state, same 36 India States/UTs list and 'ALL'
+            sentinel as ServiceRequestsPage's Location filter. */}
+        <select
+          value={locationFilter}
+          onChange={(e) => setLocationFilter(e.target.value)}
+          className="px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898] shrink-0"
+        >
+          <option value="ALL">All Locations</option>
+          {INDIA_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+
+        {(companyFilter || techFilter || statusFilter !== 'ALL' || selectedDate || serviceTypeFilter !== 'ALL' || locationFilter !== 'ALL') && (
           <button
-            onClick={() => { setCompanyFilter(''); setTechFilter(''); setStatusFilter('ALL'); setSelectedDate(''); setServiceTypeFilter('ALL'); }}
+            onClick={() => { setCompanyFilter(''); setTechFilter(''); setStatusFilter('ALL'); setSelectedDate(''); setServiceTypeFilter('ALL'); setLocationFilter('ALL'); }}
             className="text-xs font-bold text-[#D92D20] hover:underline shrink-0"
           >
             Clear filters

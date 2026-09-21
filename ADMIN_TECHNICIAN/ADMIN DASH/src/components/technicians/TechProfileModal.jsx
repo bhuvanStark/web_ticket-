@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, Wrench, MapPin, CheckCircle2, Clock, Ticket, Award, Cpu, Layers, FileCheck } from 'lucide-react';
+import { X, Pencil, Wrench, MapPin, CheckCircle2, Clock, Ticket, Award, Cpu, Layers, FileCheck } from 'lucide-react';
 import { StatusBadge } from '../common/Badge';
 
 export const TechProfileModal = () => {
@@ -10,7 +10,9 @@ export const TechProfileModal = () => {
     tickets,
     setSelectedTicketId,
     setActivePage,
-    installations
+    installations,
+    setTechnicianModalMode,
+    setIsTechnicianModalOpen
   } = useApp();
 
   if (!selectedTech) return null;
@@ -44,9 +46,19 @@ export const TechProfileModal = () => {
               <p className="text-xs text-[#004898] font-semibold">{tech.role} • {tech.location}</p>
             </div>
           </div>
-          <button onClick={() => setSelectedTechId(null)} className="p-1 text-[#667085] hover:text-[#172033]">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => { setTechnicianModalMode('edit'); setIsTechnicianModalOpen(true); }}
+              className="btn bg-white hover:bg-[#F8FAFC] text-[#475467] border border-[#E4E7EC] font-bold shadow-sm btn-sm"
+              title="Edit technician"
+            >
+              <Pencil className="w-4 h-4" />
+              <span>Edit</span>
+            </button>
+            <button onClick={() => setSelectedTechId(null)} className="p-1 text-[#667085] hover:text-[#172033]">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">

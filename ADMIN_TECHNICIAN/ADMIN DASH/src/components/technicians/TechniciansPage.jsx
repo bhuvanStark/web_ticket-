@@ -1,17 +1,23 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { createTechnicianInApi } from '../../services/adminApiService';
 import { Search, MapPin, Eye, Plus, Link2, LogIn, Download, Trash2, AlertTriangle } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { Avatar } from '../common/Avatar';
-import { NewTechnicianModal } from './NewTechnicianModal';
 import { ShareTechLinkModal } from './ShareTechLinkModal';
 import unifiedClient from '../../api/unifiedClient';
 
 export const TechniciansPage = () => {
-  const { technicians, setTechnicians, setSelectedTechId, loginAsTechnician, deleteTechnician, simulatedLoading, showToast } = useApp();
+  const {
+    technicians,
+    setSelectedTechId,
+    loginAsTechnician,
+    deleteTechnician,
+    setIsTechnicianModalOpen,
+    setTechnicianModalMode,
+    simulatedLoading,
+    showToast
+  } = useApp();
   const [search, setSearch] = useState('');
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [shareTech, setShareTech] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
   // Deleting is destructive and cannot be undone, so it goes through a
@@ -41,31 +47,9 @@ export const TechniciansPage = () => {
 
   if (simulatedLoading) return <TableSkeleton rows={4} />;
 
-  const handleAddTechnician = async (techData) => {
-    // techData already uses the DB field names (full_name, email, phone,
-    // role_title, specialization, location).
-    const response = await createTechnicianInApi(techData);
-    if (response && response.data) {
-      const d = response.data;
-      const created = {
-        id: d.id,
-        name: d.full_name,
-        email: d.email,
-        phone: d.phone,
-        role: d.role_title,
-        specialization: d.specialization,
-        location: d.location,
-        status: 'Available',
-        // A brand-new technician has no jobs yet. Set these explicitly so the
-        // roster shows "0 / 0" instead of blank until the next full reload
-        // (AppContext recomputes them from tickets on load).
-        activeJobsCount: 0,
-        completedJobsCount: 0
-      };
-      if (typeof setTechnicians === 'function') {
-        setTechnicians(prev => [created, ...(prev || [])]);
-      }
-    }
+  const openAddModal = () => {
+    setTechnicianModalMode('create');
+    setIsTechnicianModalOpen(true);
   };
 
   const filtered = (technicians || []).filter(t =>
@@ -96,7 +80,7 @@ export const TechniciansPage = () => {
           </button>
 
           <button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={openAddModal}
             className="btn btn-primary shadow-sm text-xs font-bold"
           >
             <Plus className="w-4 h-4" />
@@ -229,13 +213,9 @@ export const TechniciansPage = () => {
         </div>
       </div>
 
-      {/* Modals */}
-      {isAddModalOpen && (
-        <NewTechnicianModal
-          onClose={() => setIsAddModalOpen(false)}
-          onAddTechnician={handleAddTechnician}
-        />
-      )}
+      {/* Modals — NewTechnicianModal (Add/Edit) is now rendered globally in
+          App.jsx, gated on context's isTechnicianModalOpen, so the same
+          instance also serves TechProfileModal's Edit button. */}
       {shareTech && (
         <ShareTechLinkModal
           tech={shareTech}

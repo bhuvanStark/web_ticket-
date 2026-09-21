@@ -4,6 +4,22 @@ import { supabase } from '../config/supabaseClient.js';
 import { withTransaction } from '../config/database.js';
 import { PostgresQueryBuilder } from '../config/databaseClient.js';
 
+// A technician's own activities, every status — identical shape to
+// GET /api/technician/project-activities. Exists so an admin token can read
+// a specific technician's activities (e.g. while using "switch into a
+// technician's view", which never holds a technician-role JWT — see
+// routes/adminRoutes.js `/technicians/:id/project-activities`) without ever
+// granting a technician-role-gated route to an admin caller.
+export const listActivitiesForTechnician = async (technicianId) => {
+  const { data, error } = await supabase
+    .from('project_activities')
+    .select('*, project(id, name, customer, location)')
+    .eq('technician_id', technicianId)
+    .order('scheduled_date', { ascending: false });
+  if (error) throw new Error(`Failed to list activities: ${error.message}`);
+  return data || [];
+};
+
 // scope: 'active' (Assigned/Accepted, shown on the project card),
 // 'history' (Completed/Cancelled, the Activity History view), or 'all'.
 export const listActivitiesForProject = async (projectId, { scope = 'all' } = {}) => {
@@ -99,8 +115,11 @@ export const updateActivityStatus = async (id, status, { actorRole, actorUserId 
 // Light completion: notes + completed_at, no service-report shape (per spec
 // §5 — scheduled time and actual completion time are stored separately).
 // Requires the activity to already be Accepted — the spec's flow is
-// explicitly Assigned -> Accepted -> Completed.
-export const completeActivity = async (id, { actorUserId, completion_notes } = {}) => {
+// explicitly Assigned -> Accepted -> Completed. Admin is unrestricted (same
+// allow-list as updateActivityStatus above) so "switch into a technician's
+// view" — which calls this same route under an admin JWT, never a
+// technician one — can complete on the impersonated technician's behalf.
+export const completeActivity = async (id, { actorUserId, actorRole, completion_notes } = {}) => {
   const { data: existing, error: fetchError } = await supabase
     .from('project_activities')
     .select('id, technician_id, status')
@@ -112,7 +131,8 @@ export const completeActivity = async (id, { actorUserId, completion_notes } = {
     err.code = 'NOT_FOUND';
     throw err;
   }
-  if (existing.technician_id !== actorUserId) {
+  const isOwningTechnician = actorRole === 'technician' && existing.technician_id === actorUserId;
+  if (actorRole !== 'admin' && !isOwningTechnician) {
     const err = new Error('This activity is not assigned to you');
     err.code = 'FORBIDDEN';
     throw err;

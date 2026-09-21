@@ -25,7 +25,8 @@ import {
   ChevronLeft,
   Eye,
   EyeOff,
-  ArrowLeft
+  ArrowLeft,
+  Clock3
 } from 'lucide-react';
 
 export const Sidebar = () => {
@@ -100,6 +101,9 @@ export const Sidebar = () => {
     { id: 'customers', label: 'Customers', icon: Users, module: 'customers' },
     { id: 'rooms', label: 'Rooms & Equipment', icon: Tv, module: 'rooms' },
     { id: 'technicians', label: 'Technicians', icon: Wrench, module: 'technicians' },
+    // Attendance Category (V1) — separate page from Service Tickets and
+    // Projects, no module toggle (no Settings UI asked for one; always shown).
+    { id: 'attendance', label: 'Attendance', icon: Clock3 },
     { id: 'installations', label: 'Onsite Installations', icon: Layers, module: 'installations' },
     { id: 'inventory', label: 'Spare Parts Stock', icon: Package, module: 'inventory' },
     { id: 'demos', label: 'Demo Management', icon: Sparkles, module: 'demos' },

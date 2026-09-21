@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { X, UserCheck, CheckCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, UserCheck, Pencil, CheckCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import unifiedClient from '../../api/unifiedClient';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
 
 const FieldError = ({ children }) =>
@@ -8,8 +9,22 @@ const FieldError = ({ children }) =>
 
 const LOCATIONS = ['Bengaluru', 'Hyderabad', 'Chennai', 'Mumbai', 'Pune', 'Gurugram / Delhi NCR'];
 
-export function NewTechnicianModal({ onClose, onAddTechnician }) {
-  const { showToast } = useApp();
+// Create/Edit form for a Technician. Shared by TechniciansPage's "Add New
+// Technician" button (create mode) and TechProfileModal's "Edit" button
+// (edit mode, pre-filled from the technician's current DB values) — same
+// form either way, mirrors NewProjectModal's create/edit pattern.
+export function NewTechnicianModal() {
+  const {
+    isTechnicianModalOpen,
+    setIsTechnicianModalOpen,
+    technicianModalMode,
+    selectedTech,
+    createTechnician,
+    updateTechnician,
+    showToast
+  } = useApp();
+
+  const isEdit = technicianModalMode === 'edit' && selectedTech;
 
   const [fullName, setFullName] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
@@ -20,6 +35,50 @@ export function NewTechnicianModal({ onClose, onAddTechnician }) {
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+
+  // Reset the form whenever the modal (re)opens. Edit mode fetches the
+  // technician's current row straight from the DB (GET /admin/technicians/:id)
+  // rather than trusting the already-loaded roster entry, which never carries
+  // more than a hardcoded role label for anyone but a just-created technician.
+  useEffect(() => {
+    if (!isTechnicianModalOpen) return;
+    setErrors({});
+    setTouched({});
+
+    if (isEdit) {
+      setIsLoadingDetail(true);
+      let cancelled = false;
+      (async () => {
+        try {
+          const res = await unifiedClient.getTechnician(selectedTech.id);
+          const d = res?.data;
+          if (cancelled || !d) return;
+          setFullName(d.full_name || '');
+          setRoleTitle(d.role_title || '');
+          setEmail(d.email || '');
+          setPhone(d.phone || '');
+          setSpecialization(d.specialization || '');
+          setLocation(d.location || LOCATIONS[0]);
+        } catch (err) {
+          if (!cancelled) showToast(err.message || 'Could not load technician details', 'error');
+        } finally {
+          if (!cancelled) setIsLoadingDetail(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+
+    setFullName('');
+    setRoleTitle('');
+    setEmail('');
+    setPhone('');
+    setSpecialization('');
+    setLocation(LOCATIONS[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTechnicianModalOpen, isEdit, selectedTech?.id]);
+
+  if (!isTechnicianModalOpen) return null;
 
   const rules = {
     fullName: [required('Technician name is required'), minLength(2)],
@@ -44,23 +103,21 @@ export function NewTechnicianModal({ onClose, onAddTechnician }) {
       return;
     }
 
+    const payload = {
+      full_name: fullName.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      role_title: roleTitle.trim() || null,
+      specialization: specialization.trim() || null,
+      location: location || null,
+    };
+
     setIsSubmitting(true);
-    try {
-      await onAddTechnician({
-        full_name: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        role_title: roleTitle.trim() || null,
-        specialization: specialization.trim() || null,
-        location: location || null,
-      });
-      showToast(`Onboarded technician "${fullName.trim()}".`, 'success');
-      onClose();
-    } catch (err) {
-      showToast(err.message || 'Failed to create technician', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
+    const ok = isEdit
+      ? await updateTechnician(selectedTech.id, payload)
+      : await createTechnician(payload);
+    setIsSubmitting(false);
+    if (ok) setIsTechnicianModalOpen(false);
   };
 
   return (
@@ -69,16 +126,27 @@ export function NewTechnicianModal({ onClose, onAddTechnician }) {
         <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#004898] text-white flex items-center justify-center">
-              <UserCheck className="w-5 h-5" />
+              {isEdit ? <Pencil className="w-5 h-5" /> : <UserCheck className="w-5 h-5" />}
             </div>
-            <h3 className="font-extrabold text-lg text-[#172033]">Onboard New Technician</h3>
+            <div>
+              <h3 className="font-extrabold text-lg text-[#172033]">{isEdit ? 'Edit Technician' : 'Onboard New Technician'}</h3>
+              {isEdit && <p className="text-xs text-[#667085]">Editing {selectedTech.name}</p>}
+            </div>
           </div>
-          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg hover:bg-white transition-all">
+          <button
+            onClick={() => setIsTechnicianModalOpen(false)}
+            disabled={isSubmitting}
+            className="p-1 text-[#667085] hover:text-[#172033] rounded-lg hover:bg-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {isLoadingDetail ? (
+            <p className="text-sm text-[#667085] py-8 text-center">Loading technician details…</p>
+          ) : (
+            <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="form-label">Full Name *</label>
@@ -145,12 +213,14 @@ export function NewTechnicianModal({ onClose, onAddTechnician }) {
               </select>
             </div>
           </div>
+            </>
+          )}
 
           <div className="pt-3 border-t border-[#E4E7EC] flex items-center justify-end gap-3">
-            <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button type="submit" disabled={isSubmitting} className="btn btn-primary disabled:opacity-70">
+            <button type="button" onClick={() => setIsTechnicianModalOpen(false)} disabled={isSubmitting} className="btn btn-secondary">Cancel</button>
+            <button type="submit" disabled={isSubmitting || isLoadingDetail} className="btn btn-primary disabled:opacity-70">
               <CheckCircle className="w-4 h-4" />
-              <span>{isSubmitting ? 'Onboarding…' : 'Onboard Technician'}</span>
+              <span>{isSubmitting ? 'Saving…' : isEdit ? 'Save Changes' : 'Onboard Technician'}</span>
             </button>
           </div>
         </form>

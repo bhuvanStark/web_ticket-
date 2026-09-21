@@ -90,6 +90,63 @@ router.post('/', async (req, res) => {
   }
 });
 
+// UPDATE technician profile — same fields the Create form collects
+// (full_name, email, phone, specialization, role_title, location). Password
+// and availability are untouched here; those go through their own existing
+// endpoints (technician self-service password reset, and
+// PATCH /api/admin/technicians/:id/status).
+router.patch('/:id', validateUUID, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { full_name, email, phone, specialization, role_title, location } = req.body;
+
+    if (!full_name || !email) {
+      return res.status(400).json({ success: false, error: 'full_name and email are required' });
+    }
+
+    const { data: existing, error: lookupError } = await supabase
+      .from('technicians')
+      .select('id')
+      .eq('id', id)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Technician not found' });
+    }
+
+    // Same uniqueness check as CREATE, excluding this technician's own row.
+    const { data: emailOwner } = await supabase
+      .from('technicians')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+    if (emailOwner && emailOwner.id !== id) {
+      return res.status(400).json({ success: false, error: 'Another technician already uses this email' });
+    }
+
+    const { data, error } = await supabase
+      .from('technicians')
+      .update({
+        full_name,
+        email,
+        phone: phone || null,
+        specialization: specialization || null,
+        role_title: role_title || null,
+        location: location || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select('id, email, full_name, phone, specialization, role_title, location, status, is_active, created_at, updated_at')
+      .single();
+    if (error) throw error;
+
+    res.json({ success: true, data, message: 'Technician updated successfully' });
+  } catch (error) {
+    console.error('Error updating technician:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // DELETE a technician.
 // service_requests.assigned_technician_id is ON DELETE SET NULL, so existing
 // tickets survive and fall back to unassigned rather than disappearing with

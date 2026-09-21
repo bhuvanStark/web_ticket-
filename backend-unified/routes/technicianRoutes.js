@@ -514,23 +514,24 @@ router.get('/analytics/performance', requireTechnician, async (req, res) => {
 router.get('/project-activities', requireTechnician, async (req, res) => {
   try {
     const { userId } = req.user;
-    const { data, error } = await supabase
-      .from('project_activities')
-      .select('*, project(id, name, customer, location)')
-      .eq('technician_id', userId)
-      .order('scheduled_date', { ascending: false });
-    if (error) throw error;
-    res.json({ success: true, data: data || [] });
+    const data = await projectActivityService.listActivitiesForTechnician(userId);
+    res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Error', message: error.message });
   }
 });
 
 // Light completion: notes + completed_at only, no service-report shape.
-router.patch('/project-activities/:id/complete', requireTechnician, validateUUID, validateActivityComplete, async (req, res) => {
+// requireAuth (not requireTechnician): an admin using "switch into a
+// technician's view" calls this exact route under an admin JWT — the
+// service's own actorRole check (mirroring the /api/project-activities
+// status/reassign routes) admits the admin unrestricted and a technician
+// only for their own activity; any other role is FORBIDDEN there.
+router.patch('/project-activities/:id/complete', requireAuth, validateUUID, validateActivityComplete, async (req, res) => {
   try {
     const data = await projectActivityService.completeActivity(req.params.id, {
       actorUserId: req.user.userId,
+      actorRole: req.user.role,
       completion_notes: req.body.completion_notes
     });
     res.json({ success: true, data, message: 'Activity completed' });

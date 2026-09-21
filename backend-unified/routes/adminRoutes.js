@@ -4,6 +4,9 @@ import { supabase } from '../config/supabaseClient.js';
 import { query } from '../config/database.js';
 import { requireAdmin, requireAuth, hashPassword } from '../middleware/auth.js';
 import { validateUUID, validateStatusUpdate, validateAssignTechnician, validatePagination } from '../middleware/validation.js';
+// Project Category (V1) — additive; only used by the technician
+// impersonation route below.
+import * as projectActivityService from '../services/projectActivityService.js';
 
 const router = express.Router();
 
@@ -468,6 +471,22 @@ router.get('/technicians/:id', requireAdmin, validateUUID, async (req, res) => {
       error: 'Error',
       message: error.message
     });
+  }
+});
+
+// Project Category (V1) — a specific technician's own Daily Project
+// Activities, read through an admin token. Additive: exists solely for the
+// "switch into a technician's view" impersonation feature (Sidebar picker),
+// which never holds a technician-role JWT — the same reason fetchLiveTickets
+// always uses the admin-scoped ticket endpoint instead of a technician-only
+// one while impersonating. A real technician session keeps using
+// GET /api/technician/project-activities.
+router.get('/technicians/:id/project-activities', requireAdmin, validateUUID, async (req, res) => {
+  try {
+    const data = await projectActivityService.listActivitiesForTechnician(req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
   }
 });
 

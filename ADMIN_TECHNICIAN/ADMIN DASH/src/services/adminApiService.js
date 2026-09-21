@@ -37,7 +37,13 @@ export async function readApiData(response, operation) {
   if (!response.ok || payload?.success === false) {
     throw new Error(payload?.message || payload?.error || `Failed to ${operation}`);
   }
-  return payload?.data ?? payload ?? [];
+  // `payload?.data ?? payload ?? []` looked equivalent but wasn't: `??` only
+  // falls through on null/undefined, so an endpoint that legitimately
+  // returns `data: null` (e.g. "no attendance yet today") had that null
+  // treated as absent and got the *whole* wrapper object back instead.
+  // Checking for the key directly preserves an explicit null.
+  if (payload && typeof payload === 'object' && 'data' in payload) return payload.data;
+  return payload ?? [];
 }
 
 // The admin/technician portal shows six workflow labels:
@@ -432,6 +438,43 @@ export async function createTechnicianInApi(techData) {
     return res.json();
   } catch (error) {
     console.error('createTechnician error:', error.message);
+    throw error;
+  }
+}
+
+// 9b. Update Technician — same field set as create, reused by the Edit flow
+// (NewTechnicianModal in "edit" mode) opened from the technician profile popup.
+export async function updateTechnicianInApi(technicianId, techData) {
+  try {
+    const payload = {
+      full_name: techData.full_name || techData.name,
+      email: techData.email,
+      phone: techData.phone || null,
+      role_title: techData.role_title || techData.role || null,
+      location: techData.location || null,
+      specialization: techData.specialization || null
+    };
+
+    const res = await authFetch(`${API_BASE_URL}/technicians/${technicianId}`, {
+      method: 'PATCH',
+      headers: authHeaders(true),
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      let message = 'Failed to update technician';
+      try {
+        const body = await res.json();
+        message = body.error || body.message || message;
+      } catch {
+        // response was not JSON; keep the default message
+      }
+      throw new Error(message);
+    }
+
+    return res.json();
+  } catch (error) {
+    console.error('updateTechnician error:', error.message);
     throw error;
   }
 }

@@ -17,7 +17,8 @@ import {
   CheckCircle2,
   Clock,
   Layers,
-  Trash2
+  Trash2,
+  Calendar as CalendarIcon
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { Avatar } from '../common/Avatar';
@@ -26,6 +27,7 @@ import { ErrorState } from '../common/ErrorState';
 import { EmptyState } from '../common/EmptyState';
 import { INDIA_STATES } from '../../utils/indiaStates';
 import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
+import { localDateKey } from '../../utils/dateKey';
 
 const PAGE_SIZE = 15;
 
@@ -52,13 +54,16 @@ export const ServiceRequestsPage = () => {
   const [issueFilter, setIssueFilter] = useState('ALL');
   const [customerFilter, setCustomerFilter] = useState('ALL');
   const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
+  // Empty string = all dates — same default and behavior as Service
+  // History's date filter (utils/dateKey.js's localDateKey).
+  const [selectedDate, setSelectedDate] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
   // Reset to page 1 whenever the result set could have shifted. Declared
   // before the early returns below so hook order stays stable across renders.
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, statusFilter, priorityFilter, customerFilter, locationFilter, techFilter, issueFilter, serviceTypeFilter]);
+  }, [search, statusFilter, priorityFilter, customerFilter, locationFilter, techFilter, issueFilter, serviceTypeFilter, selectedDate]);
 
   if (simulatedLoading) {
     return <TableSkeleton rows={6} />;
@@ -106,7 +111,12 @@ export const ServiceRequestsPage = () => {
     const matchesServiceType =
       serviceTypeFilter === 'ALL' || t.supportCategory === serviceTypeFilter;
 
-    return matchesSearch && matchesStatus && matchesPriority && matchesCustomer && matchesLocation && matchesTech && matchesIssue && matchesServiceType;
+    // Same behavior as Service History's date filter: empty = all dates,
+    // otherwise an exact local-day match against the request's creation date.
+    const matchesDate =
+      !selectedDate || localDateKey(t.createdAt || t.createdDate) === selectedDate;
+
+    return matchesSearch && matchesStatus && matchesPriority && matchesCustomer && matchesLocation && matchesTech && matchesIssue && matchesServiceType && matchesDate;
   });
 
   const sortedTickets = [...filteredTickets].sort((a, b) => {
@@ -126,7 +136,8 @@ export const ServiceRequestsPage = () => {
     locationFilter !== 'ALL' ||
     techFilter !== 'ALL' ||
     issueFilter !== 'ALL' ||
-    serviceTypeFilter !== 'ALL';
+    serviceTypeFilter !== 'ALL' ||
+    selectedDate;
 
   const clearFilters = () => {
     setSearch('');
@@ -137,6 +148,7 @@ export const ServiceRequestsPage = () => {
     setTechFilter('ALL');
     setIssueFilter('ALL');
     setServiceTypeFilter('ALL');
+    setSelectedDate('');
   };
 
   const totalPages = Math.max(1, Math.ceil(sortedTickets.length / PAGE_SIZE));
@@ -236,6 +248,29 @@ export const ServiceRequestsPage = () => {
             <option value="ALL">All Locations</option>
             {INDIA_STATES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+
+          {/* Date Filter — same behavior as Service History's date filter:
+              empty = all dates (default), otherwise scoped to that one day. */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <CalendarIcon className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                style={{ paddingLeft: '36px' }}
+                className="form-input text-xs font-semibold w-full"
+              />
+            </div>
+            {selectedDate && (
+              <button
+                onClick={() => setSelectedDate('')}
+                className="text-xs font-bold text-[#004898] hover:underline shrink-0"
+              >
+                All dates
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center justify-between flex-wrap gap-3 pt-1">

@@ -27,6 +27,8 @@ import { DemosPage } from './components/demos/DemosPage';
 import { AdminProfilePage } from './components/profile/AdminProfilePage';
 import { UserManagementPage } from './components/users/UserManagementPage';
 import { ReportsPage } from './components/reports/ReportsPage';
+// Attendance Category (V1) — separate Admin page. Additive.
+import { AttendancePage } from './components/attendance/AttendancePage';
 
 // Tech Views
 import { TechDashboard } from './components/dashboard/TechDashboard';
@@ -40,6 +42,7 @@ import { CreateTicketModal } from './components/requests/CreateTicketModal';
 import { CustomerDetailModal } from './components/customers/CustomerDetailModal';
 import { RoomDetailModal } from './components/assets/RoomDetailModal';
 import { TechProfileModal } from './components/technicians/TechProfileModal';
+import { NewTechnicianModal } from './components/technicians/NewTechnicianModal';
 import { TechServiceFormModal } from './components/requests/TechServiceFormModal';
 import { ProjectDetailsModal } from './components/projects/ProjectDetailsModal';
 import { NewProjectModal } from './components/projects/NewProjectModal';
@@ -109,6 +112,8 @@ const MainLayout = () => {
           return <RoomsEquipmentPage />;
         case 'technicians':
           return <TechniciansPage />;
+        case 'attendance':
+          return <AttendancePage />;
         case 'installations':
           return <InstallationsPage />;
         case 'inventory':
@@ -182,6 +187,7 @@ const MainLayout = () => {
       <CustomerDetailModal />
       <RoomDetailModal />
       <TechProfileModal />
+      <NewTechnicianModal />
       <TechServiceFormModal />
       <ProjectDetailsModal />
       <NewProjectModal />

@@ -16,7 +16,9 @@ import {
   submitServiceReportInApi,
   reassignPendingInApi,
   deleteServiceRequestFromApi,
-  subscribeToAdminServiceRequests
+  subscribeToAdminServiceRequests,
+  createTechnicianInApi,
+  updateTechnicianInApi
 } from '../services/adminApiService';
 
 // Project Category (V1) — a separate module from Service Tickets. Imported
@@ -25,6 +27,7 @@ import {
 import {
   fetchProjects,
   fetchMyProjectActivitiesInApi,
+  fetchTechnicianProjectActivitiesInApi,
   createProjectInApi,
   updateProjectInApi,
   markProjectCompleteInApi,
@@ -34,6 +37,19 @@ import {
   completeActivityInApi,
   reassignActivityInApi
 } from '../services/projectApiService';
+
+// Attendance Category (V1) — a separate module from Service Tickets and
+// Projects. Imported independently so a failure anywhere in this module can
+// never affect ticket or project data (see the isolated fetch/poll effect
+// below). Only the technician's own "today" check-in state is fetched here;
+// the Admin Attendance page keeps its own date/filter-scoped fetch logic
+// locally, only reading this context's `pollTick` counter to know when the
+// shared poll ticked, so it refreshes without a second interval.
+import {
+  fetchMyAttendanceTodayInApi,
+  checkInInApi,
+  checkOutInApi
+} from '../services/attendanceApiService';
 
 // Reuse the same context object across Vite hot updates. Without this, a provider
 // refresh can briefly leave already-mounted consumers attached to the old context.
@@ -155,12 +171,30 @@ export const AppProvider = ({ children }) => {
   const [projects, setProjects] = useState([]);
   const [myProjectActivities, setMyProjectActivities] = useState([]);
 
+  // Attendance Category (V1) — separate state again, same isolation
+  // reasoning as above. Only ever set for a *real* technician session
+  // (baseRole === 'tech'); while an admin is impersonating a technician's
+  // view, Attendance is read-only history only (never fetched into this
+  // poll) — see TechDashboard.jsx.
+  const [myAttendanceToday, setMyAttendanceToday] = useState(null);
+  // Bumped once per tick of the existing poll below (never a second
+  // interval). AttendancePage.jsx reacts to this to refresh its own
+  // date/filter-scoped fetch, instead of the page owning its own timer —
+  // "reuse the existing shared polling mechanism" per the spec.
+  const [pollTick, setPollTick] = useState(0);
+
   // Modals & Panels State
   const [selectedTicketId, setSelectedTicketId] = useState(null);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [selectedTechId, setSelectedTechId] = useState(null);
+  // Create/Edit Technician modal state — mirrors the Project modal pattern
+  // (isNewProjectModalOpen/projectModalMode) so the same NewTechnicianModal
+  // form serves both "Add New Technician" (TechniciansPage) and "Edit"
+  // (TechProfileModal, opened on the technician currently in `selectedTech`).
+  const [isTechnicianModalOpen, setIsTechnicianModalOpen] = useState(false);
+  const [technicianModalMode, setTechnicianModalMode] = useState('create'); // 'create' | 'edit'
   const [isCreateTicketOpen, setIsCreateTicketOpen] = useState(false);
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   // 'assign' = first assignment / Reassign (existing flow). 'add' = add an
@@ -440,13 +474,42 @@ export const AppProvider = ({ children }) => {
     };
 
     // Technician-only: their own Daily Project Activities. Also isolated.
+    // A real technician login (baseRole 'tech') carries a technician-role JWT
+    // and reads its own activities directly. An admin using "switch into a
+    // technician's view" (Sidebar picker) is still holding an admin JWT —
+    // exactly like fetchLiveTickets above, which never calls a
+    // technician-only ticket endpoint while impersonating — so it reads the
+    // same data through the admin-scoped route instead, or that technician
+    // JWT would 403 against /api/technician/project-activities.
     const fetchLiveMyActivities = async () => {
       if (role !== 'tech') return;
       try {
-        const activities = await fetchMyProjectActivitiesInApi();
+        const activities = baseRole === 'tech'
+          ? await fetchMyProjectActivitiesInApi()
+          : currentUser?.id
+            ? await fetchTechnicianProjectActivitiesInApi(currentUser.id)
+            : [];
         setMyProjectActivities(Array.isArray(activities) ? activities : []);
       } catch (err) {
         console.warn('Technician polling project activities error (isolated from tickets):', err);
+      }
+    };
+
+    // Attendance Category (V1) — the authenticated technician's own "today"
+    // check-in state. Real technician sessions only (baseRole === 'tech'):
+    // an admin impersonating a technician's view never holds a technician
+    // JWT and, per the plan, must never check in on a technician's behalf —
+    // so this is intentionally skipped while impersonating rather than
+    // rerouted through an admin-scoped endpoint (unlike fetchLiveMyActivities
+    // above). Isolated exactly like the two fetches above: a failure here
+    // only ever leaves `myAttendanceToday` at its last-known value.
+    const fetchLiveMyAttendanceToday = async () => {
+      if (role !== 'tech' || baseRole !== 'tech') return;
+      try {
+        const today = await fetchMyAttendanceTodayInApi();
+        setMyAttendanceToday(today || null);
+      } catch (err) {
+        console.warn('Technician polling attendance error (isolated from tickets):', err);
       }
     };
 
@@ -454,12 +517,17 @@ export const AppProvider = ({ children }) => {
       fetchLiveTickets();
       fetchLiveProjects();
       fetchLiveMyActivities();
+      fetchLiveMyAttendanceToday();
+      // AttendancePage.jsx's own effect depends on this to re-run its
+      // date/filter-scoped fetch on the same cadence, without a second
+      // setInterval anywhere.
+      setPollTick((t) => t + 1);
     };
 
     tick();
     const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
-  }, [role]);
+  }, [role, baseRole, currentUser?.id]);
 
   // Load the shared dashboard configuration (module toggles + role permissions)
   // from the backend so the Settings page choices survive a refresh. Only admin
@@ -535,6 +603,63 @@ export const AppProvider = ({ children }) => {
       return true;
     } catch (error) {
       showToast(error?.message || 'Could not delete technician.', 'error');
+      return false;
+    }
+  };
+
+  // Onboard a new technician — used by NewTechnicianModal in 'create' mode.
+  // A brand-new technician has no jobs yet, so the roster row is seeded with
+  // 0/0 rather than left blank until the next full reload.
+  const createTechnician = async (payload) => {
+    try {
+      const response = await createTechnicianInApi(payload);
+      const d = response?.data;
+      if (d) {
+        const created = {
+          id: d.id,
+          name: d.full_name,
+          role: d.role_title,
+          specialization: d.specialization,
+          email: d.email,
+          phone: d.phone,
+          location: d.location,
+          status: 'Available',
+          activeJobsCount: 0,
+          completedJobsCount: 0
+        };
+        setTechnicians((prev) => [created, ...(prev || [])]);
+      }
+      showToast(`Onboarded technician "${payload.full_name}".`, 'success');
+      return true;
+    } catch (error) {
+      showToast(error?.message || 'Failed to create technician', 'error');
+      return false;
+    }
+  };
+
+  // Edit an existing technician's profile — used by NewTechnicianModal in
+  // 'edit' mode (opened from TechProfileModal). Only the profile fields the
+  // Create form itself collects; availability and password keep going
+  // through their own existing endpoints, unchanged.
+  const updateTechnician = async (technicianId, payload) => {
+    try {
+      const response = await updateTechnicianInApi(technicianId, payload);
+      const d = response?.data;
+      if (d) {
+        setTechnicians((prev) => (prev || []).map((t) => (t.id === technicianId ? {
+          ...t,
+          name: d.full_name,
+          role: d.role_title,
+          specialization: d.specialization,
+          email: d.email,
+          phone: d.phone,
+          location: d.location
+        } : t)));
+      }
+      showToast(`Technician ${payload.full_name} updated.`, 'success');
+      return true;
+    } catch (error) {
+      showToast(error?.message || 'Failed to update technician', 'error');
       return false;
     }
   };
@@ -1285,6 +1410,42 @@ export const AppProvider = ({ children }) => {
     return true;
   };
 
+  // Attendance Category (V1) — mirrors updateActivityStatus/completeActivity
+  // above: call the API, fold the result into local state, toast, and never
+  // throw out of this function (the caller — the TechDashboard banner —
+  // reads the boolean return instead). Geolocation itself is captured by
+  // the caller (only after the Check In click, per the plan) and passed in
+  // as `location`.
+  const checkIn = async (location) => {
+    try {
+      const record = await checkInInApi(location);
+      setMyAttendanceToday(record);
+      showToast('Checked in.', 'success');
+      return true;
+    } catch (err) {
+      if (err.code === 'ALREADY_CHECKED_IN' && err.existing) {
+        // Another tab/device already checked in for today — resync instead
+        // of leaving the banner stuck on "Check In".
+        setMyAttendanceToday(err.existing);
+      }
+      showToast(err.message || 'Check-in failed', 'error');
+      return false;
+    }
+  };
+
+  const checkOut = async () => {
+    if (!myAttendanceToday?.id) return false;
+    try {
+      const record = await checkOutInApi(myAttendanceToday.id);
+      setMyAttendanceToday(record);
+      showToast('Checked out.', 'success');
+      return true;
+    } catch (err) {
+      showToast(err.message || 'Check-out failed', 'error');
+      return false;
+    }
+  };
+
   // Light completion: notes + completed_at only (no service-report shape).
   const completeActivity = async (activityId, completionNotes = '') => {
     try {
@@ -1384,6 +1545,8 @@ export const AppProvider = ({ children }) => {
         switchRole,
         loginAsTechnician,
         deleteTechnician,
+        createTechnician,
+        updateTechnician,
         deleteCustomer,
         verifyTechnicianPassword,
         saveAppSettings,
@@ -1426,6 +1589,10 @@ export const AppProvider = ({ children }) => {
         setSelectedRoomId,
         selectedTech,
         setSelectedTechId,
+        isTechnicianModalOpen,
+        setIsTechnicianModalOpen,
+        technicianModalMode,
+        setTechnicianModalMode,
 
         isCreateTicketOpen,
         setIsCreateTicketOpen,
@@ -1471,6 +1638,15 @@ export const AppProvider = ({ children }) => {
         updateActivityStatus,
         completeActivity,
         reassignActivity,
+
+        // Attendance Category (V1) — additive, separate from tickets and
+        // projects. AttendancePage.jsx (admin) manages its own list/filter
+        // state locally and reads only `pollTick` from here, to refresh on
+        // the same cadence as tickets/projects without a second interval.
+        myAttendanceToday,
+        checkIn,
+        checkOut,
+        pollTick,
 
         isSearchOpen,
         setIsSearchOpen,

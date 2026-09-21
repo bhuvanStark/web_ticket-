@@ -19,6 +19,11 @@ import teamMembersRouter from './routes/teamMembers.js';
 import passwordResetRouter from './routes/passwordReset.js';
 import projectsRouter from './routes/projects.js';
 import projectActivitiesRouter from './routes/projectActivities.js';
+// Attendance Category (V1) — separate module from Service Tickets and
+// Projects. Additive only; see routes/attendance.js and
+// routes/adminAttendance.js.
+import attendanceRouter from './routes/attendance.js';
+import adminAttendanceRouter from './routes/adminAttendance.js';
 
 // Load environment variables
 dotenv.config();
@@ -103,6 +108,10 @@ app.use('/api/customers', customersRouter);
 app.use('/api/locations', locationsRouter);
 app.use('/api/technicians', techniciansRouter);
 app.use('/api/team-members', teamMembersRouter);
+// Attendance Category (V1) — technician self-service. Mounted before the
+// generic /api/admin below so its own admin sub-routes are matched first.
+app.use('/api/attendance', attendanceRouter);
+app.use('/api/admin/attendance', adminAttendanceRouter);
 
 // ============================================
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)

@@ -135,6 +135,16 @@ export async function fetchMyProjectActivitiesInApi() {
   return readApiData(res, 'fetch my project activities');
 }
 
+// Same data, read through an admin token. Used only while an admin is
+// impersonating a technician (the Sidebar "view as technician" switch),
+// which never holds a technician-role JWT — mirrors how ticket polling
+// always uses the admin-scoped endpoint during impersonation instead of a
+// technician-only one.
+export async function fetchTechnicianProjectActivitiesInApi(technicianId) {
+  const res = await authFetch(`${API_BASE_URL}/admin/technicians/${technicianId}/project-activities`, { headers: authHeaders() });
+  return readApiData(res, 'fetch technician project activities');
+}
+
 export async function completeActivityInApi(activityId, completionNotes) {
   const res = await authFetch(`${API_BASE_URL}/technician/project-activities/${activityId}/complete`, {
     method: 'PATCH',
