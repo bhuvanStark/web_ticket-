@@ -194,18 +194,12 @@ export async function createServiceRequest(ticketData) {
     throw new Error('A room is required for AV tickets.');
   }
 
-  // "Other" location: create the location first, then use its id. Only EPABX
-  // reaches here without a locationId.
-  let locationId = ticketData.locationId;
-  if (!locationId && ticketData.newLocationName) {
-    const created = await apiRequest('/locations', {
-      method: 'POST',
-      body: JSON.stringify({ name: ticketData.newLocationName, customer_id: ticketData.customerId })
-    });
-    locationId = created.data?.id;
-  }
+  // A customer account represents exactly one fixed service location (see
+  // migration 024) — there is no "Other"/manual location entry any more; the
+  // wizard only ever sends the customer's own configured location id.
+  const locationId = ticketData.locationId;
   if (!locationId) {
-    throw new Error('A location is required.');
+    throw new Error('A location is required. Please contact your administrator to configure your facility.');
   }
 
   const insertPayload = {

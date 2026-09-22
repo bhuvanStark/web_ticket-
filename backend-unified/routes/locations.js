@@ -85,7 +85,28 @@ router.post('/', async (req, res) => {
 
     if (error) throw error;
 
-    res.status(201).json({ success: true, data: data?.[0], message: 'Location created successfully' });
+    const newLocation = data?.[0];
+
+    // Every location needs the four canonical AV rooms (Huddle Room, Board
+    // Room, Training Room, Town Hall — same set the admin's AV ticket form
+    // offers) or the customer app's "Select Room" step has nothing to show.
+    // Mirrors the one-off backfill in migration 023; best-effort so a room
+    // provisioning hiccup never fails the location creation itself.
+    if (newLocation?.id) {
+      const { error: roomsError } = await supabase
+        .from('rooms')
+        .insert([
+          { location_id: newLocation.id, name: 'Huddle Room', room_type: 'Huddle Room' },
+          { location_id: newLocation.id, name: 'Board Room', room_type: 'Board Room' },
+          { location_id: newLocation.id, name: 'Training Room', room_type: 'Training Room' },
+          { location_id: newLocation.id, name: 'Town Hall', room_type: 'Town Hall' }
+        ]);
+      if (roomsError) {
+        console.warn('Location created, but seeding its default AV rooms failed:', roomsError.message);
+      }
+    }
+
+    res.status(201).json({ success: true, data: newLocation, message: 'Location created successfully' });
   } catch (error) {
     console.error('Error creating location:', error);
     res.status(500).json({ success: false, error: error.message });

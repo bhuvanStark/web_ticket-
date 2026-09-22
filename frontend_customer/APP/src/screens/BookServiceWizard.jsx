@@ -52,6 +52,12 @@ export function BookServiceWizard({
   const isEpabx = serviceType === 'EPABX';
   const issueCategories = isEpabx ? EPABX_ISSUE_CATEGORIES : AV_ISSUE_CATEGORIES;
 
+  // A customer account represents exactly one fixed service location (see
+  // migration 024) — `locations` is a 0- or 1-item array, never a list to
+  // choose from. Facility Location + Area come from that one row, not from
+  // anything the customer types.
+  const customerLocation = locations[0] || null;
+
   const initialRoomObj = (!isEpabx && initialRoomId) ? rooms.find(r => r.id === initialRoomId) : null;
   const initialLocObj = initialRoomObj ? locations.find(l => l.id === initialRoomObj.location_id) : null;
 
@@ -60,13 +66,6 @@ export function BookServiceWizard({
   const [selectedLocation, setSelectedLocation] = useState(initialLocObj || null);
   const [selectedRoom, setSelectedRoom] = useState(initialRoomObj || null);
   const [selectedCategory, setSelectedCategory] = useState('');
-  // "Other" location — a free-typed place the customer's account does not have
-  // yet. EPABX only (an AV ticket needs a configured room). The backend creates
-  // the location on submit.
-  const [otherLocation, setOtherLocation] = useState(false);
-  const [otherLocationName, setOtherLocationName] = useState('');
-  // Free-typed sub-locality within the site (e.g. "3rd Floor East Wing").
-  const [area, setArea] = useState('');
 
   const [description, setDescription] = useState('');
   const [supportMode] = useState('On-site Service');
@@ -110,9 +109,8 @@ export function BookServiceWizard({
 
   const availableRooms = selectedLocation ? rooms.filter(r => r.location_id === selectedLocation.id) : rooms;
 
-  const usingOtherLocation = isEpabx && otherLocation;
   const canProceedStep1 = isEpabx
-    ? (usingOtherLocation ? otherLocationName.trim().length > 2 : !!selectedLocation)
+    ? !!selectedLocation
     : (selectedLocation && selectedRoom);
   const canProceedStep2 = selectedCategory && description.trim().length > 3;
 
@@ -131,11 +129,11 @@ export function BookServiceWizard({
       status: 'Open',
       // Which support line the customer picked on the home screen (AV vs EPABX).
       supportCategory: isEpabx ? 'epabx' : 'av',
-      location: usingOtherLocation ? otherLocationName.trim() : selectedLocation?.name,
-      locationId: usingOtherLocation ? null : selectedLocation?.id,
-      // The backend creates this location first when no locationId is supplied.
-      newLocationName: usingOtherLocation ? otherLocationName.trim() : null,
-      area: area.trim() || null,
+      // Facility Location + Area are the customer's own configured location —
+      // never typed here, always the one location row from the profile.
+      location: selectedLocation?.state || selectedLocation?.name,
+      locationId: selectedLocation?.id,
+      area: selectedLocation?.area || null,
       category: selectedCategory,
       // EPABX tickets carry no room.
       room: isEpabx ? null : selectedRoom?.name,
@@ -190,106 +188,73 @@ export function BookServiceWizard({
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)', marginBottom: '8px' }}>Location</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {locations.map((loc) => {
-                    const isSelected = !otherLocation && selectedLocation?.id === loc.id;
-                    return (
-                      <div
-                        key={loc.id}
-                        className="card card-clickable"
-                        onClick={() => {
-                          setOtherLocation(false);
-                          setSelectedLocation(loc);
-                          setSelectedRoom(null);
-                        }}
-                        style={{
-                          borderColor: isSelected ? 'var(--color-primary)' : 'var(--color-border)',
-                          background: isSelected ? 'var(--color-primary-light)' : 'var(--color-surface)',
-                          display: 'flex', alignItems: 'center', gap: '12px', padding: '12px'
-                        }}
-                      >
-                        <MapPin size={18} color={isSelected ? 'var(--color-primary)' : 'var(--color-text-secondary)'} />
-                        <span style={{ fontWeight: '600', fontSize: '14px', color: isSelected ? 'var(--color-primary)' : 'var(--color-text-primary)' }}>{loc.name}</span>
-                      </div>
-                    );
-                  })}
-
-                  {/* "Other" — a new place, EPABX only (an AV ticket needs a configured room). */}
-                  {isEpabx && (
+              {!customerLocation ? (
+                // No facility configured for this account yet. There is no
+                // room-management UI anywhere in this app — manual/"Other"
+                // location entry is intentionally not offered; only an
+                // administrator can set this up.
+                <div className="card" style={{ padding: '16px', borderColor: '#FECACA', background: '#FEF2F2', color: '#991B1B' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '800' }}>No facility configured</div>
+                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                    Your account has no service location set up yet. Please contact your administrator to configure your facility before raising a ticket.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)', marginBottom: '8px' }}>Location</label>
                     <div
                       className="card card-clickable"
-                      onClick={() => { setOtherLocation(true); setSelectedLocation(null); setSelectedRoom(null); }}
+                      onClick={() => setSelectedLocation(customerLocation)}
                       style={{
-                        borderColor: otherLocation ? 'var(--color-primary)' : 'var(--color-border)',
-                        background: otherLocation ? 'var(--color-primary-light)' : 'var(--color-surface)',
+                        borderColor: selectedLocation ? 'var(--color-primary)' : 'var(--color-border)',
+                        background: selectedLocation ? 'var(--color-primary-light)' : 'var(--color-surface)',
                         display: 'flex', alignItems: 'center', gap: '12px', padding: '12px'
                       }}
                     >
-                      <MapPin size={18} color={otherLocation ? 'var(--color-primary)' : 'var(--color-text-secondary)'} />
-                      <span style={{ fontWeight: '600', fontSize: '14px', color: otherLocation ? 'var(--color-primary)' : 'var(--color-text-primary)' }}>Other (new location)</span>
-                    </div>
-                  )}
-
-                  {isEpabx && otherLocation && (
-                    <input
-                      type="text"
-                      autoFocus
-                      value={otherLocationName}
-                      onChange={(e) => setOtherLocationName(e.target.value)}
-                      placeholder="Type the location / site name"
-                      style={{ width: '100%', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-primary)', background: 'var(--color-surface)', fontSize: '14px', outline: 'none' }}
-                    />
-                  )}
-                </div>
-              </div>
-
-              {!isEpabx && selectedLocation && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)', marginBottom: '8px' }}>Select Room</label>
-                  {availableRooms.length === 0 ? (
-                    <div className="card" style={{ padding: '14px', borderColor: '#FECACA', background: '#FEF2F2', color: '#991B1B' }}>
-                      <div style={{ fontSize: '13px', fontWeight: '800' }}>No rooms configured</div>
-                      <div style={{ fontSize: '12px', marginTop: '4px' }}>A room is mandatory. Ask an administrator to add rooms for this location before creating a request.</div>
-                    </div>
-                  ) : <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                    {availableRooms.map((rm) => {
-                      const isSelected = selectedRoom?.id === rm.id;
-                      return (
-                        <div
-                          key={rm.id}
-                          className="card card-clickable"
-                          onClick={() => setSelectedRoom(rm)}
-                          style={{
-                            borderColor: isSelected ? 'var(--color-primary)' : 'var(--color-border)',
-                            background: isSelected ? 'var(--color-primary-light)' : 'var(--color-surface)',
-                            padding: '12px', textAlign: 'center', fontWeight: '600', fontSize: '13px',
-                            color: isSelected ? 'var(--color-primary)' : 'var(--color-text-primary)'
-                          }}
-                        >
-                          {rm.name}
+                      <MapPin size={18} color={selectedLocation ? 'var(--color-primary)' : 'var(--color-text-secondary)'} />
+                      <div>
+                        <div style={{ fontWeight: '600', fontSize: '14px', color: selectedLocation ? 'var(--color-primary)' : 'var(--color-text-primary)' }}>
+                          {customerLocation.state || customerLocation.name}
                         </div>
-                      );
-                    })}
-                  </div>}
-                </div>
-              )}
+                        {customerLocation.area && (
+                          <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{customerLocation.area}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-              {/* Area — free-typed sub-locality (optional) */}
-              {(selectedLocation || usingOtherLocation) && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)', marginBottom: '8px' }}>
-                    Area <span style={{ fontWeight: '400', color: 'var(--color-text-secondary)' }}>(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={area}
-                    onChange={(e) => setArea(e.target.value)}
-                    placeholder="e.g. 3rd Floor East Wing, Reception"
-                    style={{ width: '100%', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '14px', outline: 'none' }}
-                  />
-                </div>
+                  {!isEpabx && selectedLocation && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)', marginBottom: '8px' }}>Select Room</label>
+                      {availableRooms.length === 0 ? (
+                        <div className="card" style={{ padding: '14px', borderColor: '#FECACA', background: '#FEF2F2', color: '#991B1B' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '800' }}>No rooms configured</div>
+                          <div style={{ fontSize: '12px', marginTop: '4px' }}>A room is mandatory. Ask an administrator to add rooms for this location before creating a request.</div>
+                        </div>
+                      ) : <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        {availableRooms.map((rm) => {
+                          const isSelected = selectedRoom?.id === rm.id;
+                          return (
+                            <div
+                              key={rm.id}
+                              className="card card-clickable"
+                              onClick={() => setSelectedRoom(rm)}
+                              style={{
+                                borderColor: isSelected ? 'var(--color-primary)' : 'var(--color-border)',
+                                background: isSelected ? 'var(--color-primary-light)' : 'var(--color-surface)',
+                                padding: '12px', textAlign: 'center', fontWeight: '600', fontSize: '13px',
+                                color: isSelected ? 'var(--color-primary)' : 'var(--color-text-primary)'
+                              }}
+                            >
+                              {rm.name}
+                            </div>
+                          );
+                        })}
+                      </div>}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -300,8 +265,8 @@ export function BookServiceWizard({
           <div>
             <div style={{ fontSize: '12px', color: 'var(--color-primary)', fontWeight: '700', marginBottom: '2px' }}>
               {isEpabx
-                ? `EPABX Support — ${usingOtherLocation ? otherLocationName.trim() : (selectedLocation?.name || '')}`
-                : `${selectedRoom?.name || ''} (${selectedLocation?.name || ''})`}
+                ? `EPABX Support — ${selectedLocation?.state || selectedLocation?.name || ''}`
+                : `${selectedRoom?.name || ''} (${selectedLocation?.state || selectedLocation?.name || ''})`}
             </div>
             <h2 style={{ fontSize: '20px', fontWeight: '800', color: 'var(--color-text-primary)', marginBottom: '4px' }}>
               Issue Details
@@ -426,7 +391,7 @@ export function BookServiceWizard({
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', paddingBottom: '8px' }}>
                   <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Location</span>
-                  <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)' }}>{usingOtherLocation ? `${otherLocationName.trim()} (new)` : selectedLocation?.name}</span>
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)' }}>{selectedLocation?.state || selectedLocation?.name}</span>
                 </div>
                 {!isEpabx && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', paddingBottom: '8px' }}>
@@ -434,10 +399,10 @@ export function BookServiceWizard({
                     <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)' }}>{selectedRoom?.name}</span>
                   </div>
                 )}
-                {area.trim() && (
+                {selectedLocation?.area && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', paddingBottom: '8px' }}>
                     <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Area</span>
-                    <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)' }}>{area.trim()}</span>
+                    <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-text-primary)' }}>{selectedLocation.area}</span>
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', paddingBottom: '8px' }}>

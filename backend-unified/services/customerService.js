@@ -1,4 +1,81 @@
 import { supabase } from '../config/supabaseClient.js';
+import { withTransaction } from '../config/database.js';
+import { PostgresQueryBuilder } from '../config/databaseClient.js';
+
+// The four canonical AV rooms every location must have — the customer app's
+// AV ticket wizard hard-requires a real room_id and has no room-management
+// UI of its own, so a location with fewer than these four is a dead end.
+// Kept in sync with the fixed list in ADMIN DASH's CreateTicketModal.jsx and
+// with migration 010/023's canonical set.
+const CANONICAL_AV_ROOMS = ['Huddle Room', 'Board Room', 'Training Room', 'Town Hall'];
+
+// Admin "Add Customer": a customer, its one fixed service location (Facility
+// Location + Area), and that location's four canonical rooms are created as
+// a single atomic unit — mirrors services/projectActivityService.js's
+// reassignActivity, the only other user of withTransaction in this codebase.
+// A customer must never end up committed with a missing or incomplete
+// location; if any step fails, everything rolls back and POST /customers
+// returns an error instead of a half-onboarded customer.
+export const createCustomerWithLocation = async ({
+  name, company_name, email, phone, address, city,
+  industry, contact_person, contact_role,
+  facility_location, area
+}) => {
+  return withTransaction(async (client) => {
+    const now = new Date().toISOString();
+
+    const customerResult = await new PostgresQueryBuilder('customers', client)
+      .insert([{
+        name: name || contact_person || company_name,
+        company_name,
+        email,
+        phone: phone || null,
+        address: address || null,
+        city: city || null,
+        industry: industry || null,
+        contact_person: contact_person || null,
+        contact_role: contact_role || null,
+        created_at: now,
+        updated_at: now
+      }])
+      .select('*')
+      .single();
+    if (customerResult.error) {
+      const err = new Error(customerResult.error.message);
+      err.code = customerResult.error.code;
+      throw err;
+    }
+    const customer = customerResult.data;
+
+    // `locations.name` is NOT NULL and has no separate "location name" input
+    // in the Add Customer form — the Facility Location (state) doubles as
+    // the location's display name, since a customer has only ever this one.
+    const locationResult = await new PostgresQueryBuilder('locations', client)
+      .insert([{
+        customer_id: customer.id,
+        name: facility_location,
+        state: facility_location,
+        area: area || null,
+        created_at: now,
+        updated_at: now
+      }])
+      .select('*')
+      .single();
+    if (locationResult.error) throw new Error(locationResult.error.message);
+    const location = locationResult.data;
+
+    const roomsResult = await new PostgresQueryBuilder('rooms', client)
+      .insert(CANONICAL_AV_ROOMS.map((roomName) => ({
+        location_id: location.id,
+        name: roomName,
+        room_type: roomName
+      })))
+      .select('*');
+    if (roomsResult.error) throw new Error(roomsResult.error.message);
+
+    return { ...customer, locations: [{ ...location, rooms: roomsResult.data }] };
+  });
+};
 
 // Get complete customer profile with all related data
 export const getCustomerProfile = async (customerId) => {

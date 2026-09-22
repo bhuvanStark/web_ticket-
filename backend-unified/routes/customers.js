@@ -2,6 +2,7 @@ import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
 import { validateCustomer, validateUUID } from '../middleware/validation.js';
 import { requireAuth } from '../middleware/auth.js';
+import { createCustomerWithLocation } from '../services/customerService.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -11,7 +12,7 @@ router.get('/', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('customers')
-      .select('*')
+      .select('*, locations (id, name, state, area)')
       .order('company_name', { ascending: true });
 
     if (error) throw error;
@@ -32,6 +33,7 @@ router.get('/:id', validateUUID, async (req, res) => {
       .from('customers')
       .select(`
         *,
+        locations (id, name, state, area),
         service_requests (
           id,
           ticket_number,
@@ -54,12 +56,15 @@ router.get('/:id', validateUUID, async (req, res) => {
   }
 });
 
-// CREATE new customer
+// CREATE new customer — atomically creates the customer, its one fixed
+// service location (Facility Location + Area), and that location's four
+// canonical AV rooms. See services/customerService.js#createCustomerWithLocation.
 router.post('/', validateCustomer, async (req, res) => {
   try {
     const {
       name, company_name, email, phone, address, city,
-      industry, contact_person, contact_role, role
+      industry, contact_person, contact_role, role,
+      facility_location, area
     } = req.body;
 
     if (!company_name) {
@@ -69,28 +74,21 @@ router.post('/', validateCustomer, async (req, res) => {
       });
     }
 
-    const { data, error } = await supabase
-      .from('customers')
-      .insert([
-        {
-          name: name || contact_person || company_name,
-          company_name,
-          email,
-          phone: phone || null,
-          address: address || null,
-          city: city || null,
-          industry: industry || null,
-          contact_person: contact_person || null,
-          contact_role: contact_role || role || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
-      ])
-      .select();
+    const data = await createCustomerWithLocation({
+      name,
+      company_name,
+      email,
+      phone,
+      address,
+      city,
+      industry,
+      contact_person,
+      contact_role: contact_role || role,
+      facility_location,
+      area
+    });
 
-    if (error) throw error;
-
-    res.status(201).json({ success: true, data: data?.[0], message: 'Customer created successfully' });
+    res.status(201).json({ success: true, data, message: 'Customer created successfully' });
   } catch (error) {
     console.error('Error creating customer:', error);
     // 23505 = unique violation — customers_email_ci_unique / _lower_unique.

@@ -3,6 +3,7 @@ import { X, Building2, UserCheck, CheckCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { createAdminCustomer } from '../../services/adminApiService';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
+import { StateSelect } from '../common/StateSelect';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -12,7 +13,8 @@ export function NewCustomerModal({ onClose, onAddCustomer }) {
 
   const [companyName, setCompanyName] = useState('');
   const [industry, setIndustry] = useState('');
-  const [city, setCity] = useState('');
+  const [facilityLocation, setFacilityLocation] = useState('');
+  const [area, setArea] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [contactRole, setContactRole] = useState('');
   const [email, setEmail] = useState('');
@@ -23,11 +25,12 @@ export function NewCustomerModal({ onClose, onAddCustomer }) {
 
   const rules = {
     companyName: [required('Company name is required'), minLength(2)],
+    facilityLocation: [required('Facility location is required')],
     contactPerson: [required('Contact name is required'), minLength(2)],
     email: [required('Email is required'), emailRule()],
     phone: [required('Phone number is required'), phoneRule()],
   };
-  const values = () => ({ companyName, contactPerson, email, phone });
+  const values = () => ({ companyName, facilityLocation, contactPerson, email, phone });
   const markTouched = (n) => { setTouched((t) => ({ ...t, [n]: true })); setErrors(validateForm(values(), rules)); };
   const errFor = (n) => (touched[n] ? errors[n] : null);
   const inputCls = (n) =>
@@ -39,7 +42,7 @@ export function NewCustomerModal({ onClose, onAddCustomer }) {
     if (e) e.preventDefault();
     const found = validateForm(values(), rules);
     setErrors(found);
-    setTouched({ companyName: true, contactPerson: true, email: true, phone: true });
+    setTouched({ companyName: true, facilityLocation: true, contactPerson: true, email: true, phone: true });
     if (Object.keys(found).length > 0) {
       showToast('Please fix the highlighted fields.', 'error');
       return;
@@ -55,7 +58,8 @@ export function NewCustomerModal({ onClose, onAddCustomer }) {
         email: email.trim(),
         phone: phone.trim(),
         industry: industry.trim() || null,
-        city: city.trim() || null,
+        facility_location: facilityLocation,
+        area: area.trim() || null,
       });
       const row = created?.data || created;
       if (row) {
@@ -114,13 +118,25 @@ export function NewCustomerModal({ onClose, onAddCustomer }) {
                 />
               </div>
               <div>
-                <label className="form-label">Headquarters City</label>
-                <input
-                  type="text" value={city} onChange={(e) => setCity(e.target.value)}
-                  placeholder="e.g. Bengaluru"
-                  className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm text-[#172033] outline-none focus:border-[#004898]"
+                <label className="form-label">Facility Location *</label>
+                <StateSelect
+                  id="facilityLocation"
+                  value={facilityLocation}
+                  onChange={(value) => { setFacilityLocation(value); if (touched.facilityLocation) markTouched('facilityLocation'); }}
+                  placeholder="Select a state…"
+                  className={inputCls('facilityLocation')}
                 />
+                <FieldError>{errFor('facilityLocation')}</FieldError>
               </div>
+            </div>
+
+            <div>
+              <label className="form-label">Area <span className="font-normal text-[#98A2B3]">(optional)</span></label>
+              <input
+                type="text" value={area} onChange={(e) => setArea(e.target.value)}
+                placeholder="e.g. 3rd Floor East Wing"
+                className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm text-[#172033] outline-none focus:border-[#004898]"
+              />
             </div>
           </div>
 

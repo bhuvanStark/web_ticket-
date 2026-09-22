@@ -253,7 +253,7 @@ export const validateServiceRequest = (req, res, next) => {
 
 // Customer validation
 export const validateCustomer = (req, res, next) => {
-  const { name, company_name, email, phone } = req.body;
+  const { name, company_name, email, phone, facility_location, area } = req.body;
   const errors = [];
 
   // `name` (the primary contact / display name) is optional — the create route
@@ -271,6 +271,16 @@ export const validateCustomer = (req, res, next) => {
     const phoneRegex = /^[0-9\+\-\(\)\s]{10,}$/;
     if (!phoneRegex.test(phone)) errors.push('phone must be a valid phone number');
   }
+
+  // A customer represents exactly one service location, created alongside it
+  // (see services/customerService.js#createCustomerWithLocation) — the state
+  // is mandatory the same way Admin Raise Ticket's facility_location is
+  // (validateServiceRequest, above); it is not re-checked against the
+  // INDIA_STATES list here, matching that same existing precedent, since the
+  // list itself only lives in the admin frontend's StateSelect component.
+  if (!facility_location || !String(facility_location).trim()) errors.push('facility_location is required');
+  if (facility_location && String(facility_location).trim().length > 255) errors.push('facility_location must not exceed 255 characters');
+  if (area && String(area).trim().length > 255) errors.push('area must not exceed 255 characters');
 
   if (errors.length > 0) {
     return res.status(400).json({

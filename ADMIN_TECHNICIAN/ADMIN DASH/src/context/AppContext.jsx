@@ -360,7 +360,11 @@ export const AppProvider = ({ children }) => {
               id: c.id,
               name: c.company_name || c.name,
               industry: c.industry || '',
-              headquarters: c.city || c.address || '',
+              // Facility Location now lives on the customer's one `locations`
+              // row (state), not customers.city — see migration 024 and
+              // Admin > Add Customer. c.city/c.address are kept as a fallback
+              // for any customer onboarded before that change.
+              headquarters: c.locations?.[0]?.state || c.city || c.address || '',
               contactPerson: c.contact_person || c.name || '',
               role: c.contact_role || '',
               email: c.email || '',
