@@ -24,7 +24,7 @@ export function Header({
           </button>
         ) : (
           <img 
-            src="/tasktel-icon.png" 
+            src={`${import.meta.env.BASE_URL}tasktel-icon.png`}
             alt="TaskTel Logo Icon" 
             style={{ width: '34px', height: '34px', objectFit: 'contain' }} 
           />

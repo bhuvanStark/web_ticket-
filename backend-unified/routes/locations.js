@@ -6,13 +6,18 @@ import { requireAuth } from '../middleware/auth.js';
 const router = express.Router();
 router.use(requireAuth);
 
-// GET all locations (shared across all customers)
+// GET all locations (shared across all customers — admin/technician only).
+// A customer session is scoped to its own locations so the AV/EPABX ticket
+// wizard cannot list another company's facilities.
 router.get('/', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('locations')
-      .select('*')
-      .order('name', { ascending: true });
+    let query = supabase.from('locations').select('*');
+
+    if (req.user?.role === 'customer') {
+      query = query.eq('customer_id', req.userId);
+    }
+
+    const { data, error } = await query.order('name', { ascending: true });
 
     if (error) throw error;
 

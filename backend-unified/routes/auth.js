@@ -288,8 +288,15 @@ router.get('/me', verifyToken, async (req, res) => {
 router.get('/session', verifyToken, async (req, res) => {
   try {
     const role = req.user?.role || null;
+    // Sales & Back-Office Roles V1 — every portal restores its session
+    // through this one endpoint (unifiedClient.getSession()), so a Sales or
+    // Back-Office JWT must resolve to its own identity table here too, or
+    // session restore silently falls through to `customers` and 401s on
+    // every page refresh.
     const table = role === 'admin' ? 'admins'
       : role === 'technician' ? 'technicians'
+      : role === 'sales' ? 'sales'
+      : role === 'back_office' ? 'back_office'
       : 'customers';
     const nameColumn = table === 'customers' ? 'name' : 'full_name';
 

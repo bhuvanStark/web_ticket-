@@ -51,6 +51,16 @@ export function isValidDateKey(value) {
 // inverse and round-trip correctly no matter what timezone the process is
 // actually in — unlike an IST-shift, this needs no assumption about which
 // timezone that is.
+// Adds `days` (may be negative) to a YYYY-MM-DD key and returns the result,
+// also as a plain key. Pure calendar-date arithmetic via Date.UTC — never
+// touches the process's local timezone, so it can't drift by a day the way
+// reusing formatDateOnly's *local*-getter approach would for this purpose.
+export function addDaysToDateKey(dateKey, days) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+}
+
 export function formatDateOnly(value) {
   if (value == null) return value;
   if (typeof value === 'string') return value.slice(0, 10);

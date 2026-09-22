@@ -142,8 +142,8 @@ export const CustomersPage = () => {
 
                     <td className="px-4 py-2.5">
                       <div className="flex flex-col gap-0.5 text-xs">
-                        <span className="font-bold text-[#172033]">{c.locationsCount || 3} Locations</span>
-                        <span className="font-medium text-[#475467]">{c.totalRooms || 26} Managed Rooms</span>
+                        <span className="font-bold text-[#172033]">{c.locationsCount ?? 0} Locations</span>
+                        <span className="font-medium text-[#475467]">{c.totalRooms ?? 0} Managed Rooms</span>
                       </div>
                     </td>
 

@@ -26,7 +26,17 @@ export const GlobalSearchModal = () => {
   const query = globalSearchQuery;
   const setQuery = setGlobalSearchQuery;
 
+  // Sales & Back-Office Roles V1 — this is a Ticket/Customer/Technician
+  // search surface; neither role has any ticket/project functionality at
+  // all (plan §3/§6/§7). Audit fix: the Ctrl+K hotkey and this modal had no
+  // role gate, so it was reachable (though its Customers/Technicians
+  // sections were already correctly hidden below, and Tickets is always
+  // empty for these two roles since /api/service-requests is denylisted
+  // for them server-side).
+  const isEmployeeOnlyRole = role === 'sales' || role === 'back_office';
+
   useEffect(() => {
+    if (isEmployeeOnlyRole) return;
     const handleKeyDown = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
@@ -38,9 +48,9 @@ export const GlobalSearchModal = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSearchOpen, setIsSearchOpen]);
+  }, [isSearchOpen, setIsSearchOpen, isEmployeeOnlyRole]);
 
-  if (!isSearchOpen) return null;
+  if (!isSearchOpen || isEmployeeOnlyRole) return null;
 
   const q = query.trim().toLowerCase();
 

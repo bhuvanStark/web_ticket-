@@ -148,6 +148,149 @@ export const requireTechnician = (req, res, next) => {
   }
 };
 
+// Sales & Back-Office Roles V1 — same shape as requireAdmin/requireTechnician
+// above (kept unchanged themselves, per the plan's "keep unchanged in
+// behavior" requirement), just gated on a different JWT role string.
+export const requireSales = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Missing authorization header'
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = verifyTokenFn(token);
+
+    if (decoded.role !== 'sales') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Sales access required'
+      });
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: error.message
+    });
+  }
+};
+
+export const requireBackOffice = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Missing authorization header'
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = verifyTokenFn(token);
+
+    if (decoded.role !== 'back_office') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Back-Office access required'
+      });
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: error.message
+    });
+  }
+};
+
+// Unified self-service attendance (routes/attendance.js) is the one place
+// Technician, Sales, and Back-Office genuinely share an endpoint set — the
+// plan's "generalize the existing attendance service" instruction. Accepts
+// any of the three employee roles; req.user.role tells the route/service
+// which owner column identifies this employee. Admin is deliberately not
+// included — Admin has its own separate, unrestricted attendance surface
+// (routes/adminAttendance.js) and must never gain a generic
+// check-in-as-employee action through this one.
+export const requireEmployee = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Missing authorization header'
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = verifyTokenFn(token);
+
+    if (!['technician', 'sales', 'back_office'].includes(decoded.role)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Technician, Sales, or Back-Office access required'
+      });
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: error.message
+    });
+  }
+};
+
+// Sales & Back-Office Roles V1 — Service Requests/Projects/Project
+// Activities gate on requireAuth (any authenticated role at all — already
+// true for Customer too, unrelated to this feature), not a specific role,
+// so a Sales/Back-Office JWT would otherwise pass straight through
+// unchanged. The plan requires them rejected there specifically (§3, §11,
+// §15.1) without touching those routers' existing auth or any other role's
+// access — see server.js, which mounts this ahead of those three routers
+// only. A missing/invalid token is deliberately let through to the route's
+// own auth middleware to reject as it always has; this only ever blocks a
+// recognized role that is not allowed here.
+export const rejectRoles = (roles) => (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = verifyTokenFn(authHeader.substring(7));
+      if (roles.includes(decoded.role)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          message: 'Not available for this role'
+        });
+      }
+    } catch {
+      // Invalid/expired token — not this middleware's concern; fall through
+      // to the router's own auth, which will reject it the same as always.
+    }
+  }
+  next();
+};
+
 // Hash password
 export const hashPassword = async (password) => {
   return bcrypt.hash(password, 10);

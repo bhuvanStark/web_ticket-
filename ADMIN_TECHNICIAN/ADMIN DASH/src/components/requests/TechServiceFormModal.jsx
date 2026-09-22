@@ -2,8 +2,9 @@ import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { X, CheckCircle, PenTool, RotateCcw, Clock } from 'lucide-react';
 
-// Equipment lists per support line. The Equipment/System dropdown switches
-// automatically to match the ticket's category.
+// Equipment list for AV tickets. The System field is a fixed dropdown here,
+// but a plain free-text input for EPABX (see the System field below) — the
+// EPABX equipment fleet varies too much site to site for a fixed list.
 const AV_SYSTEMS = [
   'Neat VC Bar',
   'Logitech VC Bar',
@@ -23,18 +24,6 @@ const AV_SYSTEMS = [
   'VC System',
   'Room Equipment',
   'Connectivity'
-];
-
-const EPABX_SYSTEMS = [
-  'OSB',
-  'EP Controller',
-  'SMB Controller',
-  'X5 Series',
-  'SIP ATH 3800',
-  'HiPath 3550',
-  'HiPath 1150',
-  'HiPath 1190',
-  'Other'
 ];
 
 export const TechServiceFormModal = () => {
@@ -59,11 +48,13 @@ export const TechServiceFormModal = () => {
 
   const isEpabx = (selectedTicket?.supportCategory || '').toLowerCase() === 'epabx'
     || selectedTicket?.serviceType === 'EPABX';
-  const systemOptions = isEpabx ? EPABX_SYSTEMS : AV_SYSTEMS;
 
-  const [system, setSystem] = useState(systemOptions[0]);
-  // When System = "Other", the tech types a custom name that is saved as the
-  // report's system value.
+  // EPABX: `system` is the free-text value typed directly into the field
+  // below. AV: `system` holds the selected dropdown option (starts on the
+  // first AV_SYSTEMS entry, matching the dropdown's own default).
+  const [system, setSystem] = useState(isEpabx ? '' : AV_SYSTEMS[0]);
+  // AV only — when System = "Other", the tech types a custom name that is
+  // saved as the report's system value instead.
   const [customSystem, setCustomSystem] = useState('');
   const [natureOfComplaint, setNatureOfComplaint] = useState('');
   const [workDone, setWorkDone] = useState('');
@@ -148,7 +139,11 @@ export const TechServiceFormModal = () => {
 
   // outcome: 'completed' (default) or 'pending'. Same report either way.
   const submitWithOutcome = async (outcome) => {
-    if (system === 'Other' && !customSystem.trim()) {
+    if (isEpabx && !system.trim()) {
+      alert('Enter the system / equipment name.');
+      return;
+    }
+    if (!isEpabx && system === 'Other' && !customSystem.trim()) {
       alert('Enter the custom system name.');
       return;
     }
@@ -172,7 +167,7 @@ export const TechServiceFormModal = () => {
     // Drawn signatures are not stored — only that each party signed, plus the
     // customer's typed name + phone.
     const saved = await submitServiceReport(selectedTicket.id, {
-      system: system === 'Other' ? customSystem.trim() : system,
+      system: isEpabx ? system.trim() : (system === 'Other' ? customSystem.trim() : system),
       natureOfComplaint,
       workDone: workDone.trim(),
       partsMaterial,
@@ -219,21 +214,35 @@ export const TechServiceFormModal = () => {
           {/* 1. System */}
           <div>
             <label className="block text-xs font-bold text-[#172033] mb-1">1. System *</label>
-            <select
-              value={system}
-              onChange={(e) => setSystem(e.target.value)}
-              className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
-            >
-              {systemOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
-            {system === 'Other' && (
+            {isEpabx ? (
+              // EPABX equipment varies too much site to site for a fixed
+              // list — free text, saved straight to service_reports.system.
               <input
                 type="text"
-                value={customSystem}
-                onChange={(e) => setCustomSystem(e.target.value)}
+                value={system}
+                onChange={(e) => setSystem(e.target.value)}
                 placeholder="Enter the system / equipment name"
-                className="w-full mt-2 px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
+                className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
               />
+            ) : (
+              <>
+                <select
+                  value={system}
+                  onChange={(e) => setSystem(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
+                >
+                  {AV_SYSTEMS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+                {system === 'Other' && (
+                  <input
+                    type="text"
+                    value={customSystem}
+                    onChange={(e) => setCustomSystem(e.target.value)}
+                    placeholder="Enter the system / equipment name"
+                    className="w-full mt-2 px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]"
+                  />
+                )}
+              </>
             )}
           </div>
 

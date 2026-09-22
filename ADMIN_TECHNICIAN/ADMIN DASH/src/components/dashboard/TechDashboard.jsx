@@ -53,19 +53,20 @@ export const TechDashboard = () => {
 
   const [statusFilter, setStatusFilter] = useState('All');
 
-  let todaysJobs = myTickets;
-  
-  if (statusFilter !== 'All') {
-    todaysJobs = todaysJobs.filter(t => {
-      if (statusFilter === 'In Progress') {
-        return t.status === 'Service In Progress' || t.status === 'Technician On The Way';
-      }
-      return t.status === statusFilter;
-    });
-  }
+  const todaysJobs = statusFilter === 'All' ? myTickets : myTickets.filter(t => t.status === statusFilter);
 
-  const inProgressCount = myTickets.filter(t => t.status === 'Service In Progress' || t.status === 'Technician On The Way').length;
-  const completedCount = myTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
+  // Canonical ticket statuses (see adminApiService.STATUS_MAP): a job sits
+  // in 'Assigned' until the technician taps Accept Job, which moves it to
+  // 'Active' — there is no separate ticket-side "Accepted" status, 'Active'
+  // *is* accepted-and-in-progress. 'Unassigned' is included defensively
+  // (TechJobsPage's own Accept Job button treats it the same as 'Assigned')
+  // though a ticket assigned to this technician should never actually carry
+  // it. Completed jobs live under 'Completed' — Service Ticket history's
+  // legacy 'Resolved'/'Closed' strings never reach the frontend; every DB
+  // status value already folds onto one of the canonical labels.
+  const assignedCount = myTickets.filter(t => t.status === 'Assigned' || t.status === 'Unassigned').length;
+  const inProgressCount = myTickets.filter(t => t.status === 'Active').length;
+  const completedCount = myTickets.filter(t => t.status === 'Completed').length;
   // Project Category (V1) — same Assigned/Accepted scope as the "Today's
   // Project Activities" list further down, so the card count and the list
   // it summarizes always agree.
@@ -91,7 +92,13 @@ export const TechDashboard = () => {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-2xl p-6 border border-[#E4E7EC] shadow-sm relative overflow-hidden group hover:border-[#B3D1F2] transition-colors">
+        {/* Assigned = assigned but not yet accepted. Toggles the status
+            filter on the job list below, same click-to-filter / click-again-
+            to-clear pattern as the Admin Attendance page's KPI cards. */}
+        <button
+          onClick={() => setStatusFilter(prev => (prev === 'Assigned' ? 'All' : 'Assigned'))}
+          className={`text-left bg-white rounded-2xl p-6 border shadow-sm relative overflow-hidden group transition-colors cursor-pointer ${statusFilter === 'Assigned' ? 'border-[#004898] ring-2 ring-[#B3D1F2]' : 'border-[#E4E7EC] hover:border-[#B3D1F2]'}`}
+        >
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Ticket className="w-16 h-16 text-[#004898]" />
           </div>
@@ -99,13 +106,17 @@ export const TechDashboard = () => {
             <div className="p-2.5 rounded-xl bg-[#EFF5FC] text-[#004898]">
               <Ticket className="w-5 h-5" />
             </div>
-            <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">Assigned Jobs</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">Assigned</span>
           </div>
-          <div className="text-4xl font-black text-[#172033] mb-1">{myTickets.length}</div>
-          <p className="text-xs font-medium text-[#667085]">Scheduled field slots</p>
-        </div>
+          <div className="text-4xl font-black text-[#172033] mb-1">{assignedCount}</div>
+          <p className="text-xs font-medium text-[#667085]">Awaiting your acceptance</p>
+        </button>
 
-        <div className="bg-white rounded-2xl p-6 border border-[#E4E7EC] shadow-sm relative overflow-hidden group hover:border-[#BAE6FD] transition-colors">
+        {/* In Progress = accepted, actively being worked ('Active'). */}
+        <button
+          onClick={() => setStatusFilter(prev => (prev === 'Active' ? 'All' : 'Active'))}
+          className={`text-left bg-white rounded-2xl p-6 border shadow-sm relative overflow-hidden group transition-colors cursor-pointer ${statusFilter === 'Active' ? 'border-[#0284C7] ring-2 ring-[#BAE6FD]' : 'border-[#E4E7EC] hover:border-[#BAE6FD]'}`}
+        >
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Clock className="w-16 h-16 text-[#0284C7]" />
           </div>
@@ -116,10 +127,15 @@ export const TechDashboard = () => {
             <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">In Progress</span>
           </div>
           <div className="text-4xl font-black text-[#172033] mb-1">{inProgressCount}</div>
-          <p className="text-xs font-medium text-[#667085]">Active site service</p>
-        </div>
+          <p className="text-xs font-medium text-[#667085]">Accepted, active site service</p>
+        </button>
 
-        <div className="bg-white rounded-2xl p-6 border border-[#E4E7EC] shadow-sm relative overflow-hidden group hover:border-[#ABE5C6] transition-colors">
+        {/* Completed navigates to Service History instead of filtering this
+            page's list — completed jobs live in history, not "today's". */}
+        <button
+          onClick={() => setActivePage('history')}
+          className="text-left bg-white rounded-2xl p-6 border border-[#E4E7EC] shadow-sm relative overflow-hidden group hover:border-[#ABE5C6] transition-colors cursor-pointer"
+        >
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <CheckCircle2 className="w-16 h-16 text-[#12B76A]" />
           </div>
@@ -130,8 +146,8 @@ export const TechDashboard = () => {
             <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">Completed</span>
           </div>
           <div className="text-4xl font-black text-[#172033] mb-1">{completedCount}</div>
-          <p className="text-xs font-medium text-[#667085]">Resolved & signed off</p>
-        </div>
+          <p className="text-xs font-medium text-[#667085]">View in Service History</p>
+        </button>
 
         {/* Project Category (V1) — additive card. Only ever reads
             myProjectActivities, never tickets, so a Projects API hiccup can
@@ -165,9 +181,8 @@ export const TechDashboard = () => {
             >
               <option value="All">All Statuses</option>
               <option value="Assigned">Assigned</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Resolved">Resolved</option>
-              <option value="Closed">Closed</option>
+              <option value="Active">In Progress</option>
+              <option value="Completed">Completed</option>
             </select>
             <button
               onClick={() => setActivePage('my-jobs')}

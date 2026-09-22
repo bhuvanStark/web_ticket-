@@ -18,11 +18,51 @@ import { AttendanceDetailsModal } from './AttendanceDetailsModal';
 import { exportAttendance } from '../../utils/attendanceExport';
 import {
   fetchAdminAttendanceInApi,
+  fetchAdminAttendanceExportInApi,
   markAbsentInApi,
   markAllAbsentInApi,
   adminCheckOutInApi,
   bulkCheckOutInApi
 } from '../../services/attendanceApiService';
+
+// Export Range selector — pure calendar-date-key arithmetic (Date.UTC
+// based), same technique as the backend's addDaysToDateKey. Never touches
+// the browser's local timezone, so a range computed here can't disagree
+// with the server's own India-day `date` anchor by a day.
+const addDays = (dateKey, days) => {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1, d + days));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+};
+const startOfMonth = (dateKey) => `${dateKey.slice(0, 7)}-01`;
+// Monday-start week, a common India business-week convention.
+const startOfWeek = (dateKey) => {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun..6=Sat
+  return addDays(dateKey, -(dow === 0 ? 6 : dow - 1));
+};
+
+const EXPORT_RANGE_OPTIONS = [
+  { value: 'today', label: 'Today' },
+  { value: 'last2', label: 'Last 2 Days' },
+  { value: 'week', label: 'This Week' },
+  { value: 'month', label: 'This Month' },
+  { value: 'custom', label: 'Custom Range' }
+];
+
+// `anchor` is the page's currently-selected single day — every range option
+// is computed relative to it (never "today" in the browser's own timezone),
+// so Export Range always agrees with whatever day the Admin has the list
+// pinned to.
+const resolveExportRange = (rangeKey, anchor, customStart, customEnd) => {
+  switch (rangeKey) {
+    case 'last2': return { start: addDays(anchor, -1), end: anchor };
+    case 'week': return { start: startOfWeek(anchor), end: anchor };
+    case 'month': return { start: startOfMonth(anchor), end: anchor };
+    case 'custom': return { start: customStart || anchor, end: customEnd || anchor };
+    default: return { start: anchor, end: anchor }; // 'today'
+  }
+};
 
 const LOCATION_LABELS = {
   gps_captured: 'Location captured',
@@ -38,6 +78,16 @@ const STATUS_BADGES = {
   absent: { label: 'Absent', className: 'bg-[#FEF3F2] text-[#D92D20]' },
   unmarked: { label: 'No Check-In', className: 'bg-[#F8FAFC] text-[#667085]' }
 };
+
+// Sales & Back-Office Roles V1 — the Admin Attendance page is now the
+// unified view for all three employee types (plan §8).
+const EMPLOYEE_TYPE_OPTIONS = [
+  { value: '', label: 'All Employee Types' },
+  { value: 'technician', label: 'Technician' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'back_office', label: 'Back-Office' }
+];
+const EMPLOYEE_TYPE_LABELS = { technician: 'Technician', sales: 'Sales', back_office: 'Back-Office' };
 
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—');
 const fmtDuration = (minutes) => {
@@ -60,12 +110,26 @@ export const AttendancePage = () => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [cardFilter, setCardFilter] = useState(null); // 'present' | 'not_yet_checked_out' | 'absent' | null
+  // '' = every branch. Options come from the server's own active-employee
+  // roster (`data.branches`) — never a hardcoded list — so it always agrees
+  // with whatever locations employees actually have.
+  const [branch, setBranch] = useState('');
+  const [branches, setBranches] = useState([]);
+  // '' = every employee type. Fixed by definition (unlike branches, which
+  // come from real data) — see EMPLOYEE_TYPE_OPTIONS above.
+  const [employeeType, setEmployeeType] = useState('');
   const [counts, setCounts] = useState({ present: 0, absent: 0, not_yet_checked_out: 0 });
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [detailsRow, setDetailsRow] = useState(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  // Export Range selector — independent of the single-day list above; only
+  // consulted when the Export button is actually clicked.
+  const [exportRange, setExportRange] = useState('today');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [pendingBulk, setPendingBulk] = useState(null); // 'check-out-all' | 'mark-all-absent'
   const [isBulkWorking, setIsBulkWorking] = useState(false);
   const dropdownRef = useRef(null);
@@ -85,10 +149,14 @@ export const AttendancePage = () => {
     setLoading(true);
     setLoadFailed(false);
     try {
-      const data = await fetchAdminAttendanceInApi({ date: date || undefined, card: cardFilter || undefined, search: debouncedSearch });
+      const data = await fetchAdminAttendanceInApi({
+        date: date || undefined, card: cardFilter || undefined, branch: branch || undefined,
+        employeeType: employeeType || undefined, search: debouncedSearch
+      });
       if (requestId !== requestIdRef.current) return; // a newer request has since started; ignore this stale response
       setCounts(data.counts || { present: 0, absent: 0, not_yet_checked_out: 0 });
       setRows(data.rows || []);
+      setBranches(data.branches || []);
       // First load only: pin the date input to the server's own India-day
       // default so it can never silently drift under the admin mid-session.
       if (!date && data.date) setDate(data.date);
@@ -99,12 +167,12 @@ export const AttendancePage = () => {
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [date, cardFilter, debouncedSearch]);
+  }, [date, cardFilter, branch, employeeType, debouncedSearch]);
 
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, cardFilter, debouncedSearch, pollTick]);
+  }, [date, cardFilter, branch, employeeType, debouncedSearch, pollTick]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -127,9 +195,9 @@ export const AttendancePage = () => {
     }
   };
 
-  const handleMarkAbsent = async (technicianId) => {
+  const handleMarkAbsent = async (empType, employeeId) => {
     try {
-      await markAbsentInApi(technicianId, date);
+      await markAbsentInApi(empType, employeeId, date);
       showToast?.('Marked absent.', 'success');
       setDetailsRow(null);
       fetchData();
@@ -138,16 +206,22 @@ export const AttendancePage = () => {
     }
   };
 
+  // Scoped to exactly the same branch/employee-type/search currently
+  // applied to the on-screen rows, so the bulk action's real effect always
+  // matches the filtered count shown on its trigger button (audit fix —
+  // previously only `date` was sent, so a filtered view's small displayed
+  // count could silently be acting on a much larger, unfiltered set).
   const runBulkAction = async () => {
     if (!pendingBulk || isBulkWorking) return;
     setIsBulkWorking(true);
+    const scope = { branch: branch || undefined, employeeType: employeeType || undefined, search: debouncedSearch || undefined };
     try {
       if (pendingBulk === 'check-out-all') {
-        const result = await bulkCheckOutInApi(date);
+        const result = await bulkCheckOutInApi(date, scope);
         showToast?.(`Checked out ${result.succeeded}/${result.total} open session(s).`, result.succeeded === result.total ? 'success' : 'info');
       } else {
-        const result = await markAllAbsentInApi(date);
-        showToast?.(`Marked ${result.markedCount} technician(s) absent.`, 'success');
+        const result = await markAllAbsentInApi(date, scope);
+        showToast?.(`Marked ${result.markedCount} employee(s) absent.`, 'success');
       }
       fetchData();
     } catch (err) {
@@ -155,6 +229,40 @@ export const AttendancePage = () => {
     } finally {
       setIsBulkWorking(false);
       setPendingBulk(null);
+    }
+  };
+
+  // Exports whatever's currently on screen: the Export Range selector picks
+  // the day span, while card/branch/search stay exactly as already applied
+  // to the visible list. 'Today' reuses the already-loaded `rows` (the
+  // existing single-day export pattern, unchanged); any other range fetches
+  // the matching multi-day rows from the export endpoint first.
+  const handleExport = async (format) => {
+    setIsExportOpen(false);
+    if (!date) return;
+    const { start, end } = resolveExportRange(exportRange, date, customStart, customEnd);
+    if (start > end) {
+      showToast?.('Custom range: start date must not be after end date.', 'error');
+      return;
+    }
+    setIsExporting(true);
+    try {
+      const exportRows = exportRange === 'today'
+        ? rows
+        : (await fetchAdminAttendanceExportInApi({
+            startDate: start,
+            endDate: end,
+            card: cardFilter || undefined,
+            branch: branch || undefined,
+            employeeType: employeeType || undefined,
+            search: debouncedSearch || undefined
+          })).rows || [];
+      exportAttendance(exportRows, date, format);
+      showToast?.(`Exporting ${exportRows.length} record${exportRows.length === 1 ? '' : 's'} to ${format.toUpperCase()}...`, 'info');
+    } catch (err) {
+      showToast?.(err.message || 'Export failed', 'error');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -167,17 +275,18 @@ export const AttendancePage = () => {
         <div>
           <h2 className="text-2xl font-black text-[#172033] tracking-tight">Attendance</h2>
           <p className="text-sm text-[#667085] mt-1 max-w-xl leading-relaxed">
-            Technician check-in / check-out records — separate from Service Tickets and Projects.
+            Technician, Sales &amp; Back-Office check-in / check-out records — separate from Service Tickets and Projects.
           </p>
         </div>
 
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setIsExportOpen(!isExportOpen)}
-            className="h-11 px-6 bg-white border border-[#E4E7EC] hover:border-[#B3D1F2] hover:bg-[#F8FAFC] text-[#004898] rounded-full flex items-center gap-2 transition-all font-bold text-sm shadow-sm cursor-pointer"
+            disabled={isExporting}
+            className="h-11 px-6 bg-white border border-[#E4E7EC] hover:border-[#B3D1F2] hover:bg-[#F8FAFC] text-[#004898] rounded-full flex items-center gap-2 transition-all font-bold text-sm shadow-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <Download className="w-4 h-4" />
-            <span>Export</span>
+            <span>{isExporting ? 'Exporting…' : 'Export'}</span>
             <ChevronDown className="w-4 h-4 text-[#172033] ml-1" />
           </button>
 
@@ -191,11 +300,7 @@ export const AttendancePage = () => {
               ].map(({ format, label, Icon, color }) => (
                 <button
                   key={format}
-                  onClick={() => {
-                    exportAttendance(rows, date, format);
-                    showToast?.(`Exporting ${rows.length} record${rows.length === 1 ? '' : 's'} to ${format.toUpperCase()}...`, 'info');
-                    setIsExportOpen(false);
-                  }}
+                  onClick={() => handleExport(format)}
                   className="w-full px-5 py-3 text-left text-sm font-semibold text-[#172033] hover:bg-[#F8FAFC] flex items-center gap-3 transition-colors"
                 >
                   <Icon className="w-5 h-5" style={{ color }} />
@@ -267,7 +372,7 @@ export const AttendancePage = () => {
           <Search className="w-5 h-5 text-[#98A2B3] absolute left-4 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Search technician name…"
+            placeholder="Search employee name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-11 pr-4 py-2 bg-transparent text-sm font-semibold focus:outline-none placeholder:font-medium placeholder:text-[#98A2B3]"
@@ -284,13 +389,70 @@ export const AttendancePage = () => {
           />
         </div>
 
-        {(cardFilter || search) && (
+        <select
+          value={employeeType}
+          // Branch options are scoped to the selected employee type (see
+          // `branches` below), so a branch chosen under a different type
+          // can silently no longer exist in the new list — audit fix:
+          // always drop it here rather than let the Branch <select> hold a
+          // stale value with no matching option and the fetch silently
+          // return zero rows.
+          onChange={(e) => { setEmployeeType(e.target.value); setBranch(''); }}
+          className="shrink-0 px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] bg-white outline-none focus:border-[#004898] cursor-pointer"
+        >
+          {EMPLOYEE_TYPE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+        </select>
+
+        <select
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+          className="shrink-0 px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] bg-white outline-none focus:border-[#004898] cursor-pointer"
+        >
+          <option value="">All Branches</option>
+          {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+
+        {(cardFilter || search || branch || employeeType) && (
           <button
-            onClick={() => { setCardFilter(null); setSearch(''); }}
+            onClick={() => { setCardFilter(null); setSearch(''); setBranch(''); setEmployeeType(''); }}
             className="text-xs font-bold text-[#D92D20] hover:underline shrink-0"
           >
             Clear filters
           </button>
+        )}
+      </div>
+
+      {/* Export Range selector — separate from the Date filter above, which
+          only ever scopes the single-day list. This only affects what the
+          Export button (further up) pulls, per format/range picked here. */}
+      <div className="bg-white p-3 rounded-2xl border border-[#E4E7EC] shadow-sm flex flex-col sm:flex-row sm:items-center gap-3">
+        <span className="text-xs font-bold uppercase tracking-wider text-[#667085] shrink-0">Export Range</span>
+        <select
+          value={exportRange}
+          onChange={(e) => setExportRange(e.target.value)}
+          className="shrink-0 px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] bg-white outline-none focus:border-[#004898] cursor-pointer"
+        >
+          {EXPORT_RANGE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+        </select>
+
+        {exportRange === 'custom' && (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              max={customEnd || undefined}
+              className="px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898]"
+            />
+            <span className="text-xs text-[#98A2B3]">to</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              min={customStart || undefined}
+              className="px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898]"
+            />
+          </div>
         )}
       </div>
 
@@ -322,7 +484,9 @@ export const AttendancePage = () => {
           <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
-                <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085]">Technician</th>
+                <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085]">Employee</th>
+                <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-28">Type</th>
+                <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-32">Branch</th>
                 <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-28">Date</th>
                 <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-28">Check-In</th>
                 <th className="py-4 px-6 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-28">Check-Out</th>
@@ -335,21 +499,23 @@ export const AttendancePage = () => {
             <tbody className="divide-y divide-[#E4E7EC]">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-12 text-center text-[#667085] text-sm">
-                    No technicians match the selected filters.
+                  <td colSpan="10" className="py-12 text-center text-[#667085] text-sm">
+                    No employees match the selected filters.
                   </td>
                 </tr>
               ) : (
                 rows.map((r) => {
                   const badge = STATUS_BADGES[r.bucket] || STATUS_BADGES.unmarked;
                   return (
-                    <tr key={r.technician.id} className="hover:bg-[#F8FAFC] transition-colors">
+                    <tr key={`${r.employee.employee_type}:${r.employee.id}`} className="hover:bg-[#F8FAFC] transition-colors">
                       <td className="py-4 px-6">
-                        <h4 className="text-sm font-extrabold text-[#172033]">{r.technician.full_name}</h4>
-                        <p className="text-xs text-[#667085]">{r.technician.email}</p>
+                        <h4 className="text-sm font-extrabold text-[#172033]">{r.employee.full_name}</h4>
+                        <p className="text-xs text-[#667085]">{r.employee.email}</p>
                       </td>
+                      <td className="py-4 px-6 text-xs font-bold text-[#475467]">{EMPLOYEE_TYPE_LABELS[r.employee.employee_type] || r.employee.employee_type}</td>
+                      <td className="py-4 px-6 text-sm text-[#172033] font-medium">{r.employee.location || '—'}</td>
                       {/* Every row is for this same selected day, so `date`
-                          covers a record-less ('unmarked') technician, who
+                          covers a record-less ('unmarked') employee, who
                           has no attendance_date of their own to read. */}
                       <td className="py-4 px-6 text-sm text-[#172033] font-medium">{r.record?.attendance_date || date || '—'}</td>
                       <td className="py-4 px-6 text-sm text-[#172033] font-medium">{fmtTime(r.record?.check_in_time)}</td>
@@ -418,12 +584,21 @@ export const AttendancePage = () => {
               </div>
               <div>
                 <h3 className="text-lg font-bold text-[#172033]">
-                  {pendingBulk === 'check-out-all' ? 'Check out all open sessions?' : 'Mark all unmarked technicians absent?'}
+                  {pendingBulk === 'check-out-all' ? 'Check out all open sessions?' : 'Mark all unmarked employees absent?'}
                 </h3>
                 <p className="mt-1 text-sm text-[#667085]">
                   {pendingBulk === 'check-out-all'
                     ? 'This checks out every currently open attendance session for this day. This cannot be undone.'
-                    : 'This marks every technician with no attendance record for this day as absent. Technicians who already checked in are never affected.'}
+                    : 'This marks every employee with no attendance record for this day as absent. Employees who already checked in are never affected.'}
+                  {' '}
+                  {/* Bulk actions are scoped to whatever's currently
+                      filtered — say so explicitly, since the trigger
+                      button's count is that same filtered set. */}
+                  {(branch || employeeType) ? (
+                    <>Scoped to {[employeeType && EMPLOYEE_TYPE_LABELS[employeeType], branch].filter(Boolean).join(' · ')} only.</>
+                  ) : (
+                    <>Across Technician, Sales, and Back-Office, all branches.</>
+                  )}
                 </p>
               </div>
             </div>

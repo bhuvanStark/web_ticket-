@@ -18,6 +18,11 @@ export const TechniciansPage = () => {
     showToast
   } = useApp();
   const [search, setSearch] = useState('');
+  // '' = every branch. Options are derived from the roster itself (the
+  // technician.location value — labeled "Branch" on the Add/Edit form —
+  // rather than a separate hardcoded list, so it can never drift out of
+  // sync with what technicians actually have.
+  const [branchFilter, setBranchFilter] = useState('');
   const [shareTech, setShareTech] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
   // Deleting is destructive and cannot be undone, so it goes through a
@@ -52,10 +57,15 @@ export const TechniciansPage = () => {
     setIsTechnicianModalOpen(true);
   };
 
+  const branches = [...new Set((technicians || []).map(t => t.location).filter(Boolean))].sort();
+
   const filtered = (technicians || []).filter(t =>
-    (t.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (t.specialization || '').toLowerCase().includes(search.toLowerCase()) ||
-    (t.location || '').toLowerCase().includes(search.toLowerCase())
+    (!branchFilter || t.location === branchFilter) &&
+    (
+      (t.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (t.specialization || '').toLowerCase().includes(search.toLowerCase()) ||
+      (t.location || '').toLowerCase().includes(search.toLowerCase())
+    )
   );
 
   return (
@@ -103,7 +113,16 @@ export const TechniciansPage = () => {
           />
         </div>
 
-        <div className="text-xs font-bold text-[#004898] bg-[#EFF5FC] px-3 py-1.5 rounded-lg border border-[#B3D1F2]">
+        <select
+          value={branchFilter}
+          onChange={(e) => setBranchFilter(e.target.value)}
+          className="text-xs font-semibold text-[#172033] border border-[#E4E7EC] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#004898] cursor-pointer shrink-0"
+        >
+          <option value="">All Branches</option>
+          {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+
+        <div className="text-xs font-bold text-[#004898] bg-[#EFF5FC] px-3 py-1.5 rounded-lg border border-[#B3D1F2] shrink-0">
           Total Active Field Engineers: {filtered.length}
         </div>
       </div>

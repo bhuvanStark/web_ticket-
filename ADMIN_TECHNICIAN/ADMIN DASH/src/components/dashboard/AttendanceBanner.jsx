@@ -1,16 +1,21 @@
-// Attendance Category (V1) — the technician's Check In / Check Out banner on
-// "My Dashboard". Additive, fully self-contained: reads only
-// myAttendanceToday/checkIn/checkOut/baseRole from context (never `tickets`
-// or `myProjectActivities`), so a failure anywhere in Attendance can never
-// affect the ticket/project sections that sit below it on the same page —
-// see TechDashboard.jsx.
+// Attendance Category (V1), generalized by Sales & Back-Office Roles V1 —
+// the employee's Check In / Check Out banner, shared by Technician's "My
+// Dashboard", and Sales/Back-Office's own single-page dashboards (see
+// SalesDashboard.jsx / BackOfficeDashboard.jsx). Additive, fully self-
+// contained: reads only myAttendanceToday/checkIn/checkOut/baseRole from
+// context (never `tickets` or `myProjectActivities`), so a failure anywhere
+// in Attendance can never affect the ticket/project sections that sit below
+// it on TechDashboard.
 //
 // While an admin is impersonating a technician's view (baseRole 'admin',
 // role 'tech'), this renders a read-only attendance history instead of live
 // controls — the plan is explicit that Admin must never be able to create a
 // check-in, so there are no Check In/Check Out buttons in that branch at
 // all, and the history is fetched through the admin-scoped endpoint (an
-// impersonating admin never holds a technician-role JWT).
+// impersonating admin never holds a technician-role JWT). Sales/Back-Office
+// are never impersonated at all (no "switch into their view" feature
+// exists), so for them baseRole always equals role and this branch never
+// applies.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { LogIn, LogOut, MapPin, Clock, ShieldAlert, History } from 'lucide-react';
@@ -67,6 +72,10 @@ function captureLocation() {
   });
 }
 
+// Reached only via the "admin impersonating a technician" branch below —
+// Sales/Back-Office are never impersonated — so `employeeType` is always
+// 'technician' here; a literal, not a prop, since there's only ever the one
+// caller.
 const ReadOnlyHistoryCard = ({ technicianId }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,7 +85,7 @@ const ReadOnlyHistoryCard = ({ technicianId }) => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await fetchAttendanceHistoryInApi(technicianId);
+        const data = await fetchAttendanceHistoryInApi('technician', technicianId);
         if (!cancelled) setHistory(Array.isArray(data) ? data.slice(0, 5) : []);
       } catch {
         if (!cancelled) setFailed(true);
@@ -114,14 +123,18 @@ const ReadOnlyHistoryCard = ({ technicianId }) => {
   );
 };
 
+const EMPLOYEE_ROLES = ['tech', 'sales', 'back_office'];
+
 export const AttendanceBanner = () => {
   const { baseRole, role, currentUser, myAttendanceToday, checkIn, checkOut } = useApp();
   const [isWorking, setIsWorking] = useState(false);
 
-  if (role !== 'tech') return null;
+  if (!EMPLOYEE_ROLES.includes(role)) return null;
 
   // Admin "switch into technician view" — read-only, no controls at all.
-  if (baseRole !== 'tech') {
+  // Sales/Back-Office have no such impersonation feature, so for them
+  // baseRole always equals role and this branch never applies.
+  if (role === 'tech' && baseRole !== 'tech') {
     return currentUser?.id ? <ReadOnlyHistoryCard technicianId={currentUser.id} /> : null;
   }
 

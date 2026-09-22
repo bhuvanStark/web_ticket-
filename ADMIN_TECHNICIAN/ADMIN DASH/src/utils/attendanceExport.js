@@ -1,10 +1,14 @@
 import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
 
 // Exports the Admin Attendance page's list exactly as currently filtered on
-// screen (date + technician-name filter already applied by the caller) —
+// screen (date + employee-name filter already applied by the caller) —
 // mirrors projectActivityExport.js's structure (itself modeled on
 // serviceHistoryExport.js), with attendance-specific columns. Attendance
-// data only — never tickets or projects.
+// data only — never tickets or projects. Sales & Back-Office Roles V1
+// generalized the underlying rows from technician-only to any of the three
+// employee types (row.employee, not row.technician — see
+// attendanceService.buildRowsForDate on the backend) and added the
+// Employee Type column.
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -32,12 +36,19 @@ const fmtDuration = (minutes) => {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
 
-// `pageDate` is the Admin Attendance page's currently-selected date — every
-// row belongs to that same day, so it's the fallback for an 'unmarked' row
-// (no attendance record at all, so no attendance_date of its own to read).
+const EMPLOYEE_TYPE_LABELS = { technician: 'Technician', sales: 'Sales', back_office: 'Back-Office' };
+
+// `pageDate` is the Admin Attendance page's currently-selected single day —
+// used as the date fallback only for rows that don't already carry their
+// own `date` (the single-day list's shape, pre-dating the Export Range
+// selector). A range export's rows each carry their own `date` (one
+// employee-day per row across possibly many days), so that always wins
+// when present — see attendanceService.buildRowsForDate on the backend.
 const ROWS = (rows, pageDate) => rows.map((r) => ({
-  technician: r.technician?.full_name || '—',
-  date: r.record?.attendance_date || pageDate || '—',
+  employee: r.employee?.full_name || '—',
+  employeeType: EMPLOYEE_TYPE_LABELS[r.employee?.employee_type] || '—',
+  branch: r.employee?.location || '—',
+  date: r.date || r.record?.attendance_date || pageDate || '—',
   checkIn: fmtDateTime(r.record?.check_in_time),
   checkOut: fmtDateTime(r.record?.check_out_time),
   duration: fmtDuration(r.record?.duration_minutes),
@@ -45,7 +56,7 @@ const ROWS = (rows, pageDate) => rows.map((r) => ({
   status: STATUS_LABELS[r.bucket] || r.bucket
 }));
 
-const HEADERS = ['Technician', 'Date', 'Check-In', 'Check-Out', 'Duration', 'Location', 'Attendance Status'];
+const HEADERS = ['Employee', 'Employee Type', 'Branch', 'Date', 'Check-In', 'Check-Out', 'Duration', 'Location', 'Attendance Status'];
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -59,7 +70,7 @@ function downloadBlob(blob, filename) {
 }
 
 function rowValues(r) {
-  return [r.technician, r.date, r.checkIn, r.checkOut, r.duration, r.location, r.status];
+  return [r.employee, r.employeeType, r.branch, r.date, r.checkIn, r.checkOut, r.duration, r.location, r.status];
 }
 
 function exportCsv(rows, pageDate, filename) {
@@ -105,7 +116,7 @@ function exportPdf(rows, pageDate) {
     return;
   }
   const data = ROWS(rows, pageDate);
-  const body = data.map((r) => `<tr><td>${esc(r.technician)}</td><td>${esc(r.date)}</td><td>${esc(r.checkIn)}</td><td>${esc(r.checkOut)}</td><td>${esc(r.duration)}</td><td>${esc(r.location)}</td><td>${esc(r.status)}</td></tr>`).join('');
+  const body = data.map((r) => `<tr><td>${esc(r.employee)}</td><td>${esc(r.employeeType)}</td><td>${esc(r.branch)}</td><td>${esc(r.date)}</td><td>${esc(r.checkIn)}</td><td>${esc(r.checkOut)}</td><td>${esc(r.duration)}</td><td>${esc(r.location)}</td><td>${esc(r.status)}</td></tr>`).join('');
   const html = `
     <!DOCTYPE html>
     <html>

@@ -17,7 +17,11 @@ router.use(requireAuth);
 // GET all service requests (for admin) or filtered by customer
 router.get('/', async (req, res) => {
   try {
-    const { customerId } = req.query;
+    // A customer session may only ever see its own tickets — the customerId
+    // query param is client-supplied and must never be trusted to scope a
+    // customer's own request, or any customer could read another company's
+    // tickets by changing the value. Admin/technician sessions are unaffected.
+    const customerId = req.user?.role === 'customer' ? req.userId : req.query.customerId;
 
     let query = supabase
       .from('service_requests')
@@ -70,6 +74,11 @@ router.get('/:id', validateUUID, async (req, res) => {
 
     if (error) throw error;
     if (!data) return res.status(404).json({ success: false, error: 'Service request not found' });
+
+    // A customer session may only fetch its own ticket by id.
+    if (req.user?.role === 'customer' && data.customer_id !== req.userId) {
+      return res.status(404).json({ success: false, error: 'Service request not found' });
+    }
 
     res.json({ success: true, data });
   } catch (error) {
@@ -594,7 +603,8 @@ router.delete('/:id', validateUUID, async (req, res) => {
 // GET service request statistics for dashboard
 router.get('/stats/overview', async (req, res) => {
   try {
-    const { customerId } = req.query;
+    // Same customer-scoping guard as GET '/' above.
+    const customerId = req.user?.role === 'customer' ? req.userId : req.query.customerId;
 
     let totalQuery = supabase.from('service_requests').select('id', { count: 'exact', head: true });
     let pendingQuery = supabase.from('service_requests').select('id', { count: 'exact', head: true });
@@ -635,7 +645,9 @@ router.get('/stats/overview', async (req, res) => {
 // GET requests by customer
 router.get('/customer/:customerId', validateUUID, async (req, res) => {
   try {
-    const { customerId } = req.params;
+    // A customer session may only ever list its own tickets, regardless of
+    // what id is in the URL — see the same guard on GET '/' above.
+    const customerId = req.user?.role === 'customer' ? req.userId : req.params.customerId;
     const { status, limit = 10, offset = 0 } = req.query;
 
     let query = supabase

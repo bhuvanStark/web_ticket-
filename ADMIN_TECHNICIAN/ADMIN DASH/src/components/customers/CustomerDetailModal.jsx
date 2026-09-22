@@ -89,15 +89,15 @@ export const CustomerDetailModal = () => {
               <h3 className="text-xs font-extrabold text-[#475467] uppercase tracking-wider">Infrastructure Health</h3>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white p-4 rounded-xl border border-[#E4E7EC] shadow-xs text-center flex flex-col items-center justify-center">
-                  <span className="text-2xl font-extrabold text-[#172033]">{customerLocations.length || c.locationsCount || 3}</span>
+                  <span className="text-2xl font-extrabold text-[#172033]">{customerLocations.length || c.locationsCount || 0}</span>
                   <span className="text-[10px] font-bold text-[#667085] uppercase tracking-wide mt-1">Locations</span>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-[#E4E7EC] shadow-xs text-center flex flex-col items-center justify-center">
-                  <span className="text-2xl font-extrabold text-[#004898]">{customerRooms.length || c.totalRooms || 26}</span>
+                  <span className="text-2xl font-extrabold text-[#004898]">{customerRooms.length || c.totalRooms || 0}</span>
                   <span className="text-[10px] font-bold text-[#667085] uppercase tracking-wide mt-1">Rooms</span>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-[#E4E7EC] shadow-xs text-center flex flex-col items-center justify-center">
-                  <span className="text-2xl font-extrabold text-[#172033]">{customerEquipment.length || 45}</span>
+                  <span className="text-2xl font-extrabold text-[#172033]">{customerEquipment.length || 0}</span>
                   <span className="text-[10px] font-bold text-[#667085] uppercase tracking-wide mt-1">AV Systems</span>
                 </div>
                 <div className={`p-4 rounded-xl border shadow-xs text-center flex flex-col items-center justify-center ${activeTickets.length > 0 ? 'bg-[#FEF0C7] border-[#FDE68A]' : 'bg-[#ECFDF3] border-[#A6F4C5]'}`}>

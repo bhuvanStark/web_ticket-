@@ -1,13 +1,28 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Tv, Shield, HardHat, Mail, ArrowRight } from 'lucide-react';
+import { Tv, Shield, HardHat, TrendingUp, ClipboardList, Mail, ArrowRight } from 'lucide-react';
 import unifiedClient from '../../api/unifiedClient';
 
-// Both portals (Admin and Technician) sign in by emailed OTP only — no password.
-// Enter your work email, receive a 4-digit code, enter the code. The backend
-// checks the email against the admins / technicians table and only emails a
-// code if it finds one.
+// All four portals (Admin, Technician, Sales, Back-Office — Sales &
+// Back-Office Roles V1 added the latter two) sign in by emailed OTP only —
+// no password. Enter your work email, receive a 4-digit code, enter the
+// code. The backend checks the email against the matching identity table
+// (admins / technicians / sales / back_office) and only emails a code if it
+// finds one.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// `key` is what's passed to handleOtpLogin (AppContext's roleType) — for
+// admin/tech that's the same short form the rest of the app already uses
+// elsewhere; sales/back_office match the JWT role exactly, sidestepping any
+// translation. `otpSlug` is only the password-reset URL segment (routes/
+// passwordReset.js), which uses kebab-case for back-office specifically —
+// see unifiedClient.requestOtp/verifyOtp, which interpolate it directly.
+const ROLE_TABS = [
+  { key: 'admin', otpSlug: 'admin', label: 'Admin', icon: Shield },
+  { key: 'tech', otpSlug: 'technician', label: 'Technician', icon: HardHat },
+  { key: 'sales', otpSlug: 'sales', label: 'Sales', icon: TrendingUp },
+  { key: 'back_office', otpSlug: 'back-office', label: 'Back-Office', icon: ClipboardList }
+];
 
 export const LoginScreen = () => {
   const { handleOtpLogin } = useApp();
@@ -26,7 +41,8 @@ export const LoginScreen = () => {
   const otpRefs = [useRef(null), useRef(null), useRef(null), useRef(null)];
   const otp = otpDigits.join('');
 
-  const roleKey = selectedRole === 'tech' ? 'technician' : 'admin';
+  const activeTab = ROLE_TABS.find((t) => t.key === selectedRole) || ROLE_TABS[0];
+  const roleKey = activeTab.otpSlug;
   const emailIsValid = (v) => EMAIL_REGEX.test((v || '').trim());
 
   const handleQuickRoleSelect = (roleType) => {
@@ -117,7 +133,9 @@ export const LoginScreen = () => {
     }
     setVerifying(true);
     try {
-      await handleOtpLogin(selectedRole === 'tech' ? 'tech' : 'admin', email.trim(), otp);
+      // selectedRole already matches handleOtpLogin's roleType exactly —
+      // 'admin' | 'tech' | 'sales' | 'back_office' — no translation needed.
+      await handleOtpLogin(selectedRole, email.trim(), otp);
     } catch (err) {
       setFormError(err?.data?.error || err?.message || 'That code is incorrect or has expired.');
     } finally {
@@ -153,32 +171,22 @@ export const LoginScreen = () => {
           <label className="block text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">
             Select Login Portal View
           </label>
-          <div className="grid grid-cols-2 gap-2 bg-[#F6F8FB] p-1.5 rounded-xl border border-[#E4E7EC]">
-            <button
-              type="button"
-              onClick={() => handleQuickRoleSelect('admin')}
-              className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                selectedRole === 'admin'
-                  ? 'bg-[#004898] text-white shadow-xs'
-                  : 'text-[#667085] hover:text-[#172033]'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-              <span>Admin / Coordinator</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickRoleSelect('tech')}
-              className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all ${
-                selectedRole === 'tech'
-                  ? 'bg-[#004898] text-white shadow-xs'
-                  : 'text-[#667085] hover:text-[#172033]'
-              }`}
-            >
-              <HardHat className="w-4 h-4" />
-              <span>Technician Portal</span>
-            </button>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-[#F6F8FB] p-1.5 rounded-xl border border-[#E4E7EC]">
+            {ROLE_TABS.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => handleQuickRoleSelect(key)}
+                className={`py-2.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                  selectedRole === key
+                    ? 'bg-[#004898] text-white shadow-xs'
+                    : 'text-[#667085] hover:text-[#172033]'
+                }`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span className="truncate">{label}</span>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -193,7 +201,7 @@ export const LoginScreen = () => {
 
           <div>
             <label className="block text-xs font-bold text-[#172033] mb-1.5">
-              {selectedRole === 'tech' ? 'Technician Work Email' : 'Work Email Address'}
+              {selectedRole === 'admin' ? 'Work Email Address' : `${activeTab.label} Work Email`}
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-[#98A2B3] absolute left-3 top-3" />

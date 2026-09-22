@@ -13,6 +13,8 @@ const LOCATION_LABELS = {
   no_location: 'No location'
 };
 
+const EMPLOYEE_TYPE_LABELS = { technician: 'Technician', sales: 'Sales', back_office: 'Back-Office' };
+
 const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—');
 const fmtDuration = (minutes) => {
   if (minutes == null) return '—';
@@ -21,11 +23,15 @@ const fmtDuration = (minutes) => {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
 
+// Sales & Back-Office Roles V1 — `row.employee` (was `row.technician`
+// before Attendance was unified across all three roles); `onMarkAbsent` now
+// takes (employeeType, employeeId) since an id alone is ambiguous once
+// there are three identity tables — see attendanceApiService.markAbsentInApi.
 export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent }) => {
   const [isWorking, setIsWorking] = useState(false);
   if (!row) return null;
 
-  const { technician, record, bucket } = row;
+  const { employee, record, bucket } = row;
   const hasCoords = record?.location_lat != null && record?.location_lng != null;
 
   const run = async (action) => {
@@ -43,7 +49,9 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#E4E7EC]">
           <div>
             <h3 className="text-base font-extrabold text-[#172033]">Attendance Details</h3>
-            <p className="text-xs text-[#667085]">{technician.full_name} &middot; {date}</p>
+            <p className="text-xs text-[#667085]">
+              {employee.full_name} &middot; {EMPLOYEE_TYPE_LABELS[employee.employee_type] || employee.employee_type} &middot; {date}
+            </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#F8FAFC] text-[#667085] cursor-pointer">
             <X className="w-4 h-4" />
@@ -114,7 +122,7 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
           {/* No attendance at all: only Mark Absent is offered — never Check In. */}
           {bucket === 'unmarked' && (
             <button
-              onClick={() => run(() => onMarkAbsent(technician.id))}
+              onClick={() => run(() => onMarkAbsent(employee.employee_type, employee.id))}
               disabled={isWorking}
               className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#B54708] text-white hover:bg-[#93370D] transition-all cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
             >

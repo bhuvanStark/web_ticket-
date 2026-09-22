@@ -323,6 +323,19 @@ export const AppProvider = ({ children }) => {
   // Load Data from Backend Database on Mount & Setup Realtime Sync
   useEffect(() => {
     const loadApiData = async () => {
+      // Sales & Back-Office Roles V1 — this mount-only load has no other
+      // role gate at all, unlike the 3s polling effect further down, which
+      // already correctly skips these two roles. Left ungated, it pulled
+      // the full ticket/customer/location/room/technician rosters into a
+      // Sales/Back-Office session on every page load/refresh — a real
+      // breach of the plan's isolation requirement (§3/§11/§15.1), and
+      // guaranteed one console-visible 403 every time (tickets is now
+      // denylisted for these two roles server-side; see rejectRoles in
+      // server.js) (audit finding #6).
+      if (role === 'sales' || role === 'back_office') {
+        setIsApiLoading(false);
+        return;
+      }
       try {
         setIsApiLoading(true);
         const [dbTickets, dbCustomers, dbLocations, dbRooms, dbTechs] = await Promise.all([
@@ -450,7 +463,14 @@ export const AppProvider = ({ children }) => {
   // from before, and a failure in the Projects fetch can never throw here or
   // affect it (nor vice versa) — Projects is never a dependency of tickets.
   useEffect(() => {
+    // Sales & Back-Office Roles V1 — these two roles never touch tickets at
+    // all (§3/§15.1: "Existing Ticket/Project endpoints must continue
+    // rejecting Sales/Back-Office"). The backend already 403s them there
+    // (see rejectRoles in server.js), but skipping the call entirely here
+    // avoids a pointless 403 request/console warning every 3s poll tick —
+    // admin and technician are both unaffected, exactly as before.
     const fetchLiveTickets = async () => {
+      if (role === 'sales' || role === 'back_office') return;
       try {
         const dbTickets = await fetchAdminServiceRequests();
         setTickets(Array.isArray(dbTickets) ? dbTickets : []);
@@ -495,21 +515,25 @@ export const AppProvider = ({ children }) => {
       }
     };
 
-    // Attendance Category (V1) — the authenticated technician's own "today"
-    // check-in state. Real technician sessions only (baseRole === 'tech'):
-    // an admin impersonating a technician's view never holds a technician
-    // JWT and, per the plan, must never check in on a technician's behalf —
-    // so this is intentionally skipped while impersonating rather than
-    // rerouted through an admin-scoped endpoint (unlike fetchLiveMyActivities
-    // above). Isolated exactly like the two fetches above: a failure here
-    // only ever leaves `myAttendanceToday` at its last-known value.
+    // Attendance Category (V1), generalized by Sales & Back-Office Roles V1
+    // — the authenticated employee's own "today" check-in state, for any of
+    // Technician/Sales/Back-Office. Real (non-impersonated) sessions only:
+    // for a technician specifically, an admin impersonating their view never
+    // holds a technician JWT and, per the plan, must never check in on a
+    // technician's behalf — so that combination is intentionally skipped
+    // rather than rerouted through an admin-scoped endpoint (unlike
+    // fetchLiveMyActivities above). Sales/Back-Office are never impersonated
+    // at all, so for them baseRole always equals role and this reduces to a
+    // plain role check. Isolated exactly like the two fetches above: a
+    // failure here only ever leaves `myAttendanceToday` at its last-known
+    // value.
     const fetchLiveMyAttendanceToday = async () => {
-      if (role !== 'tech' || baseRole !== 'tech') return;
+      if (!['tech', 'sales', 'back_office'].includes(role) || role !== baseRole) return;
       try {
         const today = await fetchMyAttendanceTodayInApi();
         setMyAttendanceToday(today || null);
       } catch (err) {
-        console.warn('Technician polling attendance error (isolated from tickets):', err);
+        console.warn('Employee polling attendance error (isolated from tickets):', err);
       }
     };
 
@@ -703,6 +727,33 @@ export const AppProvider = ({ children }) => {
     showToast(`Logged in as technician: ${newUser.name}`, 'success');
   };
 
+  // Sales & Back-Office Roles V1 — same newUser/localStorage/navigation
+  // shape as loginAsTechnician above, for a role that is never impersonated
+  // and never switches between accounts (no admin "view as Sales" feature
+  // exists), so there's no technicians-list lookup fallback to mirror and
+  // no separate switchRole branch needed — this is the only entry point.
+  const loginAsEmployee = (roleValue, account, roleLabel) => {
+    setRole(roleValue);
+    setIsLoggedIn(true);
+    const newUser = {
+      id: account?.id,
+      name: account?.full_name,
+      email: account?.email,
+      phone: account?.phone,
+      roleLabel,
+      role: roleValue
+    };
+    setCurrentUser(newUser);
+
+    localStorage.setItem('admin_auth', 'true');
+    localStorage.setItem('admin_role', roleValue);
+    localStorage.setItem('admin_user', JSON.stringify(newUser));
+    _setActivePage('my-dashboard');
+    window.history.pushState({ page: 'my-dashboard' }, '', `${import.meta.env.BASE_URL}?page=my-dashboard`);
+
+    showToast(`Logged in as ${roleLabel}: ${newUser.name}`, 'success');
+  };
+
   // Role switch handler
   const switchRole = (newRole, targetUser = null) => {
     // Someone who signed in through the technician portal must never reach the
@@ -798,8 +849,9 @@ export const AppProvider = ({ children }) => {
     return response;
   };
 
-  // Sign in with a verified email OTP (Forgot Password). role is 'admin' | 'tech'.
-  // Mirrors handleLogin's context setup once the code checks out.
+  // Sign in with a verified email OTP (Forgot Password). role is
+  // 'admin' | 'tech' | 'sales' | 'back_office'. Mirrors handleLogin's
+  // context setup once the code checks out.
   const handleOtpLogin = async (roleType, userEmail, otp) => {
     if (roleType === 'tech') {
       const response = await unifiedClient.verifyOtp('technician', userEmail, otp);
@@ -814,6 +866,22 @@ export const AppProvider = ({ children }) => {
         email: technician?.email,
         phone: technician?.phone
       });
+      return response;
+    }
+
+    // Sales & Back-Office Roles V1 — own OTP portal (routes/passwordReset.js
+    // uses the kebab-case 'back-office' URL slug; the JWT role and every
+    // app-level role string stay 'back_office' throughout). Never
+    // impersonated, never switches roles, so baseRole always equals role.
+    if (roleType === 'sales' || roleType === 'back_office') {
+      const urlSlug = roleType === 'sales' ? 'sales' : 'back-office';
+      const response = await unifiedClient.verifyOtp(urlSlug, userEmail, otp);
+      const account = response.data?.[roleType];
+      setBaseRole(roleType);
+      localStorage.setItem('base_role', roleType);
+      setIsLoggedIn(true);
+      localStorage.setItem('admin_auth', 'true');
+      loginAsEmployee(roleType, account, roleType === 'sales' ? 'Sales' : 'Back-Office');
       return response;
     }
 

@@ -29,10 +29,16 @@ import { UserManagementPage } from './components/users/UserManagementPage';
 import { ReportsPage } from './components/reports/ReportsPage';
 // Attendance Category (V1) — separate Admin page. Additive.
 import { AttendancePage } from './components/attendance/AttendancePage';
+// Sales & Back-Office Roles V1 — Admin management pages. Additive.
+import { SalesPage } from './components/sales/SalesPage';
+import { BackOfficePage } from './components/backoffice/BackOfficePage';
 
 // Tech Views
 import { TechDashboard } from './components/dashboard/TechDashboard';
 import { TechJobsPage } from './components/requests/TechJobsPage';
+// Sales & Back-Office Roles V1 — basic dashboard shells. Additive.
+import { SalesDashboard } from './components/dashboard/SalesDashboard';
+import { BackOfficeDashboard } from './components/dashboard/BackOfficeDashboard';
 
 // Modals & Panels
 import { TicketDetailsModal } from './components/requests/TicketDetailsModal';
@@ -112,6 +118,11 @@ const MainLayout = () => {
           return <RoomsEquipmentPage />;
         case 'technicians':
           return <TechniciansPage />;
+        // Sales & Back-Office Roles V1
+        case 'sales':
+          return <SalesPage />;
+        case 'back-office':
+          return <BackOfficePage />;
         case 'attendance':
           return <AttendancePage />;
         case 'installations':
@@ -135,26 +146,38 @@ const MainLayout = () => {
         default:
           return <AdminDashboard />;
       }
-    } else {
-      // Technician view
-      switch (activePage) {
-        case 'my-dashboard':
-          return <TechDashboard />;
-        case 'my-jobs':
-          return <TechJobsPage />;
-        case 'demos':
-          return <DemosPage />;
-        case 'calendar':
-          return <ServiceCalendarPage />;
-        case 'history':
-          return <ServiceHistoryPage />;
-        case 'installations':
-          return <InstallationsPage />;
-        case 'profile':
-          return <TechProfilePage />;
-        default:
-          return <TechDashboard />;
-      }
+    }
+
+    // Sales & Back-Office Roles V1 — basic dashboard shell only (plan
+    // §6/§7): a single 'my-dashboard' page, no Ticket/Project pages at all.
+    // Any other activePage value falls back to it rather than rendering
+    // nothing, in case one somehow persists from a prior admin/technician
+    // session sharing the same browser.
+    if (role === 'sales') {
+      return <SalesDashboard />;
+    }
+    if (role === 'back_office') {
+      return <BackOfficeDashboard />;
+    }
+
+    // Technician view
+    switch (activePage) {
+      case 'my-dashboard':
+        return <TechDashboard />;
+      case 'my-jobs':
+        return <TechJobsPage />;
+      case 'demos':
+        return <DemosPage />;
+      case 'calendar':
+        return <ServiceCalendarPage />;
+      case 'history':
+        return <ServiceHistoryPage />;
+      case 'installations':
+        return <InstallationsPage />;
+      case 'profile':
+        return <TechProfilePage />;
+      default:
+        return <TechDashboard />;
     }
   };
 

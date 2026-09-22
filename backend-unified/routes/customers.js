@@ -93,6 +93,12 @@ router.post('/', validateCustomer, async (req, res) => {
     res.status(201).json({ success: true, data: data?.[0], message: 'Customer created successfully' });
   } catch (error) {
     console.error('Error creating customer:', error);
+    // 23505 = unique violation — customers_email_ci_unique / _lower_unique.
+    // The customer portal signs in by this email alone (no password), so a
+    // clash here is a normal "already onboarded" case, not a server error.
+    if (error.code === '23505') {
+      return res.status(409).json({ success: false, error: 'A customer with this email already exists.' });
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });

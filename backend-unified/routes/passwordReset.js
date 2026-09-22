@@ -29,8 +29,14 @@ function buildOtpFlow({ table, ownerColumn, jwtRole, publicKey, selectFields }) 
         return res.status(400).json({ success: false, error: 'A valid email address is required' });
       }
 
+      // Case-insensitive: every identity table's email uniqueness is
+      // enforced on lower(email) (e.g. sales_email_lower_unique), but an
+      // exact .eq() match here required the login attempt to match the
+      // stored casing exactly — a real login-blocking bug when someone
+      // types their own email in a different case than it was entered with
+      // (audit finding #3).
       const { data: account } = await supabase
-        .from(table).select(`id, email, is_active, ${selectFields}`).eq('email', email).maybeSingle();
+        .from(table).select(`id, email, is_active, ${selectFields}`).ilike('email', email).maybeSingle();
 
       if (!account || account.is_active === false) {
         return res.status(404).json({ success: false, error: 'No account found with that email address.' });
@@ -78,8 +84,9 @@ function buildOtpFlow({ table, ownerColumn, jwtRole, publicKey, selectFields }) 
         return res.status(400).json({ success: false, error: 'Enter the 4-digit code sent to your email.' });
       }
 
+      // Case-insensitive for the same reason as requestOtp above.
       const { data: account } = await supabase
-        .from(table).select(`id, email, ${selectFields}`).eq('email', email).maybeSingle();
+        .from(table).select(`id, email, ${selectFields}`).ilike('email', email).maybeSingle();
 
       const invalid = { success: false, error: 'That code is incorrect or has expired. Request a new one.' };
       if (!account) return res.status(400).json(invalid);
@@ -143,11 +150,28 @@ const technicianOtp = buildOtpFlow({
   table: 'technicians', ownerColumn: 'technician_id', jwtRole: 'technician', publicKey: 'technician',
   selectFields: 'full_name, phone, specialization'
 });
+// Sales & Back-Office Roles V1 — same buildOtpFlow factory the Admin and
+// Technician portals already use (section 10 of the plan: reuse the
+// existing OTP request/verify/expiry logic exactly, only the identity table
+// and JWT role differ). `sales`/`back_office` have no specialization —
+// just the shared fields the plan's identity migration gives them.
+const salesOtp = buildOtpFlow({
+  table: 'sales', ownerColumn: 'sales_id', jwtRole: 'sales', publicKey: 'sales',
+  selectFields: 'full_name, phone, location'
+});
+const backOfficeOtp = buildOtpFlow({
+  table: 'back_office', ownerColumn: 'back_office_id', jwtRole: 'back_office', publicKey: 'back_office',
+  selectFields: 'full_name, phone, location'
+});
 
 router.post('/admin/request-otp', adminOtp.requestOtp);
 router.post('/admin/verify-otp', adminOtp.verifyOtp);
 router.post('/technician/request-otp', technicianOtp.requestOtp);
 router.post('/technician/verify-otp', technicianOtp.verifyOtp);
+router.post('/sales/request-otp', salesOtp.requestOtp);
+router.post('/sales/verify-otp', salesOtp.verifyOtp);
+router.post('/back-office/request-otp', backOfficeOtp.requestOtp);
+router.post('/back-office/verify-otp', backOfficeOtp.verifyOtp);
 
 const appUrl = () => process.env.FRONTEND_URL || 'http://localhost:3000';
 // The admin dashboard is a separate app on its own port.
@@ -185,17 +209,21 @@ const htmlPage = ({ title, message, tone = 'ok' }) => `
 // Resolve a login email to either a primary customer or an active team member.
 // Returns { kind: 'customer', account } | { kind: 'team_member', member, parent } | null
 async function resolveLoginAccount(email) {
+  // Case-insensitive: customers.email uniqueness is enforced on lower(email)
+  // (customers_email_lower_unique), but an exact .eq() match here required the
+  // sign-in attempt to match the stored casing exactly — the same class of
+  // login-blocking bug already fixed for the admin/technician OTP flows above.
   const { data: customer } = await supabase
     .from('customers')
     .select('id, name, email, company_name, phone')
-    .eq('email', email)
+    .ilike('email', email)
     .maybeSingle();
   if (customer) return { kind: 'customer', account: customer };
 
   const { data: member } = await supabase
     .from('team_members')
     .select('id, customer_id, full_name, email, job_role, access_level, status')
-    .eq('email', email)
+    .ilike('email', email)
     .eq('status', 'active')
     .maybeSingle();
   if (!member) return null;

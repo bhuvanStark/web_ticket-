@@ -495,6 +495,23 @@ export const validateActivityReassign = (req, res, next) => {
 
 const ATTENDANCE_LOCATION_STATUSES = ['gps_captured', 'permission_denied', 'device_unsupported', 'unavailable_error'];
 
+// Sales & Back-Office Roles V1 — unified Admin Attendance routes address an
+// employee by /admin/attendance/:employeeType/:employeeId/... (an id alone
+// is ambiguous once there are three identity tables). Rejects anything but
+// the three known types with a clean 400, before the route ever tries to
+// look up a nonexistent table.
+const EMPLOYEE_TYPES = ['technician', 'sales', 'back_office'];
+export const validateEmployeeType = (req, res, next) => {
+  if (!EMPLOYEE_TYPES.includes(req.params.employeeType)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error',
+      message: `employeeType must be one of: ${EMPLOYEE_TYPES.join(', ')}`
+    });
+  }
+  next();
+};
+
 // Same check as validateUUID, but for a route param that isn't literally
 // named `:id` (e.g. /admin/attendance/:technicianId/history).
 export const validateUUIDParam = (paramName) => (req, res, next) => {
@@ -547,6 +564,21 @@ export const validateAttendanceDateBody = (req, res, next) => {
   const { date } = req.body || {};
   if (date && !isValidDateKey(date)) {
     return res.status(400).json({ success: false, error: 'Validation failed', details: ['date must be a valid calendar date in YYYY-MM-DD format'] });
+  }
+  next();
+};
+
+// Attendance export range (Export Range selector — Today / Last 2 Days /
+// This Week / This Month / Custom Range all resolve client-side to a plain
+// start_date/end_date pair before reaching this endpoint). Both are
+// required here, unlike the single `date` above.
+export const validateAttendanceRangeQuery = (req, res, next) => {
+  const { start_date, end_date } = req.query;
+  const errors = [];
+  if (!start_date || !isValidDateKey(start_date)) errors.push('start_date must be a valid calendar date in YYYY-MM-DD format');
+  if (!end_date || !isValidDateKey(end_date)) errors.push('end_date must be a valid calendar date in YYYY-MM-DD format');
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
   }
   next();
 };

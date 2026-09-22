@@ -21,7 +21,12 @@ export const NotificationsDrawer = () => {
         <div className="flex items-center gap-2">
           <Bell className="w-4 h-4 text-[#004898]" />
           <h3 className="font-bold text-xs uppercase tracking-wider text-[#172033]">
-            {role === 'admin' ? 'Coordinator Notifications' : 'Technician Alerts'}
+            {/* Sales & Back-Office Roles V1 — audit fix: was a binary
+                admin/technician ternary. */}
+            {role === 'admin' ? 'Coordinator Notifications'
+              : role === 'sales' ? 'Sales Alerts'
+              : role === 'back_office' ? 'Back-Office Alerts'
+              : 'Technician Alerts'}
           </h3>
         </div>
         <button

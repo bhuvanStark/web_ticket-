@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { checkDatabase, closeDatabase } from './config/database.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { rejectRoles } from './middleware/auth.js';
 
 // Import all routes
 import authRoutes from './routes/auth.js';
@@ -24,6 +25,10 @@ import projectActivitiesRouter from './routes/projectActivities.js';
 // routes/adminAttendance.js.
 import attendanceRouter from './routes/attendance.js';
 import adminAttendanceRouter from './routes/adminAttendance.js';
+// Sales & Back-Office Roles V1 — Admin-only identity management, separate
+// from Technicians (never assignable to tickets/projects). Additive only.
+import salesRouter from './routes/sales.js';
+import backOfficeRouter from './routes/backOffice.js';
 
 // Load environment variables
 dotenv.config();
@@ -98,11 +103,14 @@ app.use('/api/password-reset', passwordResetRouter);
 // API ROUTES - CUSTOMER ENDPOINTS
 // ============================================
 
-app.use('/api/service-requests', serviceRequestsRouter);
+// Sales & Back-Office Roles V1 — these three routers gate only on
+// requireAuth (any authenticated role), so Sales/Back-Office are explicitly
+// denylisted ahead of them here; every other role's access is unchanged.
+app.use('/api/service-requests', rejectRoles(['sales', 'back_office']), serviceRequestsRouter);
 // Project Category (V1) — separate module from Service Tickets, sits
 // directly below it in the admin nav. Additive only.
-app.use('/api/projects', projectsRouter);
-app.use('/api/project-activities', projectActivitiesRouter);
+app.use('/api/projects', rejectRoles(['sales', 'back_office']), projectsRouter);
+app.use('/api/project-activities', rejectRoles(['sales', 'back_office']), projectActivitiesRouter);
 app.use('/api/rooms', roomsRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/locations', locationsRouter);
@@ -112,6 +120,11 @@ app.use('/api/team-members', teamMembersRouter);
 // generic /api/admin below so its own admin sub-routes are matched first.
 app.use('/api/attendance', attendanceRouter);
 app.use('/api/admin/attendance', adminAttendanceRouter);
+// Sales & Back-Office Roles V1 — Admin-only rosters, kebab-case path for
+// back-office matching this codebase's existing /api/team-members
+// convention (the JWT role/DB table stay back_office, underscored).
+app.use('/api/sales', salesRouter);
+app.use('/api/back-office', backOfficeRouter);
 
 // ============================================
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)

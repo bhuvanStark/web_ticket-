@@ -3,11 +3,10 @@ import { X, UserCheck, Pencil, CheckCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import unifiedClient from '../../api/unifiedClient';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
+import { EMPLOYEE_LOCATIONS as LOCATIONS } from '../../utils/employeeLocations';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
-
-const LOCATIONS = ['Bengaluru', 'Hyderabad', 'Chennai', 'Mumbai', 'Pune', 'Gurugram / Delhi NCR'];
 
 // Create/Edit form for a Technician. Shared by TechniciansPage's "Add New
 // Technician" button (create mode) and TechProfileModal's "Edit" button
@@ -204,7 +203,10 @@ export function NewTechnicianModal() {
               />
             </div>
             <div>
-              <label className="form-label">Location</label>
+              {/* Label only — still backed by the same `location` field/
+                  column/dropdown values; see LOCATIONS above and the
+                  `location` payload key in handleSave. */}
+              <label className="form-label">Branch</label>
               <select
                 value={location} onChange={(e) => setLocation(e.target.value)}
                 className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-sm font-semibold text-[#172033] outline-none focus:border-[#004898]"

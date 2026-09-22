@@ -26,7 +26,9 @@ import {
   Eye,
   EyeOff,
   ArrowLeft,
-  Clock3
+  Clock3,
+  TrendingUp,
+  ClipboardList
 } from 'lucide-react';
 
 export const Sidebar = () => {
@@ -101,6 +103,11 @@ export const Sidebar = () => {
     { id: 'customers', label: 'Customers', icon: Users, module: 'customers' },
     { id: 'rooms', label: 'Rooms & Equipment', icon: Tv, module: 'rooms' },
     { id: 'technicians', label: 'Technicians', icon: Wrench, module: 'technicians' },
+    // Sales & Back-Office Roles V1 — Admin management pages for the two new
+    // employee types (plan §4/§5/§13). No module toggle, same as
+    // Attendance below — always shown.
+    { id: 'sales', label: 'Sales', icon: TrendingUp },
+    { id: 'back-office', label: 'Back-Office', icon: ClipboardList },
     // Attendance Category (V1) — separate page from Service Tickets and
     // Projects, no module toggle (no Settings UI asked for one; always shown).
     { id: 'attendance', label: 'Attendance', icon: Clock3 },
@@ -123,11 +130,22 @@ export const Sidebar = () => {
     { id: 'history', label: 'Service History', icon: History, module: 'history' },
   ];
 
-  const allNavItems = role === 'admin' ? adminNavItems : techNavItems;
+  // Sales & Back-Office Roles V1 — basic dashboard shell only (plan §6/§7):
+  // one page, which carries their Attendance check-in/out directly (same
+  // place Technician's own attendance already lives — on the dashboard, not
+  // a separate nav item). No Ticket/Project nav at all, per the isolation
+  // requirement.
+  const salesNavItems = [{ id: 'my-dashboard', label: 'My Dashboard', icon: LayoutDashboard }];
+  const backOfficeNavItems = [{ id: 'my-dashboard', label: 'My Dashboard', icon: LayoutDashboard }];
+
+  const allNavItems = role === 'admin' ? adminNavItems
+    : role === 'sales' ? salesNavItems
+    : role === 'back_office' ? backOfficeNavItems
+    : techNavItems;
   const navItems = allNavItems.filter(item => {
     // 1. Module enabled check
     if (item.module && !enabledModules[item.module]) return false;
-    
+
     // 2. Role permission check (only for admins)
     if (role === 'admin' && rolePermissions && currentUser && currentUser.role) {
       const userPerms = rolePermissions[currentUser.role];
@@ -251,8 +269,15 @@ export const Sidebar = () => {
       {/* FIXED BOTTOM: User Profile & Logout Bottom Section */}
       <div className={`p-4 border-t border-[#F2F4F7] bg-[#FAFCFF] shrink-0 relative ${isSidebarCollapsed ? 'flex flex-col items-center gap-4' : ''}`}>
         <div
-          onClick={() => role === 'tech' ? setShowProfileMenu(!showProfileMenu) : handleNavigation('profile')}
-          className={`flex items-center gap-3 rounded-lg hover:bg-white cursor-pointer transition-all border border-transparent hover:border-[#E4E7EC] ${isSidebarCollapsed ? 'p-0' : 'p-2'}`}
+          onClick={() => {
+            if (role === 'tech') setShowProfileMenu(!showProfileMenu);
+            else if (role === 'admin') handleNavigation('profile');
+            // Sales & Back-Office Roles V1 — no profile page exists for
+            // these two roles yet (plan §6/§7: dashboard shell only), so
+            // this is a no-op for them rather than navigating to a page
+            // that doesn't exist.
+          }}
+          className={`flex items-center gap-3 rounded-lg transition-all border border-transparent ${role === 'sales' || role === 'back_office' ? '' : 'hover:bg-white hover:border-[#E4E7EC] cursor-pointer'} ${isSidebarCollapsed ? 'p-0' : 'p-2'}`}
           title={isSidebarCollapsed ? 'Settings / Profile' : ''}
         >
           <Avatar

@@ -318,8 +318,15 @@ export const Header = () => {
           <div className="text-right hidden sm:block">
             <div className="text-xs font-bold text-[#172033] leading-tight">{currentUser.name}</div>
             <div className="text-[10px] text-[#667085] font-medium flex items-center justify-end gap-1">
+              {/* Sales & Back-Office Roles V1 — audit fix: this was a
+                  binary admin/technician ternary, so Sales/Back-Office saw
+                  "Field Technician" here regardless of their real role. */}
               {role === 'admin' ? (
                 <span className="text-[#004898] font-bold">Admin Coordinator</span>
+              ) : role === 'sales' ? (
+                <span className="text-[#12B76A] font-bold">Sales</span>
+              ) : role === 'back_office' ? (
+                <span className="text-[#12B76A] font-bold">Back-Office</span>
               ) : (
                 <span className="text-[#12B76A] font-bold">Field Technician</span>
               )}

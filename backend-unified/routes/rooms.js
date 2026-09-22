@@ -6,7 +6,9 @@ import { requireAuth } from '../middleware/auth.js';
 const router = express.Router();
 router.use(requireAuth);
 
-// GET all rooms with location details
+// GET all rooms with location details (admin/technician only see every room).
+// A customer session is scoped to rooms under its own locations so the AV
+// ticket wizard cannot list another company's rooms.
 router.get('/', async (req, res) => {
   try {
     const { location_id } = req.query;
@@ -17,6 +19,15 @@ router.get('/', async (req, res) => {
         *,
         locations (id, name, city, address)
       `);
+
+    if (req.user?.role === 'customer') {
+      const { data: ownLocations, error: ownLocationsError } = await supabase
+        .from('locations')
+        .select('id')
+        .eq('customer_id', req.userId);
+      if (ownLocationsError) throw ownLocationsError;
+      query = query.in('location_id', (ownLocations || []).map((loc) => loc.id));
+    }
 
     if (location_id) {
       query = query.eq('location_id', location_id);
