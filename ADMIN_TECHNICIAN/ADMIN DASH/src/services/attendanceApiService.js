@@ -51,6 +51,16 @@ export async function checkOutInApi(recordId) {
   return readApiData(res, 'check out');
 }
 
+// Technician/Sales/Back-Office Nav Parity fix — the authenticated
+// employee's own attendance history (up to ~a year), for the new "My
+// Attendance" page. Identity comes from the JWT server-side; no id is
+// passed here, unlike fetchAttendanceHistoryInApi (admin, addresses an
+// arbitrary employee by type+id).
+export async function fetchMyAttendanceHistoryInApi() {
+  const res = await authFetch(`${API_BASE_URL}/attendance/history`, { headers: authHeaders() });
+  return readApiData(res, 'fetch my attendance history');
+}
+
 // -- Admin (unified Technician | Sales | Back-Office) ------------------------
 // Sales & Back-Office Roles V1 — the Admin Attendance page is now the
 // attendance view for all three employee types (plan §8). `employeeType`

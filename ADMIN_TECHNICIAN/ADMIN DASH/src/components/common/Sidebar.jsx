@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Avatar } from './Avatar';
+import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems } from '../../config/employeeNavItems';
 import {
   LayoutDashboard,
   Ticket,
@@ -121,22 +122,11 @@ export const Sidebar = () => {
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  const techNavItems = [
-    { id: 'my-dashboard', label: 'My Dashboard', icon: LayoutDashboard },
-    { id: 'my-jobs', label: 'My Jobs', icon: Ticket, module: 'requests' },
-    { id: 'demos', label: 'Demo Management', icon: Sparkles, module: 'demos' },
-    { id: 'installations', label: 'Onsite Installations', icon: Layers, module: 'installations' },
-    { id: 'calendar', label: 'Service Calendar', icon: Calendar, module: 'calendar' },
-    { id: 'history', label: 'Service History', icon: History, module: 'history' },
-  ];
-
-  // Sales & Back-Office Roles V1 — basic dashboard shell only (plan §6/§7):
-  // one page, which carries their Attendance check-in/out directly (same
-  // place Technician's own attendance already lives — on the dashboard, not
-  // a separate nav item). No Ticket/Project nav at all, per the isolation
-  // requirement.
-  const salesNavItems = [{ id: 'my-dashboard', label: 'My Dashboard', icon: LayoutDashboard }];
-  const backOfficeNavItems = [{ id: 'my-dashboard', label: 'My Dashboard', icon: LayoutDashboard }];
+  // Technician/Sales/Back-Office Nav Parity fix — these three lists now
+  // live in config/employeeNavItems.js, shared with BottomNav.jsx, so
+  // desktop and mobile can never drift into showing a different page set
+  // for the same role again. Includes the new 'my-attendance' entry.
+  const techNavItems = sharedTechNavItems;
 
   const allNavItems = role === 'admin' ? adminNavItems
     : role === 'sales' ? salesNavItems

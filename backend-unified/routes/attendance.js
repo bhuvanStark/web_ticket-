@@ -48,6 +48,30 @@ router.post('/check-in', validateAttendanceCheckIn, async (req, res) => {
   }
 });
 
+// GET /api/attendance/history — the authenticated employee's own attendance
+// history (Technician/Sales/Back-Office Nav Parity fix, plan item 2). Reuses
+// attendanceService.getHistoryForEmployee unchanged — the same function
+// adminAttendance.js's admin-only history route already calls — just wired
+// to a self-service, requireEmployee-gated route instead of requireAdmin.
+// employeeType/employeeId always come from the verified JWT, never the
+// client, and getHistoryForEmployee's own actorRole/actorOwnerId check
+// additionally rejects any mismatch — an employee can only ever get back
+// their own rows.
+router.get('/history', async (req, res) => {
+  try {
+    const data = await attendanceService.getHistoryForEmployee(req.user.role, req.user.userId, {
+      actorRole: req.user.role,
+      actorOwnerId: req.user.userId,
+      limit: 400
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    if (error.code === 'FORBIDDEN') return res.status(403).json({ success: false, error: error.message });
+    console.error('Error fetching attendance history:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
 // POST /api/attendance/:id/check-out — ownership-checked in the service
 // layer (an employee may only check out their own record).
 router.post('/:id/check-out', validateUUID, async (req, res) => {

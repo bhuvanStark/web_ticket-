@@ -1,47 +1,48 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { useIsMobile } from '../../hooks/useMediaQuery';
+import { User } from 'lucide-react';
 import {
-  LayoutDashboard,
-  Ticket,
-  Calendar,
-  History,
-  User,
-  Layers
-} from 'lucide-react';
+  techNavItems,
+  salesNavItems,
+  backOfficeNavItems,
+  filterByEnabledModules
+} from '../../config/employeeNavItems';
 
-// Sales & Back-Office Roles V1 — basic dashboard shell only (matches
-// Sidebar.jsx's salesNavItems/backOfficeNavItems: a single Dashboard tab,
-// no Ticket/Project pages at all). Audit fix: this previously fell through
-// to the full Technician tab set for any non-admin role, so Sales/
-// Back-Office saw five tabs (Jobs/Work/Calendar/History/Profile) that
-// either don't exist for them (App.jsx ignores activePage entirely for
-// these two roles, always rendering the dashboard) or are misleading.
-const employeeNavItemsFor = (role) => {
-  if (role === 'sales' || role === 'back_office') {
-    return [{ id: 'my-dashboard', label: 'Dashboard', icon: LayoutDashboard }];
-  }
-  return [
-    { id: 'my-dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'my-jobs', label: 'Jobs', icon: Ticket },
-    { id: 'installations', label: 'Work', icon: Layers },
-    { id: 'calendar', label: 'Calendar', icon: Calendar },
-    { id: 'history', label: 'History', icon: History },
-    { id: 'profile', label: 'Profile', icon: User },
-  ];
+const NAV_ITEMS_BY_ROLE = {
+  sales: salesNavItems,
+  back_office: backOfficeNavItems
 };
 
 export const BottomNav = () => {
-  const { activePage, setActivePage, role } = useApp();
+  const { activePage, setActivePage, role, enabledModules } = useApp();
   const isMobile = useIsMobile();
 
   if (!isMobile || role === 'admin') return null;
 
-  const techNavItems = employeeNavItemsFor(role);
+  // Technician/Sales/Back-Office Nav Parity fix — root cause was this file
+  // rendering a flat, hardcoded item list with no relation to Sidebar.jsx's
+  // module-filtered one (Work/Calendar showed up here unconditionally, even
+  // when an admin had switched those modules off for desktop). Both surfaces
+  // now read the same source array (config/employeeNavItems.js) and apply
+  // the same `enabledModules` filter Sidebar.jsx already applied.
+  const baseItems = NAV_ITEMS_BY_ROLE[role] || techNavItems;
+  const items = filterByEnabledModules(baseItems, enabledModules);
+
+  // Profile has no dedicated desktop nav entry — on desktop it's reached by
+  // clicking the avatar at the bottom of the Sidebar (Sidebar.jsx). There is
+  // no Sidebar on mobile at all (App.jsx hides it below the `md` breakpoint),
+  // so Technician keeps a Profile tab here as its equivalent path to the
+  // same TechProfilePage — not an extra/unintended page, just a different
+  // affordance for the one that already exists on desktop. Sales/Back-Office
+  // have no profile page yet, so none is added here for them.
+  const techNavWithProfile = role === 'tech'
+    ? [...items, { id: 'profile', mobileLabel: 'Profile', icon: User }]
+    : items;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#E4E7EC] z-50 flex md:hidden">
-      {techNavItems.map((item) => (
+      {techNavWithProfile.map((item) => (
         <button
           key={item.id}
           onClick={() => setActivePage(item.id)}
@@ -52,7 +53,7 @@ export const BottomNav = () => {
           }`}
         >
           <item.icon className="w-5 h-5" />
-          <span className="text-xs font-medium truncate">{item.label}</span>
+          <span className="text-xs font-medium truncate">{item.mobileLabel}</span>
         </button>
       ))}
     </nav>

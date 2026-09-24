@@ -29,6 +29,9 @@ import { UserManagementPage } from './components/users/UserManagementPage';
 import { ReportsPage } from './components/reports/ReportsPage';
 // Attendance Category (V1) — separate Admin page. Additive.
 import { AttendancePage } from './components/attendance/AttendancePage';
+// Technician/Sales/Back-Office Nav Parity fix — personal attendance page,
+// shared unchanged by all three employee roles. Additive.
+import { MyAttendancePage } from './components/attendance/MyAttendancePage';
 // Sales & Back-Office Roles V1 — Admin management pages. Additive.
 import { SalesPage } from './components/sales/SalesPage';
 import { BackOfficePage } from './components/backoffice/BackOfficePage';
@@ -149,15 +152,15 @@ const MainLayout = () => {
     }
 
     // Sales & Back-Office Roles V1 — basic dashboard shell only (plan
-    // §6/§7): a single 'my-dashboard' page, no Ticket/Project pages at all.
-    // Any other activePage value falls back to it rather than rendering
-    // nothing, in case one somehow persists from a prior admin/technician
-    // session sharing the same browser.
+    // §6/§7): 'my-dashboard' plus (Nav Parity fix) 'my-attendance'. Any
+    // other activePage value falls back to the dashboard rather than
+    // rendering nothing, in case one somehow persists from a prior
+    // admin/technician session sharing the same browser.
     if (role === 'sales') {
-      return <SalesDashboard />;
+      return activePage === 'my-attendance' ? <MyAttendancePage /> : <SalesDashboard />;
     }
     if (role === 'back_office') {
-      return <BackOfficeDashboard />;
+      return activePage === 'my-attendance' ? <MyAttendancePage /> : <BackOfficeDashboard />;
     }
 
     // Technician view
@@ -174,6 +177,9 @@ const MainLayout = () => {
         return <ServiceHistoryPage />;
       case 'installations':
         return <InstallationsPage />;
+      // Technician/Sales/Back-Office Nav Parity fix
+      case 'my-attendance':
+        return <MyAttendancePage />;
       case 'profile':
         return <TechProfilePage />;
       default:

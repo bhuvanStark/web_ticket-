@@ -149,6 +149,43 @@ router.patch('/:id', validateUUID, async (req, res) => {
   }
 });
 
+// DEACTIVATE — the safe alternative to DELETE: flips is_active off so the
+// employee drops out of the roster (GET / already filters eq('is_active',
+// true)) while the row itself and every attendance_records row pointing at
+// it are left completely untouched. Deliberately one-directional (no
+// reactivate route) — not asked for, and not adding one keeps this change
+// scoped to what was requested.
+router.patch('/:id/deactivate', validateUUID, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('back_office')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select(SELECT_FIELDS)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ success: false, error: 'Back-Office employee not found' });
+      }
+      throw error;
+    }
+
+    res.json({ success: true, data, message: `Back-Office employee ${data.full_name || ''} deactivated successfully`.trim() });
+  } catch (error) {
+    console.error('Error deactivating Back-Office employee:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE — permanent. attendance_records.back_office_id is now ON DELETE
+// CASCADE (migration 026): deleting a Back-Office employee also deletes
+// every attendance record that belongs to them, so this succeeds whether or
+// not they have attendance history. The frontend's delete confirmation
+// warns explicitly that attendance history is destroyed; anyone who needs
+// to keep that history should use PATCH /:id/deactivate instead.
 router.delete('/:id', validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
@@ -169,12 +206,7 @@ router.delete('/:id', validateUUID, async (req, res) => {
       .delete()
       .eq('id', id);
 
-    if (error) {
-      if (error.code === '23503') {
-        return res.status(409).json({ success: false, error: 'Cannot delete a Back-Office employee who has attendance history' });
-      }
-      throw error;
-    }
+    if (error) throw error;
 
     res.json({
       success: true,

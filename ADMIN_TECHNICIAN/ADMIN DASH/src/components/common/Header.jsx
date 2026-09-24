@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 import { Avatar } from './Avatar';
 import {
   Search,
@@ -15,7 +16,8 @@ import {
   Users,
   Tv,
   Wrench,
-  ArrowRight
+  ArrowRight,
+  LogOut
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 
@@ -44,11 +46,41 @@ export const Header = () => {
     setSimulatedError,
     showToast,
     globalSearchQuery,
-    setGlobalSearchQuery
+    setGlobalSearchQuery,
+    handleLogout
   } = useApp();
 
   const [isDropdownFocused, setIsDropdownFocused] = useState(false);
   const searchRef = useRef(null);
+
+  // Mobile-only profile menu. On desktop the Sidebar (hidden on mobile via
+  // its own `hidden md:block` wrapper in App.jsx) already carries the
+  // Logout button below the user's name, so this stays gated to mobile and
+  // to the roles whose Sidebar/BottomNav give them no other way to reach
+  // it (admin keeps its existing avatar-click-to-profile behavior below,
+  // untouched). Desktop rendering/behavior is unaffected by everything in
+  // this block.
+  const isMobile = useIsMobile();
+  const showsMobileProfileMenu = isMobile && role !== 'admin';
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const mobileMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target)) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMobileMenuOpen]);
+
+  // isMobile can flip false→true without an intervening close (e.g. a
+  // resize), so make sure the menu never stays open once it's not renderable.
+  useEffect(() => {
+    if (!showsMobileProfileMenu) setIsMobileMenuOpen(false);
+  }, [showsMobileProfileMenu]);
 
   const unreadCount = notifications.filter(n => (n.unread || !n.read) && (!n.role || n.role === role)).length;
 
@@ -314,7 +346,7 @@ export const Header = () => {
         </div>
 
         {/* User Identity Pill */}
-        <div className="flex items-center gap-2 pl-2 border-l border-[#E4E7EC]">
+        <div className="flex items-center gap-2 pl-2 border-l border-[#E4E7EC] relative" ref={mobileMenuRef}>
           <div className="text-right hidden sm:block">
             <div className="text-xs font-bold text-[#172033] leading-tight">{currentUser.name}</div>
             <div className="text-[10px] text-[#667085] font-medium flex items-center justify-end gap-1">
@@ -332,7 +364,39 @@ export const Header = () => {
               )}
             </div>
           </div>
-          <Avatar src={currentUser.avatar} name={currentUser.name} className="w-8 h-8" />
+          <div
+            onClick={() => { if (showsMobileProfileMenu) setIsMobileMenuOpen((open) => !open); }}
+            className={showsMobileProfileMenu ? 'cursor-pointer' : ''}
+            role={showsMobileProfileMenu ? 'button' : undefined}
+            aria-haspopup={showsMobileProfileMenu ? 'menu' : undefined}
+            aria-expanded={showsMobileProfileMenu ? isMobileMenuOpen : undefined}
+          >
+            <Avatar src={currentUser.avatar} name={currentUser.name} className="w-8 h-8" />
+          </div>
+
+          {/* Mobile-only profile/logout dropdown — Technician, Sales and
+              Back-Office have no visible Sidebar on mobile (App.jsx hides it
+              below the `md` breakpoint) and BottomNav carries no Logout
+              entry, so this avatar tap is currently their only path to
+              signing out on a phone. Reuses the same handleLogout every
+              other Logout button in the app already calls. */}
+          {showsMobileProfileMenu && isMobileMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-[#E4E7EC] rounded-lg shadow-lg z-50 overflow-hidden">
+              <div className="px-3 py-2.5 border-b border-[#F2F4F7]">
+                <div className="text-xs font-bold text-[#172033] truncate">{currentUser.name}</div>
+                <div className="text-[10px] text-[#667085] truncate">
+                  {role === 'sales' ? 'Sales' : role === 'back_office' ? 'Back-Office' : 'Field Technician'}
+                </div>
+              </div>
+              <button
+                onClick={() => { setIsMobileMenuOpen(false); handleLogout(); }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-[#F04438] hover:bg-[#FEF3F2] transition-all cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log out</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

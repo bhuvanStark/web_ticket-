@@ -9,12 +9,12 @@
 // Branch filter as the Technician page, per the plan.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, Plus, Pencil, Trash2, AlertTriangle, TrendingUp, X, CheckCircle } from 'lucide-react';
+import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, TrendingUp, X, CheckCircle } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { EMPLOYEE_LOCATIONS } from '../../utils/employeeLocations';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
 import {
-  fetchSalesInApi, createSalesInApi, updateSalesInApi, deleteSalesInApi
+  fetchSalesInApi, createSalesInApi, updateSalesInApi, deleteSalesInApi, deactivateSalesInApi
 } from '../../services/salesApiService';
 
 const FieldError = ({ children }) =>
@@ -155,6 +155,7 @@ export const SalesPage = () => {
   const [modal, setModal] = useState(null); // { mode: 'create' | 'edit', employee? }
   const [pendingDelete, setPendingDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deactivatingId, setDeactivatingId] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -181,13 +182,30 @@ export const SalesPage = () => {
     setIsDeleting(true);
     try {
       await deleteSalesInApi(pendingDelete.id);
-      showToast?.(`${pendingDelete.full_name} deleted.`, 'success');
+      showToast?.(`${pendingDelete.full_name} and their attendance history were deleted.`, 'success');
       setPendingDelete(null);
       load();
     } catch (err) {
-      showToast?.(err.code === 'HAS_ATTENDANCE' ? `Cannot delete ${pendingDelete.full_name}: they have attendance history.` : (err.message || 'Delete failed'), 'error');
+      showToast?.(err.message || 'Delete failed', 'error');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  // Safe alternative to Delete: keeps the employee row and all of their
+  // attendance history, just removes them from the active roster.
+  const handleDeactivate = async (employee) => {
+    if (deactivatingId) return;
+    if (!window.confirm(`Deactivate ${employee.full_name}? They will be removed from the active roster, but their record and attendance history are kept.`)) return;
+    setDeactivatingId(employee.id);
+    try {
+      await deactivateSalesInApi(employee.id);
+      showToast?.(`${employee.full_name} deactivated.`, 'success');
+      load();
+    } catch (err) {
+      showToast?.(err.message || 'Deactivate failed', 'error');
+    } finally {
+      setDeactivatingId(null);
     }
   };
 
@@ -264,9 +282,17 @@ export const SalesPage = () => {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
+                          onClick={() => handleDeactivate(e)}
+                          disabled={deactivatingId === e.id}
+                          className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#475467] border border-[#E4E7EC] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center disabled:opacity-60"
+                          title="Deactivate (keeps record and attendance history)"
+                        >
+                          <UserX className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => setPendingDelete(e)}
                           className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
-                          title="Delete"
+                          title="Delete permanently"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -300,7 +326,7 @@ export const SalesPage = () => {
               <div>
                 <h3 className="text-lg font-bold text-[#172033]">Delete Sales employee</h3>
                 <p className="mt-1 text-sm text-[#667085]">
-                  This will permanently remove <span className="font-semibold text-[#172033]">{pendingDelete.full_name}</span>. This cannot be undone.
+                  This will permanently remove <span className="font-semibold text-[#172033]">{pendingDelete.full_name}</span> <span className="font-semibold text-[#D92D20]">and permanently delete all of their attendance history</span>. This cannot be undone. To keep their record and history, use Deactivate instead.
                 </p>
               </div>
             </div>

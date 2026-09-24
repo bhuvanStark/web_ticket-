@@ -147,10 +147,13 @@ router.delete('/:id', validateUUID, async (req, res) => {
       });
     }
 
-    // Locations, team members, preferences and notifications cascade, but
-    // service_requests.customer_id is ON DELETE RESTRICT — a customer with
-    // ticket history cannot be removed. Say so plainly instead of letting the
-    // raw FK violation surface as a 500.
+    // Locations, rooms, equipment, team members, preferences and
+    // notifications all cascade (migration 025 made rooms.location_id
+    // CASCADE, matching equipment.room_id — they're setup data owned by the
+    // location, not business history). service_requests.customer_id stays
+    // ON DELETE RESTRICT — a customer with ticket history cannot be
+    // removed. Say so plainly instead of letting the raw FK violation
+    // surface as a 500.
     const { data: linkedRequests, error: requestsError } = await supabase
       .from('service_requests')
       .select('id')
@@ -179,6 +182,14 @@ router.delete('/:id', validateUUID, async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting customer:', error);
+    // Belt-and-suspenders: any other protected reference (present or added
+    // later) should still surface as a clean 409, never a raw 500.
+    if (error.code === '23503') {
+      return res.status(409).json({
+        success: false,
+        error: 'This customer has related records that must be removed first.'
+      });
+    }
     res.status(500).json({
       success: false,
       error: error.message
