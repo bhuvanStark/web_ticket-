@@ -8,11 +8,18 @@
 // verify here.
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
-import { requireAdmin } from '../middleware/auth.js';
+import { query } from '../config/database.js';
+import { requireAdmin, requirePermission } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
+// TaskPro Sales Module V1 — deactivating/deleting a Sales employee must
+// return their active leads to the common pool (plan §6). Additive: this is
+// the only change this file makes for that feature.
+import { reassignLeadsForDeactivatedSales } from '../services/leadService.js';
 
 const router = express.Router();
-router.use(requireAdmin);
+// Admin RBAC V1 — Sales employee management is itself part of the 'sales'
+// admin module (plan §2), same gate the Leads router (routes/leads.js) uses.
+router.use(requireAdmin, requirePermission('sales'));
 
 const SELECT_FIELDS = 'id, email, full_name, phone, location, is_active, created_at, updated_at';
 
@@ -162,18 +169,31 @@ router.patch('/:id/deactivate', validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { data, error } = await supabase
-      .from('sales')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select(SELECT_FIELDS)
-      .single();
+    // Audit fix P0-1 — bump token_version so this Sales employee's existing
+    // access/refresh tokens are rejected on their very next use, instead of
+    // remaining valid (and able to keep accepting leads) until natural
+    // expiry. requireSales checks this on every request. Raw SQL for the
+    // `token_version + 1` expression — the query builder's .update() only
+    // accepts plain bound values, not expressions.
+    const { rows } = await query(
+      `UPDATE sales SET is_active = false, token_version = token_version + 1, updated_at = now()
+       WHERE id = $1
+       RETURNING ${SELECT_FIELDS}`,
+      [id]
+    );
+    const data = rows[0];
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ success: false, error: 'Sales employee not found' });
-      }
-      throw error;
+    if (!data) {
+      return res.status(404).json({ success: false, error: 'Sales employee not found' });
+    }
+
+    // Plan §6: their active/unclosed leads return to the common pool. Best
+    // effort — a failure here must not undo the deactivation that already
+    // succeeded; it's logged so it can be reconciled by hand if it ever hits.
+    try {
+      await reassignLeadsForDeactivatedSales(id, { type: 'admin', id: req.user.userId, name: null });
+    } catch (leadError) {
+      console.error(`Failed to reassign leads after deactivating sales ${id}:`, leadError.message);
     }
 
     res.json({ success: true, data, message: `Sales employee ${data.full_name || ''} deactivated successfully`.trim() });
@@ -202,6 +222,16 @@ router.delete('/:id', validateUUID, async (req, res) => {
     if (lookupError) throw lookupError;
     if (!existingRow) {
       return res.status(404).json({ success: false, error: 'Sales employee not found' });
+    }
+
+    // leads.assigned_to is ON DELETE SET NULL (migration 028), so this can't
+    // fail on lead history — but do the same reassignment history logging
+    // as deactivate first, or those leads would silently lose their owner
+    // with no lead_history row explaining why.
+    try {
+      await reassignLeadsForDeactivatedSales(id, { type: 'admin', id: req.user.userId, name: null });
+    } catch (leadError) {
+      console.error(`Failed to reassign leads before deleting sales ${id}:`, leadError.message);
     }
 
     const { error } = await supabase

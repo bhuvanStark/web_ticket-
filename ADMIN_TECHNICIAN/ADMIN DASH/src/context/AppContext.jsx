@@ -147,7 +147,11 @@ export const AppProvider = ({ children }) => {
 
     // Neutral placeholder — kept non-null because several components read
     // currentUser.* directly, but carries no fabricated name, email or photo.
-    return { id: null, name: '', email: '', avatar: null, roleLabel: '', role: 'Super Admin' };
+    // Admin RBAC V1 — this used to hardcode role: 'Super Admin', so every
+    // admin was silently treated as Super Admin before their real account
+    // data even loaded. isSuperAdmin now only ever becomes true from a real
+    // admins.is_super_admin value returned by the backend (see switchRole).
+    return { id: null, name: '', email: '', avatar: null, roleLabel: '', role: 'Admin', isSuperAdmin: false };
   });
 
   // Domain Data State
@@ -771,6 +775,16 @@ export const AppProvider = ({ children }) => {
     if (newRole === role && !targetUser) return;
 
     if (newRole === 'tech') {
+      // Admin RBAC V1 — "view as technician" (below) has no way to look the
+      // real admin back up on switch-back (loginAsTechnician replaces
+      // currentUser wholesale, and nothing else remembers who was signed
+      // in). Snapshot the real admin identity now, only while actually
+      // viewing as admin, so switching back can restore it instead of
+      // falling back to a generic placeholder that would otherwise lose a
+      // genuine Super Admin's status until their next full login.
+      if (role === 'admin' && currentUser?.id) {
+        localStorage.setItem('admin_identity_snapshot', JSON.stringify(currentUser));
+      }
       loginAsTechnician(targetUser || (technicians || [])[0]);
     } else {
       // Clear cached data when switching to admin
@@ -783,23 +797,35 @@ export const AppProvider = ({ children }) => {
       if (targetUser && (targetUser.email || targetUser.name)) {
         // The signed-in admin, as returned by the backend. department is the
         // admins table's own label; role is only present for staff sub-roles.
+        // Admin RBAC V1 — isSuperAdmin is the real admins.is_super_admin
+        // value from the backend (login/session/me); it used to be silently
+        // assumed true for every admin via the `|| 'Super Admin'` fallback
+        // below, which is why that fallback now reflects the real flag
+        // instead of hardcoding it.
+        const isSuperAdmin = targetUser.is_super_admin === true;
         newUser = {
           id: targetUser.id,
           name: targetUser.name,
           email: targetUser.email,
           avatar: targetUser.avatar,
           roleLabel: targetUser.role || targetUser.department || 'Administrator',
-          role: targetUser.role || 'Super Admin'
+          role: targetUser.role || (isSuperAdmin ? 'Super Admin' : 'Admin'),
+          isSuperAdmin
         };
       } else {
-        // No account details available (e.g. a restored session predating this
-        // field); keep the view usable without inventing an identity.
-        newUser = {
+        // No account details passed — this is always the "switch back from
+        // viewing as a technician" path (the only caller of switchRole('admin')
+        // with no targetUser). Restore the real admin snapshotted above rather
+        // than inventing a placeholder identity that would lose a genuine
+        // Super Admin's status.
+        const snapshot = localStorage.getItem('admin_identity_snapshot');
+        newUser = snapshot ? JSON.parse(snapshot) : {
           name: 'Administrator',
           email: '',
           avatar: null,
           roleLabel: 'Administrator',
-          role: 'Super Admin'
+          role: 'Admin',
+          isSuperAdmin: false
         };
       }
 
@@ -847,7 +873,8 @@ export const AppProvider = ({ children }) => {
       id: admin?.id,
       name: admin?.full_name,
       email: admin?.email,
-      department: admin?.department
+      department: admin?.department,
+      is_super_admin: admin?.is_super_admin
     });
 
     return response;
@@ -899,7 +926,8 @@ export const AppProvider = ({ children }) => {
       id: admin?.id,
       name: admin?.full_name,
       email: admin?.email,
-      department: admin?.department
+      department: admin?.department,
+      is_super_admin: admin?.is_super_admin
     });
     return response;
   };
@@ -911,6 +939,7 @@ export const AppProvider = ({ children }) => {
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_user');
     localStorage.removeItem('base_role');
+    localStorage.removeItem('admin_identity_snapshot');
     window.history.pushState(null, '', import.meta.env.BASE_URL);
     showToast('Logged out successfully', 'info');
   };

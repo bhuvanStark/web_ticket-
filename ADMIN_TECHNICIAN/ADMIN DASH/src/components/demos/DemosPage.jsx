@@ -290,7 +290,7 @@ export const DemosPage = () => {
       </div>
 
       {/* Demos Table */}
-      <div className="bg-white rounded-xl border border-[#E4E7EC] overflow-hidden shadow-xs">
+      <div className="bg-white rounded-xl border border-[#E4E7EC] overflow-x-auto overflow-y-hidden shadow-xs">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC] text-xs font-extrabold text-[#475467] uppercase tracking-wider">

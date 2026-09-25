@@ -22,7 +22,8 @@ import {
   Calendar,
   History,
   Sparkles,
-  Clock3
+  Clock3,
+  TrendingUp
 } from 'lucide-react';
 
 export const techNavItems = [
@@ -39,6 +40,10 @@ export const techNavItems = [
 
 export const salesNavItems = [
   { id: 'my-dashboard', label: 'My Dashboard', mobileLabel: 'Dashboard', icon: LayoutDashboard },
+  // TaskPro Sales Module V1 — the pool + own-leads page. No `module` toggle:
+  // Leads aren't a page that gets hidden by an Admin's enabledModules
+  // setting (that system is Admin-only), just always present for Sales.
+  { id: 'my-leads', label: 'My Leads', mobileLabel: 'Leads', icon: TrendingUp },
   { id: 'my-attendance', label: 'My Attendance', mobileLabel: 'Attendance', icon: Clock3 }
 ];
 

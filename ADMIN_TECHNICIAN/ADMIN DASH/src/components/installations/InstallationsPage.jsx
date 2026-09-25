@@ -434,7 +434,7 @@ export const InstallationsPage = () => {
                   <span>Installed OEM Hardware Catalog</span>
                 </h4>
 
-                <div className="border border-[#E4E7EC] rounded-xl overflow-hidden">
+                <div className="border border-[#E4E7EC] rounded-xl overflow-x-auto overflow-y-hidden">
                   <table className="w-full text-xs text-left">
                     <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px]">
                       <tr>

@@ -518,6 +518,78 @@ export async function createAdminInApi({ full_name, email, department }) {
   return payload?.data;
 }
 
+// Admin RBAC V1 (TaskPro_Sales_RBAC_plan.md) — admin management. Every call
+// below is Super-Admin-only on the backend (requireSuperAdmin); a normal
+// admin calling any of these gets a 403 the same as hitting them directly.
+export async function updateAdminInApi(id, { full_name, email, department }) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins/${id}`, {
+    method: 'PUT',
+    headers: authHeaders(true),
+    body: JSON.stringify({ full_name, email, department: department || null })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to update admin');
+  }
+  return payload?.data;
+}
+
+export async function setAdminActiveInApi(id, isActive) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins/${id}/${isActive ? 'activate' : 'deactivate'}`, {
+    method: 'PATCH',
+    headers: authHeaders()
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to update admin status');
+  }
+  return payload?.data;
+}
+
+export async function deleteAdminInApi(id) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins/${id}`, { method: 'DELETE', headers: authHeaders() });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to delete admin');
+  }
+  return payload;
+}
+
+export async function setAdminSuperAdminInApi(id, isSuperAdmin) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins/${id}/super-admin`, {
+    method: 'PATCH',
+    headers: authHeaders(true),
+    body: JSON.stringify({ is_super_admin: isSuperAdmin })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to change Super Admin status');
+  }
+  return payload?.data;
+}
+
+export async function fetchAdminPermissionsInApi(id) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins/${id}/permissions`, { headers: authHeaders() });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to fetch permissions');
+  }
+  return payload?.data || {};
+}
+
+export async function updateAdminPermissionsInApi(id, permissions) {
+  const res = await authFetch(`${API_BASE_URL}/admin/admins/${id}/permissions`, {
+    method: 'PUT',
+    headers: authHeaders(true),
+    body: JSON.stringify({ permissions })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok || payload?.success === false) {
+    throw new Error(payload?.error || payload?.message || 'Failed to update permissions');
+  }
+  return payload?.data || {};
+}
+
 export async function updateAdminCustomer(id, payload) {
   const res = await authFetch(`${API_BASE_URL}/customers/${id}`, {
     method: 'PATCH',

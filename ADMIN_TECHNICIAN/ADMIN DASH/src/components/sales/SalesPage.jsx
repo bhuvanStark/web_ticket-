@@ -16,6 +16,8 @@ import { validateForm, required, email as emailRule, phone as phoneRule, minLeng
 import {
   fetchSalesInApi, createSalesInApi, updateSalesInApi, deleteSalesInApi, deactivateSalesInApi
 } from '../../services/salesApiService';
+// TaskPro Sales Module V1 — Leads tab, additive alongside the roster tab below.
+import { AdminLeadsTab } from './AdminLeadsTab';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -146,7 +148,10 @@ const SalesFormModal = ({ mode, employee, onClose, onSaved, showToast }) => {
   );
 };
 
-export const SalesPage = () => {
+// TaskPro Sales Module V1 — the original SalesPage (Sales employee roster
+// management, unchanged) is now one tab of two; renamed so the exported
+// SalesPage below can host both without moving or rewriting this component.
+const SalesRosterTab = () => {
   const { showToast } = useApp();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -341,6 +346,36 @@ export const SalesPage = () => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// TaskPro Sales Module V1 (plan §2/§8) — the 'sales' admin nav item now
+// covers both the Sales roster (unchanged, above) and Leads. One page, two
+// tabs, both gated by the same admin_permissions 'sales' module already —
+// there is no separate permission for Leads vs Roster.
+export const SalesPage = () => {
+  const [tab, setTab] = useState('leads');
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-1 border-b border-[#E4E7EC]">
+        {[
+          { id: 'leads', label: 'Leads' },
+          { id: 'roster', label: 'Sales Team' }
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors -mb-px ${
+              tab === t.id ? 'border-[#004898] text-[#004898]' : 'border-transparent text-[#667085] hover:text-[#172033]'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'leads' ? <AdminLeadsTab /> : <SalesRosterTab />}
     </div>
   );
 };

@@ -5,7 +5,15 @@ process.env.JWT_SECRET ||= 'integration-access-secret-change-me';
 process.env.JWT_REFRESH_SECRET ||= 'integration-refresh-secret-change-me';
 
 const { default: app } = await import('../server.js');
-const { pool, closeDatabase } = await import('../config/database.js');
+// Test-infra fix (needed once integration-tests/ holds more than one file):
+// the DB pool is a singleton shared by every integration test file under
+// `--test-isolation=none` (one process, one module cache). A single file
+// calling closeDatabase() tore the pool down while sibling files' tests
+// were still mid-flight using it ("Cannot use a pool after calling end on
+// the pool"). No file closes it anymore; `npm run test:integration` now
+// passes `--test-force-exit` so the process still terminates cleanly once
+// every test has reported, regardless of the pool's still-open connections.
+const { pool } = await import('../config/database.js');
 const { generateToken } = await import('../middleware/auth.js');
 
 test('customer request lifecycle uses PostgreSQL through the HTTP API', async (t) => {
@@ -34,7 +42,6 @@ test('customer request lifecycle uses PostgreSQL through the HTTP API', async (t
     await pool.query('DELETE FROM rooms WHERE id = $1', [room.id]);
     await pool.query('DELETE FROM locations WHERE id = $1', [location.id]);
     await pool.query('DELETE FROM customers WHERE id = $1', [customer.id]);
-    await closeDatabase();
   });
 
   const health = await fetch(`${baseUrl}/health`).then((response) => response.json());

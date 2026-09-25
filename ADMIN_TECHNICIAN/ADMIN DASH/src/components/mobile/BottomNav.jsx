@@ -1,13 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useIsMobile } from '../../hooks/useMediaQuery';
-import { User } from 'lucide-react';
+import { User, MoreHorizontal } from 'lucide-react';
 import {
   techNavItems,
   salesNavItems,
   backOfficeNavItems,
   filterByEnabledModules
 } from '../../config/employeeNavItems';
+import {
+  adminNavItems,
+  adminPrimaryNavIds,
+  filterAdminNavItems
+} from '../../config/adminNavItems';
+import { AdminMoreSheet } from './AdminMoreSheet';
 
 const NAV_ITEMS_BY_ROLE = {
   sales: salesNavItems,
@@ -15,10 +21,62 @@ const NAV_ITEMS_BY_ROLE = {
 };
 
 export const BottomNav = () => {
-  const { activePage, setActivePage, role, enabledModules } = useApp();
+  const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser } = useApp();
   const isMobile = useIsMobile();
 
-  if (!isMobile || role === 'admin') return null;
+  // Admin Mobile Navigation fix — More sheet's open/closed state lives here
+  // so it unmounts (and resets to closed) for free whenever this component
+  // does: a role switch away from admin, or a resize/rotation past the
+  // `md` breakpoint (the `!isMobile` early-return below), both naturally
+  // close it without needing a dedicated effect.
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+
+  if (!isMobile) return null;
+
+  if (role === 'admin') {
+    const filteredAdminItems = filterAdminNavItems(adminNavItems, enabledModules, rolePermissions, currentUser);
+    const primaryItems = adminPrimaryNavIds
+      .map((id) => filteredAdminItems.find((item) => item.id === id))
+      .filter(Boolean);
+
+    return (
+      <>
+        {/* Admin Mobile Navigation fix — bottom bar exposes the same 4
+            highest-traffic Admin pages plus a "More" tab for every other
+            page the desktop Sidebar carries (AdminMoreSheet.jsx). z-40 (one
+            below ToastContainer's z-50) so a toast fired while this bar is
+            visible renders on top of it rather than being hidden under it. */}
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#E4E7EC] z-40 flex md:hidden">
+          {primaryItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => { setIsMoreOpen(false); setActivePage(item.id); }}
+              className={`flex-1 py-2 px-0 flex flex-col items-center justify-center gap-1 text-center transition-colors border-0 rounded-none ${
+                activePage === item.id
+                  ? 'text-[#004898] bg-[#F0F7FF]'
+                  : 'text-[#667085] hover:text-[#172033]'
+              }`}
+            >
+              <item.icon className="w-5 h-5" />
+              <span className="text-xs font-medium truncate">{item.label}</span>
+            </button>
+          ))}
+          <button
+            onClick={() => setIsMoreOpen((open) => !open)}
+            aria-expanded={isMoreOpen}
+            className={`flex-1 py-2 px-0 flex flex-col items-center justify-center gap-1 text-center transition-colors border-0 rounded-none ${
+              isMoreOpen ? 'text-[#004898] bg-[#F0F7FF]' : 'text-[#667085] hover:text-[#172033]'
+            }`}
+          >
+            <MoreHorizontal className="w-5 h-5" />
+            <span className="text-xs font-medium truncate">More</span>
+          </button>
+        </nav>
+
+        <AdminMoreSheet isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} />
+      </>
+    );
+  }
 
   // Technician/Sales/Back-Office Nav Parity fix — root cause was this file
   // rendering a flat, hardcoded item list with no relation to Sidebar.jsx's

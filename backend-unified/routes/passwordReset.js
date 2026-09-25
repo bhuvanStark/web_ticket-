@@ -125,8 +125,35 @@ function buildOtpFlow({ table, ownerColumn, jwtRole, publicKey, selectFields }) 
         updated_at: new Date().toISOString()
       }).eq('id', request.id);
 
-      const accessToken = generateToken(account.id, jwtRole);
-      const refreshToken = generateRefreshToken(account.id, jwtRole);
+      // Audit fix P0-1 — admin and Sales tokens need a live tokenVersion
+      // claim (and, for admin, the live is_super_admin) so requireAdmin/
+      // requireSuperAdmin/requireSales can reject them immediately once the
+      // account is deactivated, deleted, or promoted/demoted — same as the
+      // password-based /admin/login flow. Re-reads fresh here rather than
+      // trusting `account` above, which was fetched before OTP verification
+      // and never selected token_version/is_super_admin in the first place.
+      // Technician/Back-Office are deliberately left unchanged — out of
+      // scope for this fix.
+      let extraClaims = {};
+      if (jwtRole === 'admin') {
+        const { data: liveAdmin } = await supabase
+          .from('admins').select('is_active, is_super_admin, token_version').eq('id', account.id).maybeSingle();
+        if (!liveAdmin || !liveAdmin.is_active) {
+          return res.status(401).json({ success: false, error: 'This account is inactive.' });
+        }
+        extraClaims = { isSuperAdmin: liveAdmin.is_super_admin === true, tokenVersion: liveAdmin.token_version };
+        account.is_super_admin = liveAdmin.is_super_admin;
+      } else if (jwtRole === 'sales') {
+        const { data: liveSales } = await supabase
+          .from('sales').select('is_active, token_version').eq('id', account.id).maybeSingle();
+        if (!liveSales || !liveSales.is_active) {
+          return res.status(401).json({ success: false, error: 'This account is inactive.' });
+        }
+        extraClaims = { tokenVersion: liveSales.token_version };
+      }
+
+      const accessToken = generateToken(account.id, jwtRole, extraClaims);
+      const refreshToken = generateRefreshToken(account.id, jwtRole, extraClaims);
 
       res.json({
         success: true,

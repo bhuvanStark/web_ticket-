@@ -29,6 +29,10 @@ import adminAttendanceRouter from './routes/adminAttendance.js';
 // from Technicians (never assignable to tickets/projects). Additive only.
 import salesRouter from './routes/sales.js';
 import backOfficeRouter from './routes/backOffice.js';
+// TaskPro Sales Module V1 — leads (separate resource from the sales
+// employee roster above). Additive only.
+import leadsRouter from './routes/leads.js';
+import { startLeadSweepInterval } from './services/leadService.js';
 
 // Load environment variables
 dotenv.config();
@@ -125,6 +129,7 @@ app.use('/api/admin/attendance', adminAttendanceRouter);
 // convention (the JWT role/DB table stay back_office, underscored).
 app.use('/api/sales', salesRouter);
 app.use('/api/back-office', backOfficeRouter);
+app.use('/api/sales-leads', leadsRouter);
 
 // ============================================
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)
@@ -165,6 +170,11 @@ const startServer = async () => {
     console.log('Testing PostgreSQL connection...');
     await checkDatabase();
     console.log('PostgreSQL connection successful');
+
+    // TaskPro Sales Module V1 — self-healing 5-day-rule sweep (see
+    // leadService.releaseOverdueLeads's doc comment for why this exists
+    // alongside the lazy per-request sweep).
+    startLeadSweepInterval();
 
     const server = app.listen(PORT, () => {
       console.log(`

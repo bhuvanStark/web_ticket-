@@ -299,14 +299,24 @@ router.get('/session', verifyToken, async (req, res) => {
       : role === 'back_office' ? 'back_office'
       : 'customers';
     const nameColumn = table === 'customers' ? 'name' : 'full_name';
+    // Admin RBAC V1 — session restore is where the frontend re-derives
+    // is_super_admin after a page refresh (AppContext reads this, not just
+    // the JWT), so the admins table needs is_super_admin in the select too.
+    // Audit fix P0-1 — also select is_active for admin/sales so a
+    // deactivated account's session correctly reports itself as no longer
+    // valid here too, not just at the API layer (requireAdmin/
+    // requireSales already reject the underlying token regardless).
+    const selectColumns = table === 'admins' ? `id, email, ${nameColumn}, is_super_admin, is_active`
+      : table === 'sales' ? `id, email, ${nameColumn}, is_active`
+      : `id, email, ${nameColumn}`;
 
     const { data: account, error } = await supabase
       .from(table)
-      .select(`id, email, ${nameColumn}`)
+      .select(selectColumns)
       .eq('id', req.userId)
       .maybeSingle();
 
-    if (error || !account) {
+    if (error || !account || account.is_active === false) {
       return res.status(401).json({ success: false, error: 'Session no longer valid' });
     }
 
@@ -317,7 +327,8 @@ router.get('/session', verifyToken, async (req, res) => {
         email: account.email,
         name: account[nameColumn],
         role,
-        teamMemberId: req.user?.teamMemberId || null
+        teamMemberId: req.user?.teamMemberId || null,
+        is_super_admin: table === 'admins' ? account.is_super_admin === true : undefined
       }
     });
   } catch (error) {
@@ -342,7 +353,47 @@ router.post('/refresh', async (req, res) => {
 
     // Preserve team-member identity across refresh, otherwise the session would
     // silently fall back to the parent customer account.
-    const extraClaims = decoded.teamMemberId ? { teamMemberId: decoded.teamMemberId } : {};
+    const extraClaims = { ...(decoded.teamMemberId ? { teamMemberId: decoded.teamMemberId } : {}) };
+
+    // Audit fix P2-3/P0-1 — admin and Sales refresh tokens must be
+    // re-validated against live DB state on every refresh, not just have
+    // their old claims copied forward: (a) isSuperAdmin used to be copied
+    // from the *old* token, so a promotion/demotion that happened after the
+    // refresh token was issued had no effect until a full re-login; (b) an
+    // inactive account or a stale token_version (deactivated, promoted,
+    // demoted since this refresh token was issued) must not be able to mint
+    // a fresh access token just by holding an old refresh token — otherwise
+    // revocation would be trivially bypassable by never letting the access
+    // token expire.
+    if (decoded.role === 'admin') {
+      const { data: admin } = await supabase
+        .from('admins')
+        .select('is_active, is_super_admin, token_version')
+        .eq('id', decoded.userId)
+        .maybeSingle();
+      if (!admin || !admin.is_active) {
+        return res.status(401).json({ success: false, error: 'Unauthorized', message: 'This account is inactive or no longer exists' });
+      }
+      if (admin.token_version !== decoded.tokenVersion) {
+        return res.status(401).json({ success: false, error: 'Unauthorized', message: 'Your session has been revoked — please log in again' });
+      }
+      extraClaims.isSuperAdmin = admin.is_super_admin === true;
+      extraClaims.tokenVersion = admin.token_version;
+    } else if (decoded.role === 'sales') {
+      const { data: sales } = await supabase
+        .from('sales')
+        .select('is_active, token_version')
+        .eq('id', decoded.userId)
+        .maybeSingle();
+      if (!sales || !sales.is_active) {
+        return res.status(401).json({ success: false, error: 'Unauthorized', message: 'This account is inactive or no longer exists' });
+      }
+      if (sales.token_version !== decoded.tokenVersion) {
+        return res.status(401).json({ success: false, error: 'Unauthorized', message: 'Your session has been revoked — please log in again' });
+      }
+      extraClaims.tokenVersion = sales.token_version;
+    }
+
     const newAccessToken = generateToken(decoded.userId, decoded.role, extraClaims);
 
     res.json({
@@ -404,9 +455,12 @@ router.post('/admin/register', validateAdminRegistration, async (req, res) => {
 
     if (error) throw error;
 
-    // Generate tokens
-    const accessToken = generateToken(admin.id, 'admin');
-    const refreshToken = generateRefreshToken(admin.id, 'admin');
+    // Generate tokens. Audit fix P0-1 — token_version defaults to 0 for a
+    // brand-new row (migration 029), so the claim here must match that
+    // default or this token would be immediately rejected as "revoked" the
+    // first time it's used.
+    const accessToken = generateToken(admin.id, 'admin', { isSuperAdmin: false, tokenVersion: 0 });
+    const refreshToken = generateRefreshToken(admin.id, 'admin', { isSuperAdmin: false, tokenVersion: 0 });
 
     res.status(201).json({
       success: true,
@@ -452,6 +506,19 @@ router.post('/admin/login', validateAdminLogin, async (req, res) => {
       });
     }
 
+    // Audit fix P0-1 — admin login never checked is_active at all, so a
+    // deactivated admin could simply log in again fresh regardless of
+    // anything a Super Admin did. Same anti-enumeration shape as the rest
+    // of this file: a deactivated account fails exactly like a wrong
+    // password, not with a distinct "this account is deactivated" message.
+    if (admin.is_active === false) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Invalid email or password'
+      });
+    }
+
     // Compare password
     const passwordMatch = await comparePassword(password, admin.password_hash);
 
@@ -463,9 +530,18 @@ router.post('/admin/login', validateAdminLogin, async (req, res) => {
       });
     }
 
-    // Generate tokens
-    const accessToken = generateToken(admin.id, 'admin');
-    const refreshToken = generateRefreshToken(admin.id, 'admin');
+    // Admin RBAC V1 — carry the real is_super_admin value onto the JWT (as
+    // isSuperAdmin) and into the response, the same extraClaims mechanism
+    // already used for teamMemberId. requireSuperAdmin/requirePermission
+    // read this claim; nothing else about admin login changes.
+    // Audit fix P0-1 — tokenVersion is the "security stamp" requireAdmin/
+    // requireSuperAdmin/requirePermission check on every request; embedding
+    // the current value here is what lets a later deactivate/demote reject
+    // this exact token immediately instead of waiting for it to expire.
+    const isSuperAdmin = admin.is_super_admin === true;
+    const tokenVersion = admin.token_version;
+    const accessToken = generateToken(admin.id, 'admin', { isSuperAdmin, tokenVersion });
+    const refreshToken = generateRefreshToken(admin.id, 'admin', { isSuperAdmin, tokenVersion });
 
     res.json({
       success: true,
@@ -475,7 +551,8 @@ router.post('/admin/login', validateAdminLogin, async (req, res) => {
           id: admin.id,
           email: admin.email,
           full_name: admin.full_name,
-          department: admin.department
+          department: admin.department,
+          is_super_admin: isSuperAdmin
         },
         accessToken,
         refreshToken
@@ -669,7 +746,7 @@ router.get('/me', requireAuth, async (req, res) => {
     if (role === 'admin') {
       const { data } = await supabase
         .from('admins')
-        .select('id, email, full_name, department, created_at')
+        .select('id, email, full_name, department, is_super_admin, created_at')
         .eq('id', userId)
         .single();
       user = data;

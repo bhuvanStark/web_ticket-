@@ -63,7 +63,7 @@ export const TechProfileModal = () => {
 
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
           {/* Performance Summary Cards */}
-          <div className="grid grid-cols-4 gap-3 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
             <div className="p-3 rounded-xl bg-[#EFF5FC] border border-[#B3D1F2]">
               <span className="text-2xl font-extrabold text-[#004898]">{tech.activeJobsCount}</span>
               <p className="text-xs text-[#667085]">Active Jobs</p>

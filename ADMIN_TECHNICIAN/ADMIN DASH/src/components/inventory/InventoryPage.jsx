@@ -633,7 +633,7 @@ export const InventoryPage = () => {
           </div>
 
           {/* Requests Table */}
-          <div className="bg-white rounded-2xl border border-[#E2E8F0] overflow-hidden shadow-xs">
+          <div className="bg-white rounded-2xl border border-[#E2E8F0] overflow-x-auto overflow-y-hidden shadow-xs">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-extrabold text-[#64748B] uppercase tracking-wider">
@@ -814,7 +814,7 @@ export const InventoryPage = () => {
           </div>
 
           {/* RMA Claims Table */}
-          <div className="bg-white rounded-xl border border-[#E4E7EC] overflow-hidden shadow-xs">
+          <div className="bg-white rounded-xl border border-[#E4E7EC] overflow-x-auto overflow-y-hidden shadow-xs">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC] text-xs font-extrabold text-[#475467] uppercase tracking-wider">
@@ -954,7 +954,7 @@ export const InventoryPage = () => {
           </div>
 
           {/* Inventory Table */}
-          <div className="bg-white rounded-xl border border-[#E4E7EC] overflow-hidden shadow-xs">
+          <div className="bg-white rounded-xl border border-[#E4E7EC] overflow-x-auto overflow-y-hidden shadow-xs">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC] text-xs font-bold text-[#475467] uppercase tracking-wider">

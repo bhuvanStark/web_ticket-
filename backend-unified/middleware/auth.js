@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { supabase } from '../config/supabaseClient.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tasktel-admin-jwt-secret-change-in-production';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'tasktel-admin-refresh-secret-change-in-production';
@@ -78,8 +79,42 @@ export const verifyRefreshToken = (token) => {
 // Middleware to verify JWT (alias for verifyToken)
 export const requireAuth = verifyToken;
 
+// Audit fix P0-1 — session revocation. Every admin/sales request re-reads
+// is_active + token_version live from the DB instead of trusting the JWT's
+// own claims, so deactivating, deleting, or promoting/demoting an account
+// takes effect on the very next request rather than "whenever the token
+// naturally expires" (previously up to 7 days for an access token, 30 for a
+// refresh token — see routes/auth.js). token_version is bumped by any
+// access-relevant change (deactivate, promote/demote — see
+// routes/adminRoutes.js and routes/sales.js); a token whose embedded
+// tokenVersion claim no longer matches the current DB value is rejected as
+// revoked even though its signature and expiry are still valid. A token
+// issued before this feature shipped carries no tokenVersion claim at all
+// (undefined), which never matches the column's default of 0 — every admin
+// and Sales session is therefore forced to re-login exactly once when this
+// ships, which is the intended, one-time effect of closing this gap.
+async function loadAdminSession(userId) {
+  const { data, error } = await supabase
+    .from('admins')
+    .select('is_active, is_super_admin, token_version')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function loadSalesSession(userId) {
+  const { data, error } = await supabase
+    .from('sales')
+    .select('is_active, token_version')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 // Middleware to verify admin role
-export const requireAdmin = (req, res, next) => {
+export const requireAdmin = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -102,7 +137,25 @@ export const requireAdmin = (req, res, next) => {
       });
     }
 
-    req.user = decoded;
+    const session = await loadAdminSession(decoded.userId);
+    if (!session || !session.is_active) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'This account is inactive or no longer exists'
+      });
+    }
+    if (session.token_version !== decoded.tokenVersion) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Your session has been revoked — please log in again'
+      });
+    }
+
+    // Live value, not the (possibly stale) JWT claim — a Super Admin
+    // demoted a moment ago must lose elevated access immediately.
+    req.user = { ...decoded, isSuperAdmin: session.is_super_admin === true };
     next();
   } catch (error) {
     return res.status(401).json({
@@ -148,10 +201,161 @@ export const requireTechnician = (req, res, next) => {
   }
 };
 
+// Admin RBAC V1 (TaskPro_Sales_RBAC_plan.md) — Super Admin gate. Same shape
+// as requireAdmin above, plus the JWT's isSuperAdmin claim (set at login from
+// admins.is_super_admin — see routes/auth.js). Reserved for admin-management
+// endpoints (create/edit/deactivate/delete admins, promote/demote, toggle
+// per-module permissions) — never for ordinary page/module access, which
+// goes through requirePermission below so a Super Admin's implicit bypass
+// there doesn't have to be special-cased per route.
+export const requireSuperAdmin = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Missing authorization header'
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = verifyTokenFn(token);
+
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Super Admin access required'
+      });
+    }
+
+    // Audit fix P0-1 — same live session check as requireAdmin, plus the
+    // Super Admin check itself now reads the live DB value (session.
+    // is_super_admin) instead of trusting decoded.isSuperAdmin, so a demote
+    // takes effect immediately rather than only once token_version's
+    // rejection kicks in on this admin's *next* token.
+    const session = await loadAdminSession(decoded.userId);
+    if (!session || !session.is_active) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'This account is inactive or no longer exists'
+      });
+    }
+    if (session.token_version !== decoded.tokenVersion) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Your session has been revoked — please log in again'
+      });
+    }
+    if (!session.is_super_admin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Super Admin access required'
+      });
+    }
+
+    req.user = { ...decoded, isSuperAdmin: true };
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: error.message
+    });
+  }
+};
+
+// Admin RBAC V1 — per-module access gate for a normal admin. A Super Admin
+// (isSuperAdmin on the JWT) always bypasses the admin_permissions lookup
+// entirely, so every module route can apply this uniformly without a
+// separate Super-Admin special case. `module` must match a key written by
+// PUT /api/admin/admins/:id/permissions (see routes/adminRoutes.js) — a
+// normal admin with no row for that module is denied by default (same as an
+// explicit can_access = false), never silently allowed.
+export const requirePermission = (module) => async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Missing authorization header'
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = verifyTokenFn(token);
+
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Admin access required'
+      });
+    }
+
+    // Audit fix P0-1 — same live session check as requireAdmin.
+    const session = await loadAdminSession(decoded.userId);
+    if (!session || !session.is_active) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'This account is inactive or no longer exists'
+      });
+    }
+    if (session.token_version !== decoded.tokenVersion) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Your session has been revoked — please log in again'
+      });
+    }
+
+    req.user = { ...decoded, isSuperAdmin: session.is_super_admin === true };
+
+    if (session.is_super_admin) return next();
+
+    const { data, error } = await supabase
+      .from('admin_permissions')
+      .select('can_access')
+      .eq('admin_id', decoded.userId)
+      .eq('module', module)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+
+    if (!data?.can_access) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: `You do not have access to the ${module} module`
+      });
+    }
+
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: error.message
+    });
+  }
+};
+
 // Sales & Back-Office Roles V1 — same shape as requireAdmin/requireTechnician
-// above (kept unchanged themselves, per the plan's "keep unchanged in
-// behavior" requirement), just gated on a different JWT role string.
-export const requireSales = (req, res, next) => {
+// above, just gated on a different JWT role string. Audit fix P0-1 adds the
+// same live is_active/token_version check requireAdmin now has — a
+// deactivated Sales employee's existing token was previously still able to
+// accept/act on leads (and immediately re-claim ones just reassigned away
+// from them) for up to 7 days. requireTechnician/requireBackOffice below
+// are deliberately left unchanged — out of scope for this fix.
+export const requireSales = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -171,6 +375,22 @@ export const requireSales = (req, res, next) => {
         success: false,
         error: 'Forbidden',
         message: 'Sales access required'
+      });
+    }
+
+    const session = await loadSalesSession(decoded.userId);
+    if (!session || !session.is_active) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'This account is inactive or no longer exists'
+      });
+    }
+    if (session.token_version !== decoded.tokenVersion) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'Your session has been revoked — please log in again'
       });
     }
 

@@ -42,6 +42,8 @@ import { TechJobsPage } from './components/requests/TechJobsPage';
 // Sales & Back-Office Roles V1 — basic dashboard shells. Additive.
 import { SalesDashboard } from './components/dashboard/SalesDashboard';
 import { BackOfficeDashboard } from './components/dashboard/BackOfficeDashboard';
+// TaskPro Sales Module V1 — Sales employee's own Leads page. Additive.
+import { MyLeadsPage } from './components/sales/MyLeadsPage';
 
 // Modals & Panels
 import { TicketDetailsModal } from './components/requests/TicketDetailsModal';
@@ -157,7 +159,9 @@ const MainLayout = () => {
     // rendering nothing, in case one somehow persists from a prior
     // admin/technician session sharing the same browser.
     if (role === 'sales') {
-      return activePage === 'my-attendance' ? <MyAttendancePage /> : <SalesDashboard />;
+      if (activePage === 'my-attendance') return <MyAttendancePage />;
+      if (activePage === 'my-leads') return <MyLeadsPage />;
+      return <SalesDashboard />;
     }
     if (role === 'back_office') {
       return activePage === 'my-attendance' ? <MyAttendancePage /> : <BackOfficeDashboard />;
