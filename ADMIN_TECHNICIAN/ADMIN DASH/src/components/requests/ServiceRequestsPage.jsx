@@ -310,8 +310,10 @@ export const ServiceRequestsPage = () => {
         />
       ) : (
         <>
-        <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden bg-white">
-          <table className="table w-full table-fixed">
+        {/* Mobile (<768px) only: keep the desktop column layout at a readable
+            fixed width and scroll it horizontally instead of squeezing it. */}
+        <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden max-md:overflow-x-auto bg-white">
+          <table className="table w-full table-fixed max-md:min-w-[880px]">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
                 <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[25%]">Ticket Details</th>
@@ -448,7 +450,7 @@ export const ServiceRequestsPage = () => {
             <span className="text-xs text-[#667085]">
               Page <strong className="text-[#172033]">{safePage}</strong> of {totalPages}
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 max-md:max-w-full max-md:overflow-x-auto">
               <button
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={safePage === 1}

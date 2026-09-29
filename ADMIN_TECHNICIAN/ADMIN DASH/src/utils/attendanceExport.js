@@ -18,6 +18,7 @@ const STATUS_LABELS = {
   checked_in: 'Not Yet Checked Out',
   checked_out: 'Present',
   absent: 'Absent',
+  emergency_holiday: 'Emergency Holiday',
   unmarked: 'No Check-In'
 };
 

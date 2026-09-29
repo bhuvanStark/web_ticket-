@@ -25,6 +25,7 @@ import projectActivitiesRouter from './routes/projectActivities.js';
 // routes/adminAttendance.js.
 import attendanceRouter from './routes/attendance.js';
 import adminAttendanceRouter from './routes/adminAttendance.js';
+import technicianPushRouter from './routes/technicianPush.js';
 // Sales & Back-Office Roles V1 — Admin-only identity management, separate
 // from Technicians (never assignable to tickets/projects). Additive only.
 import salesRouter from './routes/sales.js';
@@ -141,6 +142,9 @@ app.use('/api/admin', adminRoutes);
 // API ROUTES - TECHNICIAN ENDPOINTS (Requires technician role)
 // ============================================
 
+// Web Push subscriptions (ticket-assignment notifications). Mounted before
+// the generic /api/technician router so its paths are matched first.
+app.use('/api/technician/push', technicianPushRouter);
 app.use('/api/technician', technicianRoutes);
 
 // ============================================

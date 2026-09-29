@@ -8,15 +8,16 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Search, Plus, Pencil, Trash2, UserPlus, History as HistoryIcon, X,
-  Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet
+  Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, Inbox, Briefcase, Trophy
 } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { fetchSalesInApi } from '../../services/salesApiService';
 import {
   fetchLeads, fetchLead, createLead, updateLead, assignLead, deleteLead,
   fetchLeadHistory, updateLeadStatus, addFollowUp,
-  validateImport, confirmImport, subscribeToLeadEvents
+  validateImport, confirmImport, subscribeToLeadEvents, fetchLeadsSummary
 } from '../../services/leadsApiService';
+import { LeadStatCard, LeadStatGrid } from './LeadStatCards';
 
 const STATUS_OPTIONS = ['new', 'meeting', 'proposal', 'follow_up', 'won', 'lost', 'dead'];
 const STATUS_LABEL = { new: 'New', meeting: 'Meeting', proposal: 'Proposal', follow_up: 'Follow-up', won: 'Won', lost: 'Lost', dead: 'Dead' };
@@ -446,8 +447,12 @@ export const AdminLeadsTab = () => {
   const [detailId, setDetailId] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [summary, setSummary] = useState(null);
 
   const load = useCallback(async () => {
+    // Summary cards are fetched on their own: a stats failure leaves the
+    // cards at their last value and never blocks the lead table.
+    fetchLeadsSummary().then(setSummary).catch((err) => console.warn('Lead summary unavailable:', err));
     try {
       const [leadsData, rosterData] = await Promise.all([
         fetchLeads(statusFilter ? { status: statusFilter } : {}),
@@ -495,6 +500,13 @@ export const AdminLeadsTab = () => {
 
   return (
     <div className="space-y-4">
+      {/* Company-wide totals — independent of the status filter/search below. */}
+      <LeadStatGrid>
+        <LeadStatCard label="Leads in Common Pool" icon={Inbox} tone="blue" stat={summary?.pool} />
+        <LeadStatCard label="Leads Taken" icon={Briefcase} tone="amber" stat={summary?.taken} hint="Assigned and still open" />
+        <LeadStatCard label="Won Leads" icon={Trophy} tone="green" stat={summary?.won} />
+      </LeadStatGrid>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold">
@@ -547,7 +559,12 @@ export const AdminLeadsTab = () => {
                   <td className="px-6 py-4 align-middle">
                     <div className="flex items-center justify-end gap-2">
                       <button onClick={() => setDetailId(l.id)} title="History & Status" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><HistoryIcon className="w-4 h-4" /></button>
-                      <button onClick={() => setAssignModal(l)} title="Assign" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><UserPlus className="w-4 h-4" /></button>
+                      <button
+                        onClick={() => setAssignModal(l)}
+                        disabled={l.status === 'won'}
+                        title={l.status === 'won' ? 'Won leads cannot be reassigned' : 'Assign'}
+                        className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed"
+                      ><UserPlus className="w-4 h-4" /></button>
                       <button onClick={() => setFormModal({ lead: l })} title="Edit" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><Pencil className="w-4 h-4" /></button>
                       <button onClick={() => setPendingDelete(l)} title="Delete" className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B]"><Trash2 className="w-4 h-4" /></button>
                     </div>

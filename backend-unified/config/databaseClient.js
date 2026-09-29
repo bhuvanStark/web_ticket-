@@ -6,7 +6,7 @@ const TABLES = new Set([
   'leads', 'locations',
   'notifications', 'password_resets', 'project_activities', 'projects', 'rooms', 'sales',
   'service_reports', 'service_requests', 'service_request_technicians',
-  'service_updates', 'team_members', 'technicians'
+  'service_updates', 'team_members', 'technician_push_subscriptions', 'technicians'
 ]);
 
 const RELATIONS = {

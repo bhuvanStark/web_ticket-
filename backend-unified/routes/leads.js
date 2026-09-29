@@ -11,7 +11,7 @@
 // follow-ups on leads they own) through requireSales, unchanged from their
 // existing identity/session.
 import express from 'express';
-import { requireAdmin, requirePermission, requireSales, requireAuth, verifyTokenFn } from '../middleware/auth.js';
+import { requireAdmin, requirePermission, requireSuperAdmin, requireSales, requireAuth, verifyTokenFn } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
 import { supabase } from '../config/supabaseClient.js';
 import * as leadService from '../services/leadService.js';
@@ -68,6 +68,71 @@ router.get('/', requireAdmin, requirePermission('sales'), async (req, res) => {
       limit: limit ? Number(limit) : 50,
       offset: offset ? Number(offset) : 0
     });
+    res.json({ success: true, data: result.data, pagination: { total: result.count } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Summary cards above the Admin lead table (Pool / Taken / Won).
+router.get('/summary', requireAdmin, requirePermission('sales'), async (_req, res) => {
+  try {
+    res.json({ success: true, data: await leadService.getAdminSummary() });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Analytics tab — Needs Attention, conversion, leaderboard.
+// ?period=all|month|week (India-time boundaries).
+router.get('/analytics', requireAdmin, requirePermission('sales'), async (req, res) => {
+  try {
+    res.json({ success: true, data: await leadService.getAnalytics(req.query.period || 'all') });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// ============================================
+// SUPER ADMIN — "View as Sales employee". Mirrors the technician "view as":
+// the Super Admin keeps their own admin JWT (no Sales token is ever minted),
+// and reads that employee's dashboard/leads through these read-only routes.
+// requireSuperAdmin re-checks is_super_admin live on every call, so a normal
+// admin — even one with the 'sales' module — can't use them. Every write a
+// Sales employee can make stays behind requireSales and is unreachable here.
+// ============================================
+async function requireSalesEmployee(req, res, next) {
+  try {
+    const { data } = await supabase.from('sales').select('id').eq('id', req.params.id).maybeSingle();
+    if (!data) return res.status(404).json({ success: false, error: 'Sales employee not found' });
+    next();
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+router.get('/view-as/:id/summary', requireSuperAdmin, validateUUID, requireSalesEmployee, async (req, res) => {
+  try {
+    res.json({ success: true, data: await leadService.getSalesSummary(req.params.id) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.get('/view-as/:id/mine', requireSuperAdmin, validateUUID, requireSalesEmployee, async (req, res) => {
+  try {
+    const { limit, offset } = req.query;
+    const result = await leadService.listMine(req.params.id, { limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
+    res.json({ success: true, data: result.data, pagination: { total: result.count } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.get('/view-as/:id/pool', requireSuperAdmin, validateUUID, requireSalesEmployee, async (req, res) => {
+  try {
+    const { limit, offset } = req.query;
+    const result = await leadService.listPool({ limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
     res.json({ success: true, data: result.data, pagination: { total: result.count } });
   } catch (error) {
     sendError(res, error);
@@ -162,6 +227,16 @@ router.get('/mine', requireSales, async (req, res) => {
     const { limit, offset } = req.query;
     const result = await leadService.listMine(req.user.userId, { limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
     res.json({ success: true, data: result.data, pagination: { total: result.count } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// The signed-in Sales employee's own dashboard cards. Always scoped to
+// req.user.userId — never to an id from the request.
+router.get('/mine/summary', requireSales, async (req, res) => {
+  try {
+    res.json({ success: true, data: await leadService.getSalesSummary(req.user.userId) });
   } catch (error) {
     sendError(res, error);
   }

@@ -73,7 +73,43 @@ export async function confirmImport(rows) {
   return data.data;
 }
 
+// Summary cards above the Admin lead table: { pool, taken, won }, each
+// { count, value, missingValue }.
+export async function fetchLeadsSummary() {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/summary`, { headers: authHeaders() });
+  return readApiData(res, 'fetch lead summary');
+}
+
+// Analytics tab. period: 'all' | 'month' | 'week'.
+export async function fetchLeadsAnalytics(period = 'all') {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/analytics?period=${encodeURIComponent(period)}`, { headers: authHeaders() });
+  return readApiData(res, 'fetch lead analytics');
+}
+
+// ---- Super Admin "View as Sales employee" (read-only) ----
+
+export async function fetchViewAsSummary(salesId) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/view-as/${salesId}/summary`, { headers: authHeaders() });
+  return readApiData(res, 'fetch lead summary');
+}
+
+export async function fetchViewAsMine(salesId) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/view-as/${salesId}/mine?limit=200`, { headers: authHeaders() });
+  return readApiData(res, 'fetch leads');
+}
+
+export async function fetchViewAsPool(salesId) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/view-as/${salesId}/pool?limit=200`, { headers: authHeaders() });
+  return readApiData(res, 'fetch lead pool');
+}
+
 // ---- Sales employee ----
+
+// Dashboard cards: { taken, won, returningSoon }.
+export async function fetchMySummary() {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/mine/summary`, { headers: authHeaders() });
+  return readApiData(res, 'fetch lead summary');
+}
 
 export async function fetchPool() {
   const res = await authFetch(`${API_BASE_URL}/sales-leads/pool?limit=200`, { headers: authHeaders() });

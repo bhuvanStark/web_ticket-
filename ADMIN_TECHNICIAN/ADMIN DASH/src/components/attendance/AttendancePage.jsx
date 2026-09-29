@@ -11,15 +11,17 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Search, Download, ChevronDown, FileText, FileSpreadsheet, FileJson,
-  Calendar as CalendarIcon, Eye, MapPin, CheckCircle2, XCircle, Clock3, UserX
+  Calendar as CalendarIcon, Eye, CheckCircle2, XCircle, Clock3, UserX
 } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { AttendanceDetailsModal } from './AttendanceDetailsModal';
+import { LocationSummary } from './LocationSummary';
 import { exportAttendance } from '../../utils/attendanceExport';
 import {
   fetchAdminAttendanceInApi,
   fetchAdminAttendanceExportInApi,
   markAbsentInApi,
+  markEmergencyHolidayInApi,
   markAllAbsentInApi,
   adminCheckOutInApi,
   bulkCheckOutInApi
@@ -76,6 +78,7 @@ const STATUS_BADGES = {
   checked_in: { label: 'Not Yet Checked Out', className: 'bg-[#FEF0C7] text-[#B54708]' },
   checked_out: { label: 'Present', className: 'bg-[#ECFDF3] text-[#027A48]' },
   absent: { label: 'Absent', className: 'bg-[#FEF3F2] text-[#D92D20]' },
+  emergency_holiday: { label: 'Emergency Holiday', className: 'bg-[#EFF8FF] text-[#175CD3]' },
   unmarked: { label: 'No Check-In', className: 'bg-[#F8FAFC] text-[#667085]' }
 };
 
@@ -203,6 +206,17 @@ export const AttendancePage = () => {
       fetchData();
     } catch (err) {
       showToast?.(err.message || 'Mark absent failed', 'error');
+    }
+  };
+
+  const handleMarkEmergencyHoliday = async (empType, employeeId) => {
+    try {
+      await markEmergencyHolidayInApi(empType, employeeId, date);
+      showToast?.('Marked emergency holiday.', 'success');
+      setDetailsRow(null);
+      fetchData();
+    } catch (err) {
+      showToast?.(err.message || 'Mark emergency holiday failed', 'error');
     }
   };
 
@@ -524,9 +538,12 @@ export const AttendancePage = () => {
                       <td className="py-4 px-6">
                         {r.record?.location_status === 'gps_captured' ? (
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-[#172033] flex items-center gap-1">
-                              <MapPin className="w-3.5 h-3.5 text-[#98A2B3]" /> Location captured
-                            </span>
+                            <LocationSummary
+                              lat={r.record.location_lat}
+                              lng={r.record.location_lng}
+                              capturedAt={r.record.location_captured_at || r.record.check_in_time}
+                              className="text-xs font-semibold text-[#172033]"
+                            />
                             <a
                               href={`https://www.google.com/maps?q=${r.record.location_lat},${r.record.location_lng}`}
                               target="_blank"
@@ -572,6 +589,7 @@ export const AttendancePage = () => {
           onClose={() => setDetailsRow(null)}
           onCheckOut={handleCheckOut}
           onMarkAbsent={handleMarkAbsent}
+          onMarkEmergencyHoliday={handleMarkEmergencyHoliday}
         />
       )}
 

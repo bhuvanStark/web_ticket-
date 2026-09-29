@@ -5,6 +5,7 @@ import { User, MoreHorizontal } from 'lucide-react';
 import {
   techNavItems,
   salesNavItems,
+  filterForViewAs,
   backOfficeNavItems,
   filterByEnabledModules
 } from '../../config/employeeNavItems';
@@ -21,7 +22,7 @@ const NAV_ITEMS_BY_ROLE = {
 };
 
 export const BottomNav = () => {
-  const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser } = useApp();
+  const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser, isViewingAsSales } = useApp();
   const isMobile = useIsMobile();
 
   // Admin Mobile Navigation fix — More sheet's open/closed state lives here
@@ -85,7 +86,7 @@ export const BottomNav = () => {
   // now read the same source array (config/employeeNavItems.js) and apply
   // the same `enabledModules` filter Sidebar.jsx already applied.
   const baseItems = NAV_ITEMS_BY_ROLE[role] || techNavItems;
-  const items = filterByEnabledModules(baseItems, enabledModules);
+  const items = filterForViewAs(filterByEnabledModules(baseItems, enabledModules), isViewingAsSales);
 
   // Profile has no dedicated desktop nav entry — on desktop it's reached by
   // clicking the avatar at the bottom of the Sidebar (Sidebar.jsx). There is

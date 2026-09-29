@@ -57,3 +57,10 @@ export const backOfficeNavItems = [
 // instead of rendering its item set unfiltered.
 export const filterByEnabledModules = (items, enabledModules) =>
   items.filter((item) => !item.module || (enabledModules && enabledModules[item.module]));
+
+// Super Admin "View as Sales employee" — pages that act *as* the employee
+// (attendance check-in needs the employee's own JWT) are hidden, so the
+// read-only view only shows what the admin's token can actually load.
+const VIEW_AS_HIDDEN_PAGES = ['my-attendance'];
+export const filterForViewAs = (items, isViewingAs) =>
+  isViewingAs ? items.filter((item) => !VIEW_AS_HIDDEN_PAGES.includes(item.id)) : items;

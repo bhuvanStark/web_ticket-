@@ -56,6 +56,47 @@ export function isValidPhone(raw) {
   return digits.length >= 7 && digits.length <= 15;
 }
 
+// ============================================
+// VALUE ESTIMATE VALIDATION — the one rule shared by create, update, and
+// Excel import (and mirrored by the leads_value_estimate_valid CHECK
+// constraint, migration 032). Without it, a text cell like "approx 5L" was
+// stored as numeric 'NaN' (Number('approx 5L')), which turned every ₹ SUM
+// it touched into NaN; negatives dragged totals below zero; and oversized
+// or non-numeric input surfaced as a raw PostgreSQL 500.
+// ============================================
+
+// ₹1,000 crore. Well inside numeric(14,2)'s range; the DB constraint uses
+// the same literal — keep the two in step.
+export const MAX_VALUE_ESTIMATE = 10_000_000_000;
+export const VALUE_ESTIMATE_ERROR = 'Value estimate must be a number from 0 to 10,00,00,00,000 (₹1,000 crore)';
+
+// Returns { value } (a finite number, or null for "no estimate") or
+// { error }. Blank means no estimate. Strings may carry ₹, commas, and
+// spaces (e.g. "₹5,00,000") — the importer stays forgiving about
+// formatting, but never about the value itself.
+export function parseValueEstimate(raw) {
+  if (raw === undefined || raw === null) return { value: null };
+  let value;
+  if (typeof raw === 'number') {
+    value = raw;
+  } else if (typeof raw === 'string') {
+    const cleaned = raw.replace(/[₹,\s]/g, '');
+    if (cleaned === '') return { value: null };
+    if (!/^\d+(\.\d+)?$/.test(cleaned)) return { error: VALUE_ESTIMATE_ERROR };
+    value = Number(cleaned);
+  } else {
+    return { error: VALUE_ESTIMATE_ERROR };
+  }
+  if (!Number.isFinite(value) || value < 0 || value > MAX_VALUE_ESTIMATE) return { error: VALUE_ESTIMATE_ERROR };
+  return { value };
+}
+
+function requireValidValueEstimate(raw) {
+  const { value, error } = parseValueEstimate(raw);
+  if (error) throw Object.assign(new Error(error), { status: 400 });
+  return value;
+}
+
 // The identifier duplicate detection compares on. §4 requires phone-only for
 // V1 but "keep duplicate-validation logic modular so additional identifiers
 // can be added later" — every duplicate check in this file goes through this
@@ -91,16 +132,23 @@ export async function getHistory(leadId) {
 // Meeting, more than 5 days have passed since acceptance, and it isn't
 // already a closed/dead lead.
 // ============================================
+
+// The acceptance timer's eligibility test, minus the deadline itself — one
+// definition shared by the sweep below and the "returning to pool soon"
+// stats further down, so the two can never disagree about which leads the
+// 5-day rule applies to.
+const AUTO_RELEASE_ELIGIBLE_SQL = `assigned_to IS NOT NULL
+       AND accepted_at IS NOT NULL
+       AND meeting_reached_at IS NULL
+       AND status NOT IN ('won', 'lost', 'dead')
+       AND archived_at IS NULL`;
+
 export async function releaseOverdueLeads() {
   const { rows } = await query(
     `UPDATE leads
      SET assigned_to = NULL, accepted_at = NULL, updated_at = now()
-     WHERE assigned_to IS NOT NULL
-       AND accepted_at IS NOT NULL
-       AND meeting_reached_at IS NULL
+     WHERE ${AUTO_RELEASE_ELIGIBLE_SQL}
        AND accepted_at < now() - interval '5 days'
-       AND status NOT IN ('won', 'lost', 'dead')
-       AND archived_at IS NULL
      RETURNING id, company, phone`
   );
   for (const lead of rows) {
@@ -188,6 +236,7 @@ export async function getLead(id) {
 export async function createLead({ company, person_to_contact, email, phone, value_estimate }, actor) {
   if (!company || !String(company).trim()) throw Object.assign(new Error('company is required'), { status: 400 });
   if (!isValidPhone(phone)) throw Object.assign(new Error('A valid phone number is required'), { status: 400 });
+  const valueEstimate = requireValidValueEstimate(value_estimate);
 
   const { data, error } = await supabase
     .from('leads')
@@ -196,7 +245,7 @@ export async function createLead({ company, person_to_contact, email, phone, val
       person_to_contact: person_to_contact || null,
       email: email || null,
       phone: normalizePhone(phone),
-      value_estimate: value_estimate ?? null,
+      value_estimate: valueEstimate,
       status: 'new'
     }])
     .select(LEAD_COLUMNS)
@@ -211,13 +260,14 @@ export async function createLead({ company, person_to_contact, email, phone, val
 export async function updateLead(id, { company, person_to_contact, email, phone, value_estimate }, actor) {
   if (company !== undefined && !String(company).trim()) throw Object.assign(new Error('company cannot be empty'), { status: 400 });
   if (phone !== undefined && !isValidPhone(phone)) throw Object.assign(new Error('A valid phone number is required'), { status: 400 });
+  const valueEstimate = value_estimate !== undefined ? requireValidValueEstimate(value_estimate) : undefined;
 
   const payload = {};
   if (company !== undefined) payload.company = String(company).trim();
   if (person_to_contact !== undefined) payload.person_to_contact = person_to_contact || null;
   if (email !== undefined) payload.email = email || null;
   if (phone !== undefined) payload.phone = normalizePhone(phone);
-  if (value_estimate !== undefined) payload.value_estimate = value_estimate;
+  if (value_estimate !== undefined) payload.value_estimate = valueEstimate;
 
   // Audit fix P1-2 — archived leads are immutable; enforced in the same
   // atomic UPDATE (not a separate pre-check) so a concurrent archive can't
@@ -247,22 +297,31 @@ export async function assignLead(id, salesId, actor) {
   const { data: sales } = await supabase.from('sales').select('id, is_active').eq('id', salesId).maybeSingle();
   if (!sales || !sales.is_active) throw Object.assign(new Error('Sales employee not found or inactive'), { status: 404 });
 
-  const { data: previous } = await supabase.from('leads').select('assigned_to, archived_at').eq('id', id).maybeSingle();
+  const { data: previous } = await supabase.from('leads').select('assigned_to, archived_at, status').eq('id', id).maybeSingle();
   if (!previous) throw Object.assign(new Error('Lead not found'), { status: 404 });
-  // Audit fix P1-2 — archived leads are immutable even for Admin. Closed
-  // (won/lost/dead) leads are deliberately NOT blocked here — direct
-  // (re)assignment is exactly how an Admin explicitly reopens one.
+  // Audit fix P1-2 — archived leads are immutable even for Admin. Lost/Dead
+  // leads are deliberately NOT blocked here — direct (re)assignment is
+  // exactly how an Admin explicitly reopens one.
   if (previous.archived_at) {
     throw Object.assign(new Error('This lead has been archived and can no longer be assigned.'), { status: 409 });
   }
+  // A Won lead's owner is who the win is credited to (Analytics
+  // leaderboard), so it can never be reassigned — not even by an Admin.
+  if (previous.status === 'won') {
+    throw Object.assign(new Error('This lead is Won and can no longer be reassigned.'), { status: 409 });
+  }
 
+  // The won guard is repeated in the UPDATE itself so a lead marked Won
+  // between the check above and this write still can't be reassigned.
   const { data, error } = await supabase
     .from('leads')
     .update({ assigned_to: salesId, accepted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id)
+    .neq('status', 'won')
     .select(LEAD_COLUMNS)
     .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!data) throw Object.assign(new Error('This lead is Won and can no longer be reassigned.'), { status: 409 });
 
   await logHistory(null, id, 'assigned', actor, { from: previous.assigned_to, to: salesId, method: 'direct' });
   publish('lead_assigned', { id, assignedTo: salesId });
@@ -272,8 +331,9 @@ export async function assignLead(id, salesId, actor) {
 // Leads a Sales employee may never pull back into circulation on their own
 // — Dead is explicitly Admin-only to set (§6) and to *un*set (audit fix
 // P1-1); Won/Lost are terminal outcomes a Sales employee shouldn't be able
-// to silently reopen either (audit fix P1-3). An Admin may still reopen any
-// of these explicitly via assignLead/updateStatus below.
+// to silently reopen either (audit fix P1-3). An Admin may still reopen a
+// Lost or Dead lead via assignLead/updateStatus below; Won is final for
+// everyone (see updateStatus).
 const CLOSED_STATUSES = ['dead', 'won', 'lost'];
 
 // Common-pool self-claim. Atomic: the WHERE assigned_to IS NULL guard (plus,
@@ -394,26 +454,52 @@ export async function updateStatus(id, newStatus, actor) {
     throw Object.assign(new Error('This lead has been archived and can no longer be changed.'), { status: 409 });
   }
   // Audit fix P1-1/P1-3 — only an Admin may move a lead OUT of a closed
-  // state (Dead/Won/Lost); a Sales employee — even the lead's own former
-  // owner — cannot revive or reopen a closed lead on their own. "Admin may
-  // explicitly reopen where appropriate" per the fix approval.
+  // state (Lost/Dead); a Sales employee — even the lead's own former owner —
+  // cannot revive or reopen a closed lead on their own.
   if (actor.type !== 'admin' && CLOSED_STATUSES.includes(existing.status)) {
     throw Object.assign(new Error(`This lead is marked ${existing.status} — only an Admin can change it further.`), { status: 403 });
   }
 
-  const payload = { status: newStatus, updated_at: new Date().toISOString() };
-  // Timer stop is permanent once set — never overwritten by a later status
-  // change, including one that moves the lead away from 'meeting' again.
-  if (newStatus === 'meeting' && !existing.meeting_reached_at) {
-    payload.meeting_reached_at = new Date().toISOString();
+  // Setting the status a lead already has is a no-op: no write, no history
+  // row, no event. Re-marking a Won lead Won used to append a second
+  // status_changed -> won row, moving its win date (analytics read the
+  // latest one) into the current week/month.
+  if (existing.status === newStatus) return existing;
+
+  // Won is final — for everyone, Admin included. A Won lead can't be moved
+  // to any other status, so it also can't be reopened and then reassigned
+  // (assignLead/releaseLead already refuse Won leads), which keeps the win
+  // credited to the salesperson who closed it.
+  if (existing.status === 'won') {
+    throw Object.assign(new Error('This lead is Won. A Won lead is final and cannot be changed.'), { status: 409 });
+  }
+  // A win must belong to someone — an unassigned Won lead could never be
+  // assigned afterwards and would never appear on the leaderboard.
+  if (newStatus === 'won' && !existing.assigned_to) {
+    throw Object.assign(new Error('Assign this lead to a Sales employee before marking it Won.'), { status: 409 });
   }
 
-  const { data, error } = await supabase.from('leads').update(payload).eq('id', id).select(LEAD_COLUMNS).maybeSingle();
-  if (error) throw new Error(error.message);
+  // Compare-and-set on the status validated above (plus the owner/archived
+  // guards), so a concurrent change — another status update, an archive, an
+  // unassignment — can't slip between those checks and this write. The
+  // meeting timer stop is permanent once set, never overwritten.
+  const { rows } = await query(
+    `UPDATE leads
+     SET status = $2,
+         meeting_reached_at = CASE WHEN $2 = 'meeting' THEN COALESCE(meeting_reached_at, now()) ELSE meeting_reached_at END,
+         updated_at = now()
+     WHERE id = $1 AND status = $3 AND archived_at IS NULL
+       AND ($2 <> 'won' OR assigned_to IS NOT NULL)
+     RETURNING ${LEAD_COLUMNS}`,
+    [id, newStatus, existing.status]
+  );
+  if (!rows.length) {
+    throw Object.assign(new Error('This lead was just changed by someone else. Refresh and try again.'), { status: 409 });
+  }
 
   await logHistory(null, id, 'status_changed', actor, { from: existing.status, to: newStatus });
   publish('lead_status_changed', { id, from: existing.status, to: newStatus });
-  return data;
+  return rows[0];
 }
 
 export async function addFollowUp(id, note, nextActionDate, actor) {
@@ -479,6 +565,13 @@ function validateRow(row, index, seenPhones) {
 
   if (!company) errors.push('Company is required');
   if (!row.phone || !isValidPhone(row.phone)) errors.push('A valid phone number is required');
+  // ExcelJS hands formula cells over as { formula, result } — judge the
+  // computed result, same as what the spreadsheet displays.
+  const rawValue = row.value_estimate && typeof row.value_estimate === 'object' && 'result' in row.value_estimate
+    ? row.value_estimate.result
+    : row.value_estimate;
+  const { value: valueEstimate, error: valueError } = parseValueEstimate(rawValue);
+  if (valueError) errors.push(valueError);
 
   let duplicateOf = null;
   if (phone) {
@@ -492,7 +585,7 @@ function validateRow(row, index, seenPhones) {
     person_to_contact: (row.person_to_contact || '').toString().trim() || null,
     email: (row.email || '').toString().trim() || null,
     phone,
-    value_estimate: row.value_estimate === '' || row.value_estimate == null ? null : Number(row.value_estimate),
+    value_estimate: valueError ? null : valueEstimate,
     errors,
     duplicateOf
   };
@@ -548,4 +641,197 @@ export async function importLeads(rows, actor) {
 
   publish('leads_imported', { count: result.valid.length });
   return { ...result, imported: result.valid.length };
+}
+
+// ============================================
+// STATS & ANALYTICS — summary cards (Admin Leads tab, Sales dashboard) and
+// the Admin Analytics tab. Read-only aggregates computed in SQL, never from
+// the paginated list endpoints (those cap at 200 rows). Each entry point
+// runs the lazy 5-day sweep first, same as the list endpoints, so the cards
+// always agree with the tables shown next to them.
+//
+// Definitions (all exclude archived leads):
+//   * Pool   — unassigned and still open (not won/lost/dead). Stricter than
+//              listPool(), which also shows unassigned won/lost leads that
+//              acceptLead() would refuse anyway.
+//   * Taken  — assigned and still open (new/meeting/proposal/follow_up).
+//   * Won    — current status is won. The win date is the latest
+//              status_changed -> won history row (there is no won_at column).
+//   * Conversion rate — Won / (Won + Lost) over leads *closed* in the
+//              period, by the date they reached that status. Open leads are
+//              undecided and Dead is an Admin disqualification, not a sales
+//              outcome, so neither is in the denominator. null when nothing
+//              was closed (the UI shows "—", never 0% or NaN).
+// Leads with no value_estimate still count toward `count`; they add ₹0 to
+// `value` and are reported separately as `missingValue`.
+// ============================================
+
+const OPEN_STATUSES_SQL = `('new', 'meeting', 'proposal', 'follow_up')`;
+const POOL_SQL = `assigned_to IS NULL AND status NOT IN ('won', 'lost', 'dead')`;
+const TAKEN_SQL = `assigned_to IS NOT NULL AND status IN ${OPEN_STATUSES_SQL}`;
+const WON_SQL = `status = 'won'`;
+// Released within the next 24 hours: accepted between 5 and 4 days ago.
+const RETURNING_SOON_SQL = `${AUTO_RELEASE_ELIGIBLE_SQL}
+       AND accepted_at >= now() - interval '5 days'
+       AND accepted_at < now() - interval '4 days'`;
+const STALE_POOL_DAYS = 7;
+
+// Period starts in India time — the database runs in UTC, so a bare
+// date_trunc would put week/month boundaries at 05:30 IST. Weeks start on
+// Monday (Postgres ISO weeks). Whitelisted: callers pass a key, never SQL.
+const PERIOD_START_SQL = {
+  all: 'NULL::timestamptz',
+  month: `date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`,
+  week: `date_trunc('week', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`
+};
+export const ANALYTICS_PERIODS = Object.keys(PERIOD_START_SQL);
+
+// COUNT / SUM / missing-estimate triple for one condition, as FILTERed
+// aggregates so several buckets come back from a single scan.
+const bucketSql = (name, condition) => `
+  COUNT(*) FILTER (WHERE ${condition})::int AS ${name}_count,
+  COALESCE(SUM(value_estimate) FILTER (WHERE ${condition}), 0) AS ${name}_value,
+  COUNT(*) FILTER (WHERE (${condition}) AND value_estimate IS NULL)::int AS ${name}_missing`;
+
+// pg returns numeric as a string — convert once here.
+const bucket = (row, name) => ({
+  count: row[`${name}_count`] || 0,
+  value: Number(row[`${name}_value`] || 0),
+  missingValue: row[`${name}_missing`] || 0
+});
+
+export async function getAdminSummary() {
+  await releaseOverdueLeads();
+  const { rows } = await query(
+    `SELECT ${bucketSql('pool', POOL_SQL)}, ${bucketSql('taken', TAKEN_SQL)}, ${bucketSql('won', WON_SQL)}
+     FROM leads WHERE archived_at IS NULL`
+  );
+  return { pool: bucket(rows[0], 'pool'), taken: bucket(rows[0], 'taken'), won: bucket(rows[0], 'won') };
+}
+
+export async function getSalesSummary(salesId) {
+  await releaseOverdueLeads();
+  const { rows } = await query(
+    `SELECT ${bucketSql('taken', TAKEN_SQL)}, ${bucketSql('won', WON_SQL)}, ${bucketSql('returning', RETURNING_SOON_SQL)}
+     FROM leads WHERE archived_at IS NULL AND assigned_to = $1`,
+    [salesId]
+  );
+  return {
+    taken: bucket(rows[0], 'taken'),
+    won: bucket(rows[0], 'won'),
+    returningSoon: bucket(rows[0], 'returning')
+  };
+}
+
+// Won/lost leads with the date they reached their current status, limited
+// to the period. The LATERAL MAX always yields one row, so a lead with no
+// matching history row (not produced by any current code path) still
+// counts for "All Time".
+const closedInPeriodSql = (periodStart) => `
+  SELECT l.id, l.assigned_to, l.status, l.value_estimate
+  FROM leads l
+  JOIN LATERAL (
+    SELECT MAX(h.created_at) AS closed_at FROM lead_history h
+    WHERE h.lead_id = l.id AND h.event_type = 'status_changed' AND h.details->>'to' = l.status
+  ) c ON true
+  WHERE l.archived_at IS NULL AND l.status IN ('won', 'lost')
+    AND (${periodStart} IS NULL OR c.closed_at >= ${periodStart})`;
+
+const conversionRate = (won, lost) => (won + lost > 0 ? won / (won + lost) : null);
+
+export async function getAnalytics(period = 'all') {
+  if (!ANALYTICS_PERIODS.includes(period)) {
+    throw Object.assign(new Error(`period must be one of: ${ANALYTICS_PERIODS.join(', ')}`), { status: 400 });
+  }
+  const periodStart = PERIOD_START_SQL[period];
+  await releaseOverdueLeads();
+
+  // Needs Attention is always "right now" — not affected by the period
+  // filter, which only applies to outcomes (conversion + leaderboard).
+  const returningSoonQ = query(
+    `SELECT l.id, l.company, l.value_estimate, l.status, l.assigned_to, s.full_name AS assigned_name,
+            l.accepted_at + interval '5 days' AS releases_at
+     FROM (SELECT * FROM leads WHERE ${RETURNING_SOON_SQL}) l
+     LEFT JOIN sales s ON s.id = l.assigned_to
+     ORDER BY l.accepted_at ASC`
+  );
+  // "Untouched" = no lead_history activity (and no creation) in the last
+  // STALE_POOL_DAYS days.
+  const stalePoolQ = query(
+    `SELECT l.id, l.company, l.value_estimate, l.status, a.last_activity_at
+     FROM (SELECT * FROM leads WHERE archived_at IS NULL AND ${POOL_SQL}) l
+     JOIN LATERAL (
+       SELECT GREATEST(l.created_at, MAX(h.created_at)) AS last_activity_at
+       FROM lead_history h WHERE h.lead_id = l.id
+     ) a ON true
+     WHERE a.last_activity_at < now() - interval '${STALE_POOL_DAYS} days'
+     ORDER BY a.last_activity_at ASC`
+  );
+  const overallQ = query(
+    `SELECT COUNT(*) FILTER (WHERE status = 'won')::int AS won_count,
+            COALESCE(SUM(value_estimate) FILTER (WHERE status = 'won'), 0) AS won_value,
+            COUNT(*) FILTER (WHERE status = 'lost')::int AS lost_count
+     FROM (${closedInPeriodSql(periodStart)}) closed`
+  );
+  // Credit goes to the lead's current owner. Won leads can't be reassigned
+  // (assignLead) and Lost leads can't be released by Sales, so that owner is
+  // the one who closed it unless an Admin reopened and reassigned a Lost
+  // lead. Only active employees are ranked; wins whose owner was deleted
+  // still count in `overall`.
+  const leaderboardQ = query(
+    `SELECT s.id, s.full_name, s.location,
+            COUNT(c.status) FILTER (WHERE c.status = 'won')::int AS won_count,
+            COALESCE(SUM(c.value_estimate) FILTER (WHERE c.status = 'won'), 0) AS won_value,
+            COUNT(c.status) FILTER (WHERE c.status = 'won' AND c.value_estimate IS NULL)::int AS won_missing,
+            COUNT(c.status) FILTER (WHERE c.status = 'lost')::int AS lost_count
+     FROM sales s
+     LEFT JOIN (${closedInPeriodSql(periodStart)}) c ON c.assigned_to = s.id
+     WHERE s.is_active = true
+     GROUP BY s.id, s.full_name, s.location`
+  );
+
+  const [returningSoon, stalePool, overall, leaderboard] = await Promise.all([returningSoonQ, stalePoolQ, overallQ, leaderboardQ]);
+
+  const summarize = (rows) => ({
+    count: rows.length,
+    value: rows.reduce((sum, r) => sum + Number(r.value_estimate || 0), 0),
+    missingValue: rows.filter((r) => r.value_estimate == null).length
+  });
+  const mapItem = (r) => ({ ...r, value_estimate: r.value_estimate == null ? null : Number(r.value_estimate) });
+
+  const o = overall.rows[0];
+  const ranked = leaderboard.rows
+    .map((r) => ({
+      salesId: r.id,
+      name: r.full_name,
+      location: r.location,
+      wonCount: r.won_count,
+      wonValue: Number(r.won_value),
+      wonMissingValue: r.won_missing,
+      lostCount: r.lost_count,
+      conversionRate: conversionRate(r.won_count, r.lost_count)
+    }))
+    // Won ₹ -> Conversion Rate -> Won Count; name keeps the order stable.
+    .sort((a, b) =>
+      b.wonValue - a.wonValue ||
+      (b.conversionRate ?? -1) - (a.conversionRate ?? -1) ||
+      b.wonCount - a.wonCount ||
+      (a.name || '').localeCompare(b.name || '')
+    )
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+
+  return {
+    period,
+    needsAttention: {
+      returningSoon: { ...summarize(returningSoon.rows), items: returningSoon.rows.map(mapItem) },
+      stalePool: { ...summarize(stalePool.rows), days: STALE_POOL_DAYS, items: stalePool.rows.map(mapItem) }
+    },
+    overall: {
+      wonCount: o.won_count,
+      wonValue: Number(o.won_value),
+      lostCount: o.lost_count,
+      conversionRate: conversionRate(o.won_count, o.lost_count)
+    },
+    leaderboard: ranked
+  };
 }

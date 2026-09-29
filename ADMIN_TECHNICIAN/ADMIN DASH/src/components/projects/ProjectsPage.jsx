@@ -57,10 +57,10 @@ export const ProjectsPage = () => {
       </div>
 
       <div className="card p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-2 w-full md:w-auto">
+        <div className="flex items-center gap-2 w-full md:w-auto max-md:overflow-x-auto">
           <button
             onClick={() => setActiveTab('active')}
-            className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+            className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer max-md:shrink-0 max-md:whitespace-nowrap ${
               activeTab === 'active' ? 'bg-[#004898] text-white shadow-xs' : 'bg-[#F6F8FB] text-[#667085] hover:text-[#172033]'
             }`}
           >
@@ -69,7 +69,7 @@ export const ProjectsPage = () => {
           </button>
           <button
             onClick={() => setActiveTab('completed')}
-            className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+            className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer max-md:shrink-0 max-md:whitespace-nowrap ${
               activeTab === 'completed' ? 'bg-[#004898] text-white shadow-xs' : 'bg-[#F6F8FB] text-[#667085] hover:text-[#172033]'
             }`}
           >
@@ -105,8 +105,10 @@ export const ProjectsPage = () => {
           }
         />
       ) : (
-        <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden bg-white">
-          <table className="table w-full table-fixed">
+        <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden max-md:overflow-x-auto bg-white">
+          {/* Mobile (<768px) only: keep the desktop column layout at a readable
+              fixed width and scroll it horizontally instead of squeezing it. */}
+          <table className="table w-full table-fixed max-md:min-w-[900px]">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
                 <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[22%]">Project</th>

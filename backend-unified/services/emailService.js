@@ -289,6 +289,39 @@ export const sendTeamMemberRequestEmail = async ({ adminEmail, companyName, requ
     logUrl: `member: ${memberName} <${memberEmail}>`
   });
 
+// Fallback for Web Push: sent to a technician when a ticket is assigned to
+// them and no push notification could be delivered (see
+// services/pushNotificationService.js). Ticket fields are free text, so
+// they're HTML-escaped here.
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+export function buildTicketAssignedEmailHtml({ technicianName, ticketNumber, issueTitle, siteLabel, modeLabel, roleLabel, appUrl }) {
+  return wrapEmail({
+    heading: 'New Ticket Assigned',
+    bodyHtml: `
+      <div style="font-size: 16px; font-weight: 700; color: #004898; margin-bottom: 12px;">You have a new ${escapeHtml(roleLabel)} assignment</div>
+      <p>Hello <strong>${escapeHtml(technicianName || 'there')}</strong>,</p>
+      <div class="meta">
+        <div><strong>Ticket:</strong> ${escapeHtml(ticketNumber || '—')}</div>
+        <div><strong>Issue:</strong> ${escapeHtml(issueTitle || '—')}</div>
+        <div><strong>Site:</strong> ${escapeHtml(siteLabel || '—')}</div>
+        <div><strong>Mode:</strong> ${escapeHtml(modeLabel || '—')}</div>
+      </div>
+      <div class="button-box">
+        <a href="${escapeHtml(appUrl)}" class="btn" target="_blank">Open TaskTel</a>
+      </div>
+    `
+  });
+}
+
+export const sendTicketAssignedEmail = async ({ technicianEmail, ...details }) =>
+  sendMail({
+    to: technicianEmail,
+    subject: `[TaskTel] Ticket ${details.ticketNumber || ''} assigned to you`.replace(/\s+/g, ' '),
+    html: buildTicketAssignedEmailHtml(details),
+    logLabel: 'Ticket assigned'
+  });
+
 export default {
   sendInviteEmail,
   buildInviteEmailHtml,

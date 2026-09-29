@@ -1,18 +1,43 @@
-// Sales & Back-Office Roles V1 — Sales' own "My Dashboard" (plan §6: basic
-// dashboard shell only — Attendance Check-In/Check-Out/current state, rest
-// left empty for future Sales features). Mirrors TechDashboard's header +
-// AttendanceBanner pattern, minus every ticket/project section: Sales never
-// touches tickets or projects at all, so this page reads nothing from
-// AppContext except currentUser and showToast — the same isolation
-// AttendanceBanner itself already guarantees.
-import React from 'react';
+// Sales & Back-Office Roles V1 — Sales' own "My Dashboard" (plan §6). Mirrors
+// TechDashboard's header + AttendanceBanner pattern, minus every
+// ticket/project section: Sales never touches tickets or projects at all, so
+// this page reads nothing from AppContext beyond identity/navigation — the
+// same isolation AttendanceBanner itself already guarantees.
+//
+// Lead summary cards (Leads Taken / Won / Returning to Pool in 1 Day) come
+// from /api/sales-leads/mine/summary, or — while a Super Admin is viewing as
+// this employee — the read-only /view-as/:id/summary. In that mode the
+// AttendanceBanner is not rendered: check-in/out acts as the employee and
+// needs their own JWT.
+import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Sparkles } from 'lucide-react';
+import { Briefcase, Trophy, Hourglass } from 'lucide-react';
 import { AttendanceBanner } from './AttendanceBanner';
 import { ErrorBoundary } from '../common/ErrorBoundary';
+import { LeadStatCard, LeadStatGrid } from '../sales/LeadStatCards';
+import { fetchMySummary, fetchViewAsSummary, subscribeToLeadEvents } from '../../services/leadsApiService';
 
 export const SalesDashboard = () => {
-  const { currentUser } = useApp();
+  const { currentUser, isViewingAsSales, setActivePage } = useApp();
+  const [summary, setSummary] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setSummary(isViewingAsSales ? await fetchViewAsSummary(currentUser.id) : await fetchMySummary());
+    } catch (err) {
+      // Isolated: the cards keep their last value; attendance is unaffected.
+      console.warn('Lead summary unavailable:', err);
+    }
+  }, [isViewingAsSales, currentUser?.id]);
+
+  useEffect(() => {
+    load();
+    const source = subscribeToLeadEvents(() => load());
+    const poll = setInterval(load, 30000);
+    return () => { source?.close(); clearInterval(poll); };
+  }, [load]);
+
+  const goToLeads = () => setActivePage('my-leads');
 
   return (
     <div className="space-y-6">
@@ -25,15 +50,26 @@ export const SalesDashboard = () => {
 
       {/* Own ErrorBoundary so a render failure here can't take anything
           else down with it — same pattern as TechDashboard. */}
-      <ErrorBoundary>
-        <AttendanceBanner />
-      </ErrorBoundary>
+      {!isViewingAsSales && (
+        <ErrorBoundary>
+          <AttendanceBanner />
+        </ErrorBoundary>
+      )}
 
-      <div className="bg-white rounded-2xl p-8 border border-[#E4E7EC] shadow-sm text-center">
-        <Sparkles className="w-8 h-8 text-[#B3D1F2] mx-auto mb-3" />
-        <p className="text-sm font-semibold text-[#172033]">More Sales features are coming soon.</p>
-        <p className="text-xs text-[#667085] mt-1">For now, this dashboard covers your daily attendance.</p>
-      </div>
+      <ErrorBoundary>
+        <LeadStatGrid>
+          <LeadStatCard label="Leads Taken" icon={Briefcase} tone="blue" stat={summary?.taken} hint="Assigned to you and still open" onClick={goToLeads} />
+          <LeadStatCard label="Won" icon={Trophy} tone="green" stat={summary?.won} onClick={goToLeads} />
+          <LeadStatCard
+            label="Returning to Pool in 1 Day"
+            icon={Hourglass}
+            tone={summary?.returningSoon?.count ? 'red' : 'amber'}
+            stat={summary?.returningSoon}
+            hint="Reach Meeting to keep these leads"
+            onClick={goToLeads}
+          />
+        </LeadStatGrid>
+      </ErrorBoundary>
     </div>
   );
 };

@@ -204,3 +204,189 @@ test('P2-1: 9876543210, 09876543210, and +91 98765 43210 normalize to the same s
   assert.equal(validate.data.rows[1].duplicateOf, 'this file');
   assert.equal(validate.data.valid.length, 0, 'both variants must be excluded from the importable set');
 });
+
+// ---------------------------------------------------------------------------
+// Sales/Leads audit round 2 — value_estimate validation, Won finality.
+// ---------------------------------------------------------------------------
+
+async function assignTo(adminToken, leadId, salesId) {
+  return fetch(`${baseUrl}/api/sales-leads/${leadId}/assign`, {
+    method: 'POST', headers: adminHeaders(adminToken), body: JSON.stringify({ sales_id: salesId })
+  });
+}
+
+async function statusHistory(leadId) {
+  const { rows } = await pool.query(
+    `SELECT details->>'to' AS "to" FROM lead_history WHERE lead_id = $1 AND event_type = 'status_changed' ORDER BY created_at`,
+    [leadId]
+  );
+  return rows.map((r) => r.to);
+}
+
+function randomPhone() {
+  return `97${String(Math.floor(Math.random() * 100000000)).padStart(8, '0')}`;
+}
+
+test('P1 value: create/update reject NaN, non-numeric, negative, and oversized value_estimate with a clean 400', async (t) => {
+  const { id: adminId, token: adminToken } = await createSuperAdmin();
+  const created = [];
+  t.after(async () => {
+    for (const id of created) await pool.query('DELETE FROM leads WHERE id = $1', [id]);
+    await pool.query('DELETE FROM admins WHERE id = $1', [adminId]);
+  });
+
+  for (const bad of ['abc', 'approx 5L', 'NaN', -1, 1e15, true]) {
+    const res = await fetch(`${baseUrl}/api/sales-leads`, {
+      method: 'POST', headers: adminHeaders(adminToken),
+      body: JSON.stringify({ company: `Bad Value ${suffix()}`, phone: randomPhone(), value_estimate: bad })
+    });
+    assert.equal(res.status, 400, `create with ${JSON.stringify(bad)} must be a 400, not a 500/201`);
+    const body = await res.json();
+    assert.match(body.error, /Value estimate/);
+  }
+
+  const ok = await createLead(adminToken, { phone: randomPhone(), value_estimate: '₹5,00,000' });
+  created.push(ok.id);
+  assert.equal(Number(ok.value_estimate), 500000);
+
+  for (const bad of ['abc', -5, 1e15]) {
+    const res = await fetch(`${baseUrl}/api/sales-leads/${ok.id}`, {
+      method: 'PUT', headers: adminHeaders(adminToken), body: JSON.stringify({ value_estimate: bad })
+    });
+    assert.equal(res.status, 400, `update with ${JSON.stringify(bad)} must be a 400`);
+  }
+  const cleared = await fetch(`${baseUrl}/api/sales-leads/${ok.id}`, {
+    method: 'PUT', headers: adminHeaders(adminToken), body: JSON.stringify({ value_estimate: null })
+  });
+  assert.equal(cleared.status, 200, 'clearing the estimate (null) stays allowed');
+
+  const { rows } = await pool.query('SELECT value_estimate FROM leads WHERE id = $1', [ok.id]);
+  assert.equal(rows[0].value_estimate, null);
+});
+
+test('P1 value: Excel import flags invalid values per row and never stores NaN', async (t) => {
+  const { id: adminId, token: adminToken } = await createSuperAdmin();
+  const phones = [randomPhone(), randomPhone(), randomPhone(), randomPhone(), randomPhone(), randomPhone()];
+  t.after(async () => {
+    await pool.query('DELETE FROM leads WHERE phone = ANY($1)', [phones]);
+    await pool.query('DELETE FROM admins WHERE id = $1', [adminId]);
+  });
+
+  const rows = [
+    { company: 'Import Text', phone: phones[0], value_estimate: 'approx 5L' },
+    { company: 'Import Negative', phone: phones[1], value_estimate: -100 },
+    { company: 'Import Huge', phone: phones[2], value_estimate: 1e15 },
+    { company: 'Import Formatted', phone: phones[3], value_estimate: '₹1,20,000' },
+    { company: 'Import Formula', phone: phones[4], value_estimate: { formula: 'A1*2', result: 2400 } },
+    { company: 'Import Blank', phone: phones[5], value_estimate: '' }
+  ];
+
+  const validate = await fetch(`${baseUrl}/api/sales-leads/import/validate`, {
+    method: 'POST', headers: adminHeaders(adminToken), body: JSON.stringify({ rows })
+  }).then((r) => r.json());
+  assert.deepEqual(validate.data.failed.map((r) => r.row), [1, 2, 3], 'text, negative and oversized rows fail validation');
+  for (const r of validate.data.failed) assert.ok(r.errors.some((e) => /Value estimate/.test(e)));
+  assert.deepEqual(validate.data.valid.map((r) => r.value_estimate), [120000, 2400, null]);
+
+  const imported = await fetch(`${baseUrl}/api/sales-leads/import`, {
+    method: 'POST', headers: adminHeaders(adminToken), body: JSON.stringify({ rows })
+  });
+  assert.equal(imported.status, 200);
+  assert.equal((await imported.json()).data.imported, 3);
+
+  const stored = await pool.query(`SELECT value_estimate::text AS v FROM leads WHERE phone = ANY($1) ORDER BY company`, [phones]);
+  assert.ok(!stored.rows.some((r) => r.v === 'NaN'), 'NaN must never be stored');
+  assert.equal(stored.rows.length, 3, 'only the valid rows were imported');
+});
+
+test('P1 value: the database rejects NaN and negative value_estimate directly', async () => {
+  for (const bad of ['NaN', '-1', '10000000000.01']) {
+    await assert.rejects(
+      pool.query(`INSERT INTO leads (company, phone, value_estimate) VALUES ('DB Check', '9000000000', $1::numeric)`, [bad]),
+      /leads_value_estimate_valid/
+    );
+  }
+});
+
+test('P1 Won is final: nobody can change status, reassign, or release a Won lead', async (t) => {
+  const { id: adminId, token: adminToken } = await createSuperAdmin();
+  const owner = await createSales();
+  const other = await createSales();
+  const lead = await createLead(adminToken, { phone: randomPhone(), value_estimate: 1000 });
+  t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id])
+    .then(() => pool.query('DELETE FROM sales WHERE id = ANY($1)', [[owner.id, other.id]]))
+    .then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));
+
+  assert.equal((await assignTo(adminToken, lead.id, owner.id)).status, 200);
+  assert.equal((await setStatus(owner.token, lead.id, 'won')).status, 200);
+
+  for (const status of ['new', 'meeting', 'proposal', 'follow_up', 'lost', 'dead']) {
+    const res = await setStatus(adminToken, lead.id, status);
+    assert.equal(res.status, 409, `Admin moving Won -> ${status} must be rejected`);
+  }
+  assert.equal((await setStatus(owner.token, lead.id, 'follow_up')).status, 403, 'the owner cannot reopen it either');
+  assert.equal((await assignTo(adminToken, lead.id, other.id)).status, 409, 'a Won lead cannot be reassigned');
+  const release = await fetch(`${baseUrl}/api/sales-leads/${lead.id}/release`, {
+    method: 'POST', headers: adminHeaders(owner.token), body: JSON.stringify({ reason: 'test' })
+  });
+  assert.equal(release.status, 409);
+
+  const { rows } = await pool.query('SELECT status, assigned_to FROM leads WHERE id = $1', [lead.id]);
+  assert.deepEqual(rows[0], { status: 'won', assigned_to: owner.id }, 'status and win credit are unchanged');
+  assert.deepEqual(await statusHistory(lead.id), ['won'], 'Won history is preserved exactly');
+});
+
+test('P2 re-setting Won on a Won lead is a no-op: no new win activity, win date unchanged', async (t) => {
+  const { id: adminId, token: adminToken } = await createSuperAdmin();
+  const owner = await createSales();
+  const lead = await createLead(adminToken, { phone: randomPhone(), value_estimate: 1000 });
+  t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id])
+    .then(() => pool.query('DELETE FROM sales WHERE id = $1', [owner.id]))
+    .then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));
+
+  await assignTo(adminToken, lead.id, owner.id);
+  await setStatus(owner.token, lead.id, 'won');
+  // Backdate the win so a moved win date would be visible in "This Week".
+  await pool.query(`UPDATE lead_history SET created_at = now() - interval '60 days' WHERE lead_id = $1 AND event_type = 'status_changed'`, [lead.id]);
+  const before = await pool.query(`SELECT created_at FROM lead_history WHERE lead_id = $1 AND event_type = 'status_changed'`, [lead.id]);
+
+  const again = await setStatus(adminToken, lead.id, 'won');
+  assert.equal(again.status, 200, 'setting the same status is accepted as a no-op');
+
+  const after = await pool.query(`SELECT created_at FROM lead_history WHERE lead_id = $1 AND event_type = 'status_changed'`, [lead.id]);
+  assert.equal(after.rows.length, 1, 'no duplicate status_changed -> won row');
+  assert.equal(after.rows[0].created_at.getTime(), before.rows[0].created_at.getTime(), 'win date unchanged');
+
+  const week = await fetch(`${baseUrl}/api/sales-leads/analytics?period=week`, { headers: adminHeaders(adminToken) }).then((r) => r.json());
+  const entry = week.data.leaderboard.find((e) => e.salesId === owner.id);
+  assert.equal(entry.wonCount, 0, 'the 60-day-old win must not reappear in This Week');
+});
+
+test('P2 an unassigned lead cannot be marked Won', async (t) => {
+  const { id: adminId, token: adminToken } = await createSuperAdmin();
+  const lead = await createLead(adminToken, { phone: randomPhone(), value_estimate: 5000 });
+  t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id]).then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));
+
+  const res = await setStatus(adminToken, lead.id, 'won');
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /Assign this lead/);
+  const { rows } = await pool.query('SELECT status FROM leads WHERE id = $1', [lead.id]);
+  assert.equal(rows[0].status, 'new');
+  assert.deepEqual(await statusHistory(lead.id), []);
+});
+
+test('Lost/Dead leads can still be reopened and reassigned by an Admin (unchanged)', async (t) => {
+  const { id: adminId, token: adminToken } = await createSuperAdmin();
+  const owner = await createSales();
+  const other = await createSales();
+  const lead = await createLead(adminToken, { phone: randomPhone() });
+  t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id])
+    .then(() => pool.query('DELETE FROM sales WHERE id = ANY($1)', [[owner.id, other.id]]))
+    .then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));
+
+  await assignTo(adminToken, lead.id, owner.id);
+  assert.equal((await setStatus(owner.token, lead.id, 'lost')).status, 200);
+  assert.equal((await assignTo(adminToken, lead.id, other.id)).status, 200, 'a Lost lead can still be reassigned');
+  assert.equal((await setStatus(adminToken, lead.id, 'dead')).status, 200);
+  assert.equal((await setStatus(adminToken, lead.id, 'follow_up')).status, 200, 'an Admin can still reopen a Dead lead');
+});

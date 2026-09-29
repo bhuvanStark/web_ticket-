@@ -15,6 +15,7 @@ import {
   validateAttendanceRangeQuery
 } from '../middleware/validation.js';
 import * as attendanceService from '../services/attendanceService.js';
+import { reverseGeocode } from '../services/geocodeService.js';
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -50,6 +51,25 @@ router.get('/export', validateAttendanceRangeQuery, async (req, res) => {
     if (error.code === 'INVALID_RANGE') return res.status(400).json({ success: false, error: error.message });
     console.error('Error exporting attendance range:', error);
     res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// GET /api/admin/attendance/reverse-geocode?lat=&lng=
+// Short area label ("Koramangala, Bengaluru") for a captured check-in
+// location. Read-only; `label` is null when no name is known, and a 503
+// means "try later" — the UI falls back to plain "Location captured".
+router.get('/reverse-geocode', async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return res.status(400).json({ success: false, error: 'lat and lng must be valid coordinates' });
+  }
+  try {
+    const label = await reverseGeocode(lat, lng);
+    res.json({ success: true, data: { label } });
+  } catch (error) {
+    console.warn('Reverse geocode failed:', error.message);
+    res.status(503).json({ success: false, error: 'Location lookup unavailable' });
   }
 });
 
@@ -121,6 +141,21 @@ router.post('/:employeeType/:employeeId/mark-absent', validateEmployeeType, vali
     if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
     if (error.code === 'ALREADY_HAS_ATTENDANCE') return res.status(409).json({ success: false, error: error.message });
     console.error('Error marking absent:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// POST /api/admin/attendance/:employeeType/:employeeId/mark-emergency-holiday  { date? }
+// Absent card → Eye flow. Works on a day with no record (insert) or an
+// 'absent' record (converted); anything else is a 409.
+router.post('/:employeeType/:employeeId/mark-emergency-holiday', validateEmployeeType, validateUUIDParam('employeeId'), validateAttendanceDateBody, async (req, res) => {
+  try {
+    const data = await attendanceService.markEmergencyHoliday(req.params.employeeType, req.params.employeeId, req.body?.date, req.user.userId);
+    res.json({ success: true, data, message: 'Marked emergency holiday' });
+  } catch (error) {
+    if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+    if (error.code === 'ALREADY_HAS_ATTENDANCE') return res.status(409).json({ success: false, error: error.message });
+    console.error('Error marking emergency holiday:', error);
     res.status(500).json({ success: false, error: 'Error', message: error.message });
   }
 });

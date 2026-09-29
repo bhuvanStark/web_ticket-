@@ -44,6 +44,7 @@ import { SalesDashboard } from './components/dashboard/SalesDashboard';
 import { BackOfficeDashboard } from './components/dashboard/BackOfficeDashboard';
 // TaskPro Sales Module V1 — Sales employee's own Leads page. Additive.
 import { MyLeadsPage } from './components/sales/MyLeadsPage';
+import { ViewAsSalesBanner } from './components/sales/ViewAsSalesBanner';
 
 // Modals & Panels
 import { TicketDetailsModal } from './components/requests/TicketDetailsModal';
@@ -63,7 +64,7 @@ import { NotificationsDrawer } from './components/common/NotificationsDrawer';
 import { ToastContainer } from './components/common/ToastContainer';
 
 const MainLayout = () => {
-  const { isLoggedIn, isRestoringSession, role, activePage } = useApp();
+  const { isLoggedIn, isRestoringSession, role, baseRole, activePage } = useApp();
   const isMobile = useIsMobile();
 
   // The password-reset link emailed to an admin lands here. Checked before the
@@ -159,9 +160,13 @@ const MainLayout = () => {
     // rendering nothing, in case one somehow persists from a prior
     // admin/technician session sharing the same browser.
     if (role === 'sales') {
-      if (activePage === 'my-attendance') return <MyAttendancePage />;
-      if (activePage === 'my-leads') return <MyLeadsPage />;
-      return <SalesDashboard />;
+      // Super Admin "View as": attendance acts as the employee, so it is
+      // never rendered in that mode (falls through to the dashboard).
+      const isViewingAs = baseRole === 'admin';
+      const page = activePage === 'my-attendance' && !isViewingAs ? <MyAttendancePage />
+        : activePage === 'my-leads' ? <MyLeadsPage />
+        : <SalesDashboard />;
+      return <><ViewAsSalesBanner />{page}</>;
     }
     if (role === 'back_office') {
       return activePage === 'my-attendance' ? <MyAttendancePage /> : <BackOfficeDashboard />;

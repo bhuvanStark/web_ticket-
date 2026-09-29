@@ -18,7 +18,7 @@
 // applies.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { LogIn, LogOut, MapPin, Clock, ShieldAlert, History } from 'lucide-react';
+import { LogIn, LogOut, MapPin, Clock, ShieldAlert, History, CalendarOff } from 'lucide-react';
 import { fetchAttendanceHistoryInApi } from '../../services/attendanceApiService';
 
 const LOCATION_LABELS = {
@@ -172,6 +172,13 @@ export const AttendanceBanner = () => {
                 <ShieldAlert className="w-4 h-4 text-[#B54708]" /> Marked absent for today
               </p>
               <p className="text-xs text-[#667085] mt-0.5">An admin has recorded you as absent for today.</p>
+            </>
+          ) : status === 'emergency_holiday' ? (
+            <>
+              <p className="text-sm font-extrabold text-[#172033] flex items-center gap-1.5">
+                <CalendarOff className="w-4 h-4 text-[#175CD3]" /> Emergency holiday today
+              </p>
+              <p className="text-xs text-[#667085] mt-0.5">An admin has marked today as an emergency holiday for you.</p>
             </>
           ) : status === 'checked_in' ? (
             <>

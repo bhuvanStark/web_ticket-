@@ -9,7 +9,7 @@
 // Branch filter as the Technician page, per the plan.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, TrendingUp, X, CheckCircle } from 'lucide-react';
+import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, TrendingUp, X, CheckCircle, Eye } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { EMPLOYEE_LOCATIONS } from '../../utils/employeeLocations';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
@@ -18,6 +18,7 @@ import {
 } from '../../services/salesApiService';
 // TaskPro Sales Module V1 — Leads tab, additive alongside the roster tab below.
 import { AdminLeadsTab } from './AdminLeadsTab';
+import { AdminLeadsAnalyticsTab } from './AdminLeadsAnalyticsTab';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -152,7 +153,10 @@ const SalesFormModal = ({ mode, employee, onClose, onSaved, showToast }) => {
 // management, unchanged) is now one tab of two; renamed so the exported
 // SalesPage below can host both without moving or rewriting this component.
 const SalesRosterTab = () => {
-  const { showToast } = useApp();
+  const { showToast, currentUser, viewAsSales } = useApp();
+  // Super Admin only — the view-as endpoints enforce this server-side too
+  // (requireSuperAdmin), this just keeps the button off other admins' screens.
+  const canViewAs = currentUser?.isSuperAdmin === true;
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -279,6 +283,15 @@ const SalesRosterTab = () => {
                     <td className="px-6 py-4 align-middle text-[#475467] font-medium">{e.location || '—'}</td>
                     <td className="px-6 py-4 align-middle">
                       <div className="flex items-center justify-end gap-2">
+                        {canViewAs && (
+                          <button
+                            onClick={() => viewAsSales(e)}
+                            className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#B3D1F2] transition-all cursor-pointer shadow-2xs inline-flex items-center gap-1 text-[11px] font-bold"
+                            title="View this employee's dashboard and leads (read-only)"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> View as
+                          </button>
+                        )}
                         <button
                           onClick={() => setModal({ mode: 'edit', employee: e })}
                           className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
@@ -362,6 +375,7 @@ export const SalesPage = () => {
       <div className="flex items-center gap-1 border-b border-[#E4E7EC]">
         {[
           { id: 'leads', label: 'Leads' },
+          { id: 'analytics', label: 'Analytics' },
           { id: 'roster', label: 'Sales Team' }
         ].map((t) => (
           <button
@@ -375,7 +389,7 @@ export const SalesPage = () => {
           </button>
         ))}
       </div>
-      {tab === 'leads' ? <AdminLeadsTab /> : <SalesRosterTab />}
+      {tab === 'leads' ? <AdminLeadsTab /> : tab === 'analytics' ? <AdminLeadsAnalyticsTab /> : <SalesRosterTab />}
     </div>
   );
 };

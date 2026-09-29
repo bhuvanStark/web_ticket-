@@ -50,6 +50,7 @@ import {
   checkInInApi,
   checkOutInApi
 } from '../services/attendanceApiService';
+import { disableTechnicianPushOnLogout } from '../utils/webPush';
 
 // Reuse the same context object across Vite hot updates. Without this, a provider
 // refresh can briefly leave already-mounted consumers attached to the old context.
@@ -336,7 +337,10 @@ export const AppProvider = ({ children }) => {
       // guaranteed one console-visible 403 every time (tickets is now
       // denylisted for these two roles server-side; see rejectRoles in
       // server.js) (audit finding #6).
-      if (role === 'sales' || role === 'back_office') {
+      // Gated on baseRole (the account actually signed in), not role: a
+      // Super Admin viewing as a Sales employee still holds an admin JWT and
+      // needs these rosters when they switch back to the admin view.
+      if (baseRole === 'sales' || baseRole === 'back_office') {
         setIsApiLoading(false);
         return;
       }
@@ -762,6 +766,21 @@ export const AppProvider = ({ children }) => {
     showToast(`Logged in as ${roleLabel}: ${newUser.name}`, 'success');
   };
 
+  // Super Admin "View as Sales employee" — same client-side view switch as
+  // the technician one: the admin JWT is kept (no Sales token is ever
+  // issued), the Sales screens read through the Super-Admin-only
+  // /api/sales-leads/view-as/* routes and are read-only. The real admin is
+  // snapshotted first so switchRole('admin') ("Back to Admin") restores them.
+  const viewAsSales = (employee) => {
+    if (role !== 'admin' || baseRole !== 'admin' || currentUser?.isSuperAdmin !== true || !employee?.id) {
+      showToast('Only a Super Admin can view as a Sales employee.', 'error');
+      return;
+    }
+    localStorage.setItem('admin_identity_snapshot', JSON.stringify(currentUser));
+    loginAsEmployee('sales', employee, 'Sales');
+  };
+  const isViewingAsSales = baseRole === 'admin' && role === 'sales';
+
   // Role switch handler
   const switchRole = (newRole, targetUser = null) => {
     // Someone who signed in through the technician portal must never reach the
@@ -933,6 +952,9 @@ export const AppProvider = ({ children }) => {
   };
 
   const handleLogout = () => {
+    // Stop this browser receiving the technician's push notifications. The
+    // token is read before clearTokens() below; best-effort, never blocks.
+    if (baseRole === 'tech') disableTechnicianPushOnLogout(localStorage.getItem('admin_access_token'));
     setIsLoggedIn(false);
     unifiedClient.clearTokens();
     localStorage.removeItem('admin_auth');
@@ -1645,6 +1667,8 @@ export const AppProvider = ({ children }) => {
         baseRole,
         switchRole,
         loginAsTechnician,
+        viewAsSales,
+        isViewingAsSales,
         deleteTechnician,
         createTechnician,
         updateTechnician,

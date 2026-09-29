@@ -98,13 +98,15 @@ export const MyAttendancePage = () => {
     const rec = recordsByDate.get(key);
     if (!rec) return 'unmarked';
     if (rec.status === 'absent') return 'absent';
+    if (rec.status === 'emergency_holiday') return 'holiday';
     if (isPresentStatus(rec.status)) return 'present';
     return 'unmarked';
   };
 
-  const { presentCount, absentCount, monthRecords } = useMemo(() => {
+  const { presentCount, absentCount, holidayCount, monthRecords } = useMemo(() => {
     let present = 0;
     let absent = 0;
+    let holiday = 0;
     const list = [];
     for (let day = 1; day <= numDays; day++) {
       const key = dateKeyOf(year, month0, day);
@@ -112,10 +114,11 @@ export const MyAttendancePage = () => {
       if (!rec) continue;
       list.push(rec);
       if (rec.status === 'absent') absent++;
+      else if (rec.status === 'emergency_holiday') holiday++;
       else if (isPresentStatus(rec.status)) present++;
     }
     list.sort((a, b) => (a.attendance_date < b.attendance_date ? 1 : -1));
-    return { presentCount: present, absentCount: absent, monthRecords: list };
+    return { presentCount: present, absentCount: absent, holidayCount: holiday, monthRecords: list };
   }, [recordsByDate, year, month0, numDays]);
 
   const cells = [];
@@ -167,6 +170,11 @@ export const MyAttendancePage = () => {
           <div className="flex items-center gap-1.5 text-xs font-bold text-[#D92D20]">
             <span>🔴</span> {absentCount} Absent
           </div>
+          {holidayCount > 0 && (
+            <div className="flex items-center gap-1.5 text-xs font-bold text-[#175CD3]">
+              <span>🔵</span> {holidayCount} Emergency Holiday
+            </div>
+          )}
         </div>
 
         {/* Calendar grid */}
@@ -195,12 +203,14 @@ export const MyAttendancePage = () => {
                       className={`aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 text-xs font-semibold ${
                         status === 'present' ? 'bg-[#ECFDF3] text-[#027A48]' :
                         status === 'absent' ? 'bg-[#FEF3F2] text-[#D92D20]' :
+                        status === 'holiday' ? 'bg-[#EFF8FF] text-[#175CD3]' :
                         'text-[#98A2B3]'
                       } ${isToday ? 'ring-1 ring-[#004898]' : ''}`}
                     >
                       <span>{day}</span>
                       {status === 'present' && <span className="text-[9px] leading-none">🟢</span>}
                       {status === 'absent' && <span className="text-[9px] leading-none">🔴</span>}
+                      {status === 'holiday' && <span className="text-[9px] leading-none">🔵</span>}
                     </div>
                   );
                 })}
@@ -217,7 +227,7 @@ export const MyAttendancePage = () => {
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#E4E7EC] shrink-0">
               <div>
                 <h3 className="text-base font-extrabold text-[#172033]">{monthLabel}</h3>
-                <p className="text-xs text-[#667085] mt-0.5">{presentCount} Present &middot; {absentCount} Absent</p>
+                <p className="text-xs text-[#667085] mt-0.5">{presentCount} Present &middot; {absentCount} Absent{holidayCount > 0 && <> &middot; {holidayCount} Emergency Holiday</>}</p>
               </div>
               <button
                 onClick={() => setIsDetailsOpen(false)}
@@ -235,16 +245,18 @@ export const MyAttendancePage = () => {
                     <div key={r.id} className="flex items-center justify-between gap-3 px-5 py-3">
                       <div>
                         <div className="text-xs font-bold text-[#172033]">{fmtDate(r.attendance_date)}</div>
-                        {r.status !== 'absent' && (
+                        {isPresentStatus(r.status) && (
                           <div className="text-[11px] text-[#667085] mt-0.5">
                             {fmtTime(r.check_in_time)} – {fmtTime(r.check_out_time)}
                           </div>
                         )}
                       </div>
                       <span className={`text-[11px] font-bold px-2 py-1 rounded-full ${
-                        r.status === 'absent' ? 'bg-[#FEF3F2] text-[#D92D20]' : 'bg-[#ECFDF3] text-[#027A48]'
+                        r.status === 'absent' ? 'bg-[#FEF3F2] text-[#D92D20]'
+                          : r.status === 'emergency_holiday' ? 'bg-[#EFF8FF] text-[#175CD3]'
+                          : 'bg-[#ECFDF3] text-[#027A48]'
                       }`}>
-                        {r.status === 'absent' ? 'Absent' : 'Present'}
+                        {r.status === 'absent' ? 'Absent' : r.status === 'emergency_holiday' ? 'Emergency Holiday' : 'Present'}
                       </span>
                     </div>
                   ))}

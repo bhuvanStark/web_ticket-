@@ -122,6 +122,21 @@ export async function markAbsentInApi(employeeType, employeeId, date) {
   return readApiData(res, 'mark absent');
 }
 
+export async function markEmergencyHolidayInApi(employeeType, employeeId, date) {
+  const res = await authFetch(`${API_BASE_URL}/admin/attendance/${employeeType}/${employeeId}/mark-emergency-holiday`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify({ date })
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const err = new Error(payload?.error || 'Failed to mark emergency holiday');
+    err.code = res.status === 409 ? 'ALREADY_HAS_ATTENDANCE' : null;
+    throw err;
+  }
+  return readApiData(res, 'mark emergency holiday');
+}
+
 // `branch`/`employeeType`/`search` scope the bulk action to exactly the
 // same set the Admin page's currently-filtered rows represent — audit fix:
 // previously only `date` was sent, so the button's filtered count didn't
@@ -157,4 +172,12 @@ export async function bulkCheckOutInApi(date, { branch, employeeType, search } =
     body: JSON.stringify({ date, branch, employee_type: employeeType, search })
   });
   return readApiData(res, 'check out all');
+}
+
+// Short area label for a captured check-in location, or null when unknown.
+export async function reverseGeocodeInApi(lat, lng) {
+  const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+  const res = await authFetch(`${API_BASE_URL}/admin/attendance/reverse-geocode?${params}`, { headers: authHeaders() });
+  const data = await readApiData(res, 'look up location');
+  return data?.label || null;
 }

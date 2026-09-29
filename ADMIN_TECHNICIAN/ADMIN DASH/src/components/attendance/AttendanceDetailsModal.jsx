@@ -3,7 +3,8 @@
 // as TechniciansPage's ShareTechLinkModal) — it only ever needs to exist
 // while that page is open. Attendance-only fields; no tickets, no projects.
 import React, { useState } from 'react';
-import { X, LogOut, ShieldAlert, MapPin, Clock } from 'lucide-react';
+import { LocationSummary } from './LocationSummary';
+import { X, LogOut, ShieldAlert, MapPin, Clock, CalendarOff } from 'lucide-react';
 
 const LOCATION_LABELS = {
   gps_captured: 'Location captured',
@@ -27,7 +28,7 @@ const fmtDuration = (minutes) => {
 // before Attendance was unified across all three roles); `onMarkAbsent` now
 // takes (employeeType, employeeId) since an id alone is ambiguous once
 // there are three identity tables — see attendanceApiService.markAbsentInApi.
-export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent }) => {
+export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent, onMarkEmergencyHoliday }) => {
   const [isWorking, setIsWorking] = useState(false);
   if (!row) return null;
 
@@ -63,6 +64,10 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
             <div className="flex items-center gap-2 text-[#B54708] bg-[#FEF0C7] rounded-lg px-3 py-2 text-xs font-bold">
               <ShieldAlert className="w-4 h-4" /> Confirmed absent for this day
             </div>
+          ) : bucket === 'emergency_holiday' ? (
+            <div className="flex items-center gap-2 text-[#175CD3] bg-[#EFF8FF] rounded-lg px-3 py-2 text-xs font-bold">
+              <CalendarOff className="w-4 h-4" /> Emergency holiday for this day
+            </div>
           ) : bucket === 'unmarked' ? (
             <div className="text-xs font-bold text-[#667085] bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg px-3 py-2">
               No check-in recorded for this day.
@@ -88,6 +93,14 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
                 </span>
               </div>
               {hasCoords && (
+                <LocationSummary
+                  lat={record.location_lat}
+                  lng={record.location_lng}
+                  capturedAt={record.location_captured_at || record.check_in_time}
+                  className="text-xs font-semibold text-[#172033] text-right"
+                />
+              )}
+              {hasCoords && (
                 <a
                   href={`https://www.google.com/maps?q=${record.location_lat},${record.location_lng}`}
                   target="_blank"
@@ -101,7 +114,7 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
           )}
         </div>
 
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-2xl">
+        <div className="flex flex-wrap justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-2xl">
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] transition-all cursor-pointer"
@@ -129,7 +142,18 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
               <ShieldAlert className="w-4 h-4" /> {isWorking ? 'Marking…' : 'Mark Absent'}
             </button>
           )}
-          {/* checked_out and absent: view-only, no actions. */}
+          {/* No attendance, or confirmed absent: Emergency Holiday is offered
+              for both (absent is converted in place). */}
+          {(bucket === 'unmarked' || bucket === 'absent') && onMarkEmergencyHoliday && (
+            <button
+              onClick={() => run(() => onMarkEmergencyHoliday(employee.employee_type, employee.id))}
+              disabled={isWorking}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#175CD3] text-white hover:bg-[#1849A9] transition-all cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+            >
+              <CalendarOff className="w-4 h-4" /> {isWorking ? 'Marking…' : 'Mark Emergency Holiday'}
+            </button>
+          )}
+          {/* checked_out and emergency_holiday: view-only, no actions. */}
         </div>
       </div>
     </div>

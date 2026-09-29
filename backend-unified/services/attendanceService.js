@@ -100,7 +100,9 @@ export const checkIn = async (employeeType, employeeId, location = {}) => {
         ? 'Attendance already completed for today'
         : existing?.status === 'absent'
           ? 'You have already been marked absent for today'
-          : 'Already checked in for today';
+          : existing?.status === 'emergency_holiday'
+            ? 'Today has been marked as an emergency holiday for you'
+            : 'Already checked in for today';
       const err = new Error(message);
       err.code = 'ALREADY_CHECKED_IN';
       err.existing = existing;
@@ -290,7 +292,9 @@ const scopeRows = (rows, { cardFilter, branch, employeeId, search } = {}) => {
   let scoped = rows;
   if (cardFilter === 'present') scoped = scoped.filter((r) => r.bucket === 'checked_out');
   else if (cardFilter === 'not_yet_checked_out') scoped = scoped.filter((r) => r.bucket === 'checked_in');
-  else if (cardFilter === 'absent') scoped = scoped.filter((r) => r.bucket === 'absent' || r.bucket === 'unmarked');
+  // Emergency-holiday rows stay in the Absent card's list (that's where the
+  // Eye action marks them), but are never counted in the Absent KPI.
+  else if (cardFilter === 'absent') scoped = scoped.filter((r) => r.bucket === 'absent' || r.bucket === 'unmarked' || r.bucket === 'emergency_holiday');
 
   if (branch) scoped = scoped.filter((r) => r.employee.location === branch);
   if (employeeId) scoped = scoped.filter((r) => r.employee.id === employeeId);
@@ -435,6 +439,79 @@ export const markAbsent = async (employeeType, employeeId, date, adminId) => {
       throw err;
     }
     throw new Error(`Failed to mark absent: ${error.message}`);
+  }
+  return normalizeRecord(data);
+};
+
+// Admin marks one employee's day as an Emergency Holiday — offered from the
+// Absent card's Eye flow on 'unmarked' (no row → insert) and 'absent' (row
+// converted in place) days. Days with a real check-in are never converted,
+// and neither is a day that's already an emergency holiday (409 for both).
+// The 'absent' → holiday update is guarded on status = 'absent' so a
+// concurrent change to the row can never be silently overwritten.
+export const markEmergencyHoliday = async (employeeType, employeeId, date, adminId) => {
+  if (!isEmployeeType(employeeType)) throw new Error(`Unknown employee type: ${employeeType}`);
+  const dateKey = resolveDateKey(date);
+  const { data: employee, error: lookupError } = await supabase
+    .from(OWNER_TABLE[employeeType])
+    .select('id')
+    .eq('id', employeeId)
+    .maybeSingle();
+  if (lookupError) throw new Error(`Failed to verify employee: ${lookupError.message}`);
+  if (!employee) {
+    const err = new Error('Employee not found');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from('attendance_records')
+    .select('*')
+    .eq(OWNER_COLUMN[employeeType], employeeId)
+    .eq('attendance_date', dateKey)
+    .maybeSingle();
+  if (existingError) throw new Error(`Failed to check existing attendance: ${existingError.message}`);
+
+  const conflict = (message) => {
+    const err = new Error(message);
+    err.code = 'ALREADY_HAS_ATTENDANCE';
+    return err;
+  };
+
+  if (existing) {
+    if (existing.status === 'emergency_holiday') throw conflict('This day is already marked as an emergency holiday');
+    if (existing.status !== 'absent') throw conflict('This employee already checked in that day');
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .update({ status: 'emergency_holiday', marked_absent_by: adminId || null })
+      .eq('id', existing.id)
+      .eq('status', 'absent')
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to mark emergency holiday: ${error.message}`);
+    if (!data) throw conflict('Attendance for that day changed — refresh and try again');
+    return normalizeRecord(data);
+  }
+
+  const { data, error } = await supabase
+    .from('attendance_records')
+    .insert([{
+      [OWNER_COLUMN[employeeType]]: employeeId,
+      attendance_date: dateKey,
+      status: 'emergency_holiday',
+      location_status: 'no_location',
+      marked_absent_by: adminId || null
+    }])
+    .select('*')
+    .single();
+  if (error) {
+    if (error.code === '23505') throw conflict('Attendance for that day changed — refresh and try again');
+    if (error.code === '23503') {
+      const err = new Error('Employee not found');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    throw new Error(`Failed to mark emergency holiday: ${error.message}`);
   }
   return normalizeRecord(data);
 };

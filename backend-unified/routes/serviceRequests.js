@@ -9,6 +9,7 @@ import {
 } from '../middleware/validation.js';
 import * as serviceRequestService from '../services/serviceRequestService.js';
 import * as notificationService from '../services/notificationService.js';
+import { notifyTechnicianOfAssignment } from '../services/pushNotificationService.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -227,6 +228,10 @@ router.post('/:id/assign', validateUUID, async (req, res) => {
       }
     }
 
+    // Web Push to the technician (email fallback). Not awaited and never
+    // throws — delivery can't delay or fail the assignment.
+    notifyTechnicianOfAssignment(technician.id, data, { assignmentRole: 'primary' });
+
     res.json({ success: true, data, message: 'Technician assigned successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -315,6 +320,10 @@ router.post('/:id/add-technician', requireAdmin, validateUUID, async (req, res) 
       .eq('id', id)
       .single();
     if (error) throw error;
+
+    // Same fire-and-forget push/email as the primary assign route; the
+    // additional technician's own mode is what matters to them.
+    notifyTechnicianOfAssignment(technician.id, { ...data, service_type: serviceMode }, { assignmentRole: 'additional' });
 
     res.status(201).json({ success: true, data, message: 'Additional technician added successfully' });
   } catch (error) {

@@ -22,6 +22,7 @@ import { Briefcase } from 'lucide-react';
 // would otherwise take the ticket/project sections down too if this one
 // component threw during render — so it gets its own nested boundary here.
 import { AttendanceBanner } from './AttendanceBanner';
+import { PushNotificationPrompt } from './PushNotificationPrompt';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 
 export const TechDashboard = () => {
@@ -34,7 +35,8 @@ export const TechDashboard = () => {
     setActivePage,
     updateTicketStatus,
     myProjectActivities,
-    updateActivityStatus
+    updateActivityStatus,
+    baseRole
   } = useApp();
 
   // Match strictly on the assigned technician's id. Matching on names (even
@@ -89,6 +91,14 @@ export const TechDashboard = () => {
       <ErrorBoundary>
         <AttendanceBanner />
       </ErrorBoundary>
+
+      {/* Web Push opt-in — real technician logins only (never while an
+          admin is viewing as a technician). Isolated like the banner. */}
+      {baseRole === 'tech' && (
+        <ErrorBoundary>
+          <PushNotificationPrompt />
+        </ErrorBoundary>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

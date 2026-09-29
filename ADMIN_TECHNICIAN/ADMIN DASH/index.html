@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/tasktel-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Web app manifest + iPhone "Add to Home Screen" setup. iOS only allows
+         Web Push for sites opened from the home screen (standalone mode). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="TaskTel" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>TaskTel AV — Professional Service Management Dashboard</title>
     <meta name="description" content="Enterprise Audio Visual service management platform for support requests, field technicians, rooms, equipment and scheduling." />
   </head>

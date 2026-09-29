@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Avatar } from './Avatar';
-import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems } from '../../config/employeeNavItems';
+import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems, filterForViewAs } from '../../config/employeeNavItems';
 import {
   LayoutDashboard,
   Ticket,
@@ -38,7 +38,7 @@ export const Sidebar = () => {
     isSidebarCollapsed, setIsSidebarCollapsed, enabledModules, rolePermissions,
     tickets, customers, rooms, technicians, verifyTechnicianPassword,
     setSelectedTicketId, setSelectedCustomerId, setSelectedRoomId, setSelectedTechId,
-    setSelectedProjectId
+    setSelectedProjectId, isViewingAsSales
   } = useApp();
 
   const [showTechSelector, setShowTechSelector] = useState(false);
@@ -129,7 +129,7 @@ export const Sidebar = () => {
   const techNavItems = sharedTechNavItems;
 
   const allNavItems = role === 'admin' ? adminNavItems
-    : role === 'sales' ? salesNavItems
+    : role === 'sales' ? filterForViewAs(salesNavItems, isViewingAsSales)
     : role === 'back_office' ? backOfficeNavItems
     : techNavItems;
   const navItems = allNavItems.filter(item => {
@@ -328,7 +328,7 @@ export const Sidebar = () => {
         {/* An admin viewing a technician's dashboard is still signed in as the
             admin, so the exit from this view is "return to my own dashboard",
             not "log out". A real technician login keeps the logout button. */}
-        {baseRole === 'admin' && role === 'tech' ? (
+        {baseRole === 'admin' && (role === 'tech' || role === 'sales') ? (
           <button
             onClick={() => switchRole('admin')}
             title={isSidebarCollapsed ? 'Back to Admin' : ''}

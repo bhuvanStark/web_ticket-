@@ -8,7 +8,8 @@ import { useApp } from '../../context/AppContext';
 import { Search, LogOut, History as HistoryIcon, X, CheckCircle2 } from 'lucide-react';
 import {
   fetchPool, fetchMine, acceptLead, releaseLead,
-  fetchLeadHistory, updateLeadStatus, addFollowUp, subscribeToLeadEvents
+  fetchLeadHistory, updateLeadStatus, addFollowUp, subscribeToLeadEvents,
+  fetchViewAsPool, fetchViewAsMine
 } from '../../services/leadsApiService';
 
 // Dead is deliberately excluded — plan §6 "Only an Admin explicitly marks a
@@ -60,7 +61,8 @@ const ReleaseModal = ({ lead, onClose, onDone, showToast }) => {
   );
 };
 
-const DetailModal = ({ lead, onClose, onChanged, showToast }) => {
+// readOnly: Super Admin "View as" — history only, no status/follow-up writes.
+const DetailModal = ({ lead, onClose, onChanged, showToast, readOnly = false }) => {
   const [history, setHistory] = useState([]);
   const [status, setStatus] = useState(lead.status);
   const [note, setNote] = useState('');
@@ -119,6 +121,7 @@ const DetailModal = ({ lead, onClose, onChanged, showToast }) => {
             <div><span className="text-[#667085]">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
           </div>
 
+          {!readOnly && (<>
           <div className="flex items-center gap-2">
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input text-sm flex-1">
               {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
@@ -132,6 +135,7 @@ const DetailModal = ({ lead, onClose, onChanged, showToast }) => {
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a follow-up note…" className="form-input text-sm flex-1" />
             <button type="submit" disabled={busy || !note.trim()} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] disabled:opacity-50 whitespace-nowrap">Add</button>
           </form>
+          </>)}
 
           <div>
             <h4 className="text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">History</h4>
@@ -153,7 +157,7 @@ const DetailModal = ({ lead, onClose, onChanged, showToast }) => {
 };
 
 export const MyLeadsPage = () => {
-  const { currentUser, showToast } = useApp();
+  const { currentUser, showToast, isViewingAsSales } = useApp();
   const [tab, setTab] = useState('mine');
   const [pool, setPool] = useState([]);
   const [mine, setMine] = useState([]);
@@ -165,7 +169,11 @@ export const MyLeadsPage = () => {
 
   const load = useCallback(async () => {
     try {
-      const [p, m] = await Promise.all([fetchPool(), fetchMine()]);
+      // Super Admin "View as": same data via the read-only view-as routes
+      // (the admin JWT can't call the Sales-only /pool and /mine).
+      const [p, m] = isViewingAsSales
+        ? await Promise.all([fetchViewAsPool(currentUser.id), fetchViewAsMine(currentUser.id)])
+        : await Promise.all([fetchPool(), fetchMine()]);
       setPool(Array.isArray(p) ? p : []);
       setMine(Array.isArray(m) ? m : []);
     } catch (err) {
@@ -173,7 +181,7 @@ export const MyLeadsPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, isViewingAsSales, currentUser?.id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -257,14 +265,16 @@ export const MyLeadsPage = () => {
                     )}
                     <td className="px-6 py-4 align-middle">
                       <div className="flex items-center justify-end gap-2">
-                        {tab === 'pool' ? (
+                        {isViewingAsSales && tab === 'pool' ? (
+                          <span className="text-[11px] text-[#98A2B3] italic">View only</span>
+                        ) : tab === 'pool' ? (
                           <button onClick={() => handleAccept(l)} disabled={acceptingId === l.id} className="px-3 py-1.5 rounded-lg bg-[#004898] text-white text-[11px] font-bold hover:bg-[#00346E] disabled:opacity-60 inline-flex items-center gap-1">
                             <CheckCircle2 className="w-3.5 h-3.5" /> {acceptingId === l.id ? 'Accepting…' : 'Accept'}
                           </button>
                         ) : (
                           <>
                             <button onClick={() => setDetailLead(l)} title="Status, follow-ups & history" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><HistoryIcon className="w-4 h-4" /></button>
-                            <button onClick={() => setReleaseTarget(l)} title="Release back to pool" className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B]"><LogOut className="w-4 h-4" /></button>
+                            {!isViewingAsSales && <button onClick={() => setReleaseTarget(l)} title="Release back to pool" className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B]"><LogOut className="w-4 h-4" /></button>}
                           </>
                         )}
                       </div>
@@ -281,7 +291,7 @@ export const MyLeadsPage = () => {
         <ReleaseModal lead={releaseTarget} onClose={() => setReleaseTarget(null)} onDone={() => { setReleaseTarget(null); load(); }} showToast={showToast} />
       )}
       {detailLead && (
-        <DetailModal lead={detailLead} onClose={() => setDetailLead(null)} onChanged={load} showToast={showToast} />
+        <DetailModal lead={detailLead} onClose={() => setDetailLead(null)} onChanged={load} showToast={showToast} readOnly={isViewingAsSales} />
       )}
     </div>
   );
