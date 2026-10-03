@@ -8,7 +8,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Search, Plus, Pencil, Trash2, UserPlus, History as HistoryIcon, X,
-  Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, Inbox, Briefcase, Trophy
+  Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, Inbox, Briefcase, Trophy, ListChecks
 } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { fetchSalesInApi } from '../../services/salesApiService';
@@ -18,6 +18,7 @@ import {
   validateImport, confirmImport, subscribeToLeadEvents, fetchLeadsSummary
 } from '../../services/leadsApiService';
 import { LeadStatCard, LeadStatGrid } from './LeadStatCards';
+import { LeadStatusModal, LeadRemarks } from './LeadQuickActions';
 
 const STATUS_OPTIONS = ['new', 'meeting', 'proposal', 'follow_up', 'won', 'lost', 'dead'];
 const STATUS_LABEL = { new: 'New', meeting: 'Meeting', proposal: 'Proposal', follow_up: 'Follow-up', won: 'Won', lost: 'Lost', dead: 'Dead' };
@@ -221,6 +222,8 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, showToast }) => {
               <div><span className="text-[#667085]">Accepted At</span><div className="font-semibold text-[#172033]">{lead.accepted_at ? new Date(lead.accepted_at).toLocaleString() : '—'}</div></div>
             </div>
 
+            <LeadRemarks lead={lead} onSaved={() => { load(); onChanged(); }} showToast={showToast} />
+
             <div className="flex items-center gap-2">
               <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input text-sm flex-1">
                 {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
@@ -248,6 +251,7 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, showToast }) => {
                     </div>
                     {h.details?.reason && <div className="text-[#667085]">Reason: {h.details.reason}</div>}
                     {h.details?.note && <div className="text-[#667085]">{h.details.note}</div>}
+                    {h.event_type === 'remarks_updated' && <div className="text-[#667085] whitespace-pre-wrap">{h.details?.remarks || 'Remarks cleared'}</div>}
                     {h.details?.from && h.details?.to && <div className="text-[#667085]">{h.details.from} → {h.details.to}</div>}
                     <div className="text-[#98A2B3]">{new Date(h.created_at).toLocaleString()}</div>
                   </div>
@@ -445,6 +449,7 @@ export const AdminLeadsTab = () => {
   const [formModal, setFormModal] = useState(null); // { lead? } or null
   const [assignModal, setAssignModal] = useState(null); // lead or null
   const [detailId, setDetailId] = useState(null);
+  const [statusLead, setStatusLead] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -558,7 +563,13 @@ export const AdminLeadsTab = () => {
                   <td className="px-6 py-4 align-middle text-[#475467] font-medium">{l.assigned_to ? salesName(l.assigned_to) : <span className="text-[#98A2B3] italic">Unassigned</span>}</td>
                   <td className="px-6 py-4 align-middle">
                     <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => setDetailId(l.id)} title="History & Status" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><HistoryIcon className="w-4 h-4" /></button>
+                      <button
+                        onClick={() => setStatusLead(l)}
+                        disabled={l.status === 'won'}
+                        title={l.status === 'won' ? 'A Won lead is final' : 'Change status'}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#E4E7EC] hover:border-[#B3D1F2] text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                      ><ListChecks className="w-3.5 h-3.5" /> Status</button>
+                      <button onClick={() => setDetailId(l.id)} title="Details, remarks, history & status" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><HistoryIcon className="w-4 h-4" /></button>
                       <button
                         onClick={() => setAssignModal(l)}
                         disabled={l.status === 'won'}
@@ -584,6 +595,9 @@ export const AdminLeadsTab = () => {
       )}
       {detailId && (
         <DetailModal leadId={detailId} roster={roster} onClose={() => setDetailId(null)} onChanged={load} showToast={showToast} />
+      )}
+      {statusLead && (
+        <LeadStatusModal lead={statusLead} statusOptions={STATUS_OPTIONS} onClose={() => setStatusLead(null)} onDone={() => { setStatusLead(null); load(); }} showToast={showToast} />
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImported={load} showToast={showToast} />

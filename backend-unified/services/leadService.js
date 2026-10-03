@@ -97,6 +97,52 @@ function requireValidValueEstimate(raw) {
   return value;
 }
 
+// ============================================
+// WON READINESS — a lead can only be marked Won once every lead field is
+// filled, value included. Checked in updateStatus (pre-check for a precise
+// message, and again inside the atomic UPDATE via WON_COMPLETE_SQL), and
+// updateLead refuses to blank any of these on a lead that is already Won.
+// ============================================
+
+export const WON_REQUIRED_FIELDS = {
+  company: 'Company',
+  phone: 'Phone',
+  person_to_contact: 'Person to Contact',
+  email: 'Email',
+  value_estimate: 'Value Estimate'
+};
+
+const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+
+// Labels of the Won-required fields `lead` is missing, in form order.
+export function missingWonFields(lead) {
+  return Object.entries(WON_REQUIRED_FIELDS)
+    .filter(([key]) => isBlank(lead?.[key]))
+    .map(([, label]) => label);
+}
+
+const WON_COMPLETE_SQL = `NULLIF(btrim(company), '') IS NOT NULL
+       AND NULLIF(btrim(phone), '') IS NOT NULL
+       AND NULLIF(btrim(person_to_contact), '') IS NOT NULL
+       AND NULLIF(btrim(email), '') IS NOT NULL
+       AND value_estimate IS NOT NULL`;
+
+const wonFieldsError = (missing) =>
+  Object.assign(new Error(`Fill in all lead details before marking it Won. Missing: ${missing.join(', ')}.`), { status: 400 });
+
+// Remarks — free text, latest value stored on the lead (migration 033).
+export const MAX_REMARKS_LENGTH = 5000;
+
+function parseRemarks(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') throw Object.assign(new Error('remarks must be text'), { status: 400 });
+  const trimmed = raw.trim();
+  if (trimmed.length > MAX_REMARKS_LENGTH) {
+    throw Object.assign(new Error(`Remarks cannot exceed ${MAX_REMARKS_LENGTH} characters`), { status: 400 });
+  }
+  return trimmed || null;
+}
+
 // The identifier duplicate detection compares on. §4 requires phone-only for
 // V1 but "keep duplicate-validation logic modular so additional identifiers
 // can be added later" — every duplicate check in this file goes through this
@@ -179,7 +225,7 @@ export function startLeadSweepInterval(intervalMs = 30 * 60 * 1000) {
 // READ
 // ============================================
 
-const LEAD_COLUMNS = 'id, company, person_to_contact, email, phone, value_estimate, status, assigned_to, accepted_at, meeting_reached_at, created_at, updated_at';
+const LEAD_COLUMNS = 'id, company, person_to_contact, email, phone, value_estimate, remarks, status, assigned_to, accepted_at, meeting_reached_at, created_at, updated_at';
 
 export async function listLeads({ status, assignedTo, unassignedOnly, limit = 50, offset = 0 } = {}) {
   await releaseOverdueLeads();
@@ -233,10 +279,48 @@ export async function getLead(id) {
 // CREATE (manual, single lead — the Excel importer is separate, below)
 // ============================================
 
-export async function createLead({ company, person_to_contact, email, phone, value_estimate }, actor) {
+// Phone duplicate check for Sales-created/-edited leads, run inside the
+// caller's transaction. The transaction-scoped advisory lock on the
+// normalized phone serializes concurrent creates/edits of the same number, so
+// two salespeople can't both slip the same phone past the check at once.
+async function assertPhoneNotDuplicate(client, phone, excludeId = null) {
+  const key = duplicateKey(phone);
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lead-phone:${key}`]);
+  const { rows } = await client.query(
+    'SELECT id FROM leads WHERE phone = $1 AND archived_at IS NULL AND ($2::uuid IS NULL OR id <> $2) LIMIT 1',
+    [key, excludeId]
+  );
+  if (rows.length) {
+    throw Object.assign(new Error('A lead with this phone number already exists.'), { status: 409 });
+  }
+}
+
+// `ownerSalesId` set = a Sales employee creating their own lead: it is
+// assigned to them in the same INSERT (never visible in the common pool) and
+// accepted_at starts the normal 5-day Meeting timer, so releaseOverdueLeads
+// treats it exactly like a lead they accepted from the pool. Admin-created
+// leads (no ownerSalesId) are unchanged: unassigned, straight to the pool.
+export async function createLead({ company, person_to_contact, email, phone, value_estimate, remarks }, actor, { ownerSalesId } = {}) {
   if (!company || !String(company).trim()) throw Object.assign(new Error('company is required'), { status: 400 });
   if (!isValidPhone(phone)) throw Object.assign(new Error('A valid phone number is required'), { status: 400 });
   const valueEstimate = requireValidValueEstimate(value_estimate);
+  const remarksValue = parseRemarks(remarks);
+
+  if (ownerSalesId) {
+    const data = await withTransaction(async (client) => {
+      await assertPhoneNotDuplicate(client, phone);
+      const inserted = await client.query(
+        `INSERT INTO leads (company, person_to_contact, email, phone, value_estimate, remarks, status, assigned_to, accepted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'new', $7, now())
+         RETURNING ${LEAD_COLUMNS}`,
+        [String(company).trim(), person_to_contact || null, email || null, normalizePhone(phone), valueEstimate, remarksValue, ownerSalesId]
+      );
+      await logHistory(client, inserted.rows[0].id, 'created', actor, { source: 'sales', assigned_to: ownerSalesId });
+      return inserted.rows[0];
+    });
+    publish('lead_created', { id: data.id, assignedTo: ownerSalesId });
+    return data;
+  }
 
   const { data, error } = await supabase
     .from('leads')
@@ -246,6 +330,7 @@ export async function createLead({ company, person_to_contact, email, phone, val
       email: email || null,
       phone: normalizePhone(phone),
       value_estimate: valueEstimate,
+      remarks: remarksValue,
       status: 'new'
     }])
     .select(LEAD_COLUMNS)
@@ -257,8 +342,12 @@ export async function createLead({ company, person_to_contact, email, phone, val
   return data;
 }
 
-export async function updateLead(id, { company, person_to_contact, email, phone, value_estimate }, actor) {
-  if (company !== undefined && !String(company).trim()) throw Object.assign(new Error('company cannot be empty'), { status: 400 });
+// Validates and normalizes the editable lead fields — shared by the Admin
+// edit (updateLead) and the Sales owner edit (updateLeadAsSales) so the two
+// can never accept different input. Only keys present in `fields` are
+// returned; undefined means "leave unchanged".
+function parseLeadEdits({ company, person_to_contact, email, phone, value_estimate }) {
+  if (company !== undefined && !String(company ?? '').trim()) throw Object.assign(new Error('company cannot be empty'), { status: 400 });
   if (phone !== undefined && !isValidPhone(phone)) throw Object.assign(new Error('A valid phone number is required'), { status: 400 });
   const valueEstimate = value_estimate !== undefined ? requireValidValueEstimate(value_estimate) : undefined;
 
@@ -268,21 +357,102 @@ export async function updateLead(id, { company, person_to_contact, email, phone,
   if (email !== undefined) payload.email = email || null;
   if (phone !== undefined) payload.phone = normalizePhone(phone);
   if (value_estimate !== undefined) payload.value_estimate = valueEstimate;
+  return payload;
+}
+
+// True when the edit blanks a field a Won lead must keep (see WON_REQUIRED_FIELDS).
+const clearsWonField = (payload) => Object.keys(WON_REQUIRED_FIELDS).some((key) => key in payload && isBlank(payload[key]));
+
+export async function updateLead(id, fields, actor) {
+  const payload = parseLeadEdits(fields);
+  const clearsRequired = clearsWonField(payload);
 
   // Audit fix P1-2 — archived leads are immutable; enforced in the same
   // atomic UPDATE (not a separate pre-check) so a concurrent archive can't
-  // slip in between a check and this write.
-  const { data, error } = await supabase.from('leads').update(payload).eq('id', id).is('archived_at', null).select(LEAD_COLUMNS).maybeSingle();
+  // slip in between a check and this write. Likewise a Won lead must keep
+  // every Won-required field, so an edit that blanks one is guarded on
+  // status in the same UPDATE.
+  let q = supabase.from('leads').update(payload).eq('id', id).is('archived_at', null);
+  if (clearsRequired) q = q.neq('status', 'won');
+  const { data, error } = await q.select(LEAD_COLUMNS).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) {
     const existing = await getLead(id);
     if (!existing) throw Object.assign(new Error('Lead not found'), { status: 404 });
+    if (!existing.archived_at && existing.status === 'won') {
+      throw Object.assign(new Error('This lead is Won — its company, phone, contact, email and value cannot be cleared.'), { status: 409 });
+    }
     throw Object.assign(new Error('This lead has been archived and can no longer be edited.'), { status: 409 });
   }
 
   await logHistory(null, id, 'edited', actor, { fields: Object.keys(payload) });
   publish('lead_updated', { id });
   return data;
+}
+
+// A Sales employee editing a lead they own. Allowed only while the lead is
+// open — Won/Lost/Dead (CLOSED_STATUSES) are locked for Sales, same as their
+// status. Ownership, open status, and not-archived are all part of the one
+// atomic UPDATE, so a lead reassigned, closed, or archived a moment earlier
+// can't be edited by its (former) owner. Changing the phone re-runs the
+// duplicate check, so an edit can't be used to clone another lead's number.
+export async function updateLeadAsSales(id, salesId, fields, actor) {
+  const payload = parseLeadEdits(fields);
+  const keys = Object.keys(payload);
+  if (!keys.length) throw Object.assign(new Error('Nothing to update'), { status: 400 });
+
+  const data = await withTransaction(async (client) => {
+    if (payload.phone !== undefined) await assertPhoneNotDuplicate(client, payload.phone, id);
+    const sets = keys.map((key, i) => `${key} = $${i + 3}`);
+    const { rows } = await client.query(
+      `UPDATE leads SET ${sets.join(', ')}, updated_at = now()
+       WHERE id = $1 AND assigned_to = $2 AND archived_at IS NULL
+         AND status NOT IN ('won', 'lost', 'dead')
+       RETURNING ${LEAD_COLUMNS}`,
+      [id, salesId, ...keys.map((key) => payload[key])]
+    );
+    if (!rows.length) return null;
+    await logHistory(client, id, 'edited', actor, { fields: keys });
+    return rows[0];
+  });
+
+  if (!data) {
+    const existing = await getLead(id);
+    if (!existing) throw Object.assign(new Error('Lead not found'), { status: 404 });
+    if (existing.assigned_to !== salesId) throw Object.assign(new Error('You do not own this lead'), { status: 403 });
+    if (existing.archived_at) throw Object.assign(new Error('This lead has been archived and can no longer be edited.'), { status: 409 });
+    throw Object.assign(new Error(`This lead is marked ${existing.status} and can no longer be edited.`), { status: 409 });
+  }
+
+  publish('lead_updated', { id });
+  return data;
+}
+
+// Remarks are editable by the owning Sales employee (`ownerSalesId`, enforced
+// in the UPDATE itself) or an authorised Admin (no ownerSalesId). Like
+// follow-up notes, they stay editable on Won/Lost/Dead leads; only archived
+// leads are immutable. Saving the same text again is a no-op.
+export async function updateRemarks(id, remarks, actor, { ownerSalesId } = {}) {
+  const value = parseRemarks(remarks);
+  const existing = await getLead(id);
+  if (!existing) throw Object.assign(new Error('Lead not found'), { status: 404 });
+  if (existing.archived_at) throw Object.assign(new Error('This lead has been archived and can no longer be changed.'), { status: 409 });
+  if (ownerSalesId && existing.assigned_to !== ownerSalesId) throw Object.assign(new Error('You do not own this lead'), { status: 403 });
+  if ((existing.remarks ?? null) === value) return existing;
+
+  const { rows } = await query(
+    `UPDATE leads SET remarks = $2, updated_at = now()
+     WHERE id = $1 AND archived_at IS NULL AND ($3::uuid IS NULL OR assigned_to = $3)
+     RETURNING ${LEAD_COLUMNS}`,
+    [id, value, ownerSalesId || null]
+  );
+  if (!rows.length) {
+    throw Object.assign(new Error('This lead was just changed by someone else. Refresh and try again.'), { status: 409 });
+  }
+
+  await logHistory(null, id, 'remarks_updated', actor, { remarks: value });
+  publish('lead_updated', { id });
+  return rows[0];
 }
 
 // ============================================
@@ -478,22 +648,32 @@ export async function updateStatus(id, newStatus, actor) {
   if (newStatus === 'won' && !existing.assigned_to) {
     throw Object.assign(new Error('Assign this lead to a Sales employee before marking it Won.'), { status: 409 });
   }
+  // Every lead field, value included, must be filled before a win.
+  if (newStatus === 'won') {
+    const missing = missingWonFields(existing);
+    if (missing.length) throw wonFieldsError(missing);
+  }
 
-  // Compare-and-set on the status validated above (plus the owner/archived
-  // guards), so a concurrent change — another status update, an archive, an
-  // unassignment — can't slip between those checks and this write. The
-  // meeting timer stop is permanent once set, never overwritten.
+  // Compare-and-set on the status validated above (plus the owner/archived/
+  // Won-completeness guards), so a concurrent change — another status
+  // update, an archive, an unassignment, a field being cleared — can't slip
+  // between those checks and this write. The meeting timer stop is
+  // permanent once set, never overwritten.
   const { rows } = await query(
     `UPDATE leads
      SET status = $2,
          meeting_reached_at = CASE WHEN $2 = 'meeting' THEN COALESCE(meeting_reached_at, now()) ELSE meeting_reached_at END,
          updated_at = now()
      WHERE id = $1 AND status = $3 AND archived_at IS NULL
-       AND ($2 <> 'won' OR assigned_to IS NOT NULL)
+       AND ($2 <> 'won' OR (assigned_to IS NOT NULL AND ${WON_COMPLETE_SQL}))
      RETURNING ${LEAD_COLUMNS}`,
     [id, newStatus, existing.status]
   );
   if (!rows.length) {
+    if (newStatus === 'won') {
+      const missing = missingWonFields(await getLead(id));
+      if (missing.length) throw wonFieldsError(missing);
+    }
     throw Object.assign(new Error('This lead was just changed by someone else. Refresh and try again.'), { status: 409 });
   }
 

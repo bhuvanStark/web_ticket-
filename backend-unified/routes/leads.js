@@ -8,7 +8,7 @@
 // admin_permissions module (§2 "Sales is an Admin module controlled by the
 // RBAC above" — a Super Admin bypasses this the same as any other module).
 // Sales employees reach their own subset (pool/mine/accept/release/status/
-// follow-ups on leads they own) through requireSales, unchanged from their
+// follow-ups/remarks on leads they own, plus creating and editing their own) through requireSales, unchanged from their
 // existing identity/session.
 import express from 'express';
 import { requireAdmin, requirePermission, requireSuperAdmin, requireSales, requireAuth, verifyTokenFn } from '../middleware/auth.js';
@@ -242,6 +242,32 @@ router.get('/mine/summary', requireSales, async (req, res) => {
   }
 });
 
+// A Sales employee adding their own lead — assigned to them on creation,
+// never placed in the common pool (leadService.createLead's ownerSalesId).
+// The owner is always req.user.userId, never an id from the request body.
+router.post('/mine', requireSales, async (req, res) => {
+  try {
+    const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
+    const data = await leadService.createLead(req.body || {}, { type: 'sales', id: req.user.userId, name: salesRow?.full_name }, { ownerSalesId: req.user.userId });
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// A Sales employee editing the fields of a lead they own, while it is open
+// (ownership/open status re-checked atomically in leadService). Separate from
+// the Admin PUT /:id so that route's contract is unchanged.
+router.put('/:id/details', requireSales, validateUUID, async (req, res) => {
+  try {
+    const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
+    const data = await leadService.updateLeadAsSales(req.params.id, req.user.userId, req.body || {}, { type: 'sales', id: req.user.userId, name: salesRow?.full_name });
+    res.json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.post('/:id/accept', requireSales, validateUUID, async (req, res) => {
   try {
     const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
@@ -361,6 +387,23 @@ router.patch('/:id/status', requireAuth, validateUUID, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Forbidden' });
     }
     const data = await leadService.updateStatus(req.params.id, req.body?.status, actor);
+    res.json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.patch('/:id/remarks', requireAuth, validateUUID, async (req, res) => {
+  try {
+    const lead = await leadService.getLead(req.params.id);
+    if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
+    const { actor, canAccess, isOwner } = await actorAndAccess(req, lead);
+    if (!canAccess || (req.user.role === 'sales' && !isOwner)) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    const data = await leadService.updateRemarks(req.params.id, req.body?.remarks, actor, {
+      ownerSalesId: req.user.role === 'sales' ? req.user.userId : undefined
+    });
     res.json({ success: true, data });
   } catch (error) {
     sendError(res, error);

@@ -121,6 +121,24 @@ export async function fetchMine() {
   return readApiData(res, 'fetch my leads');
 }
 
+// Creates a lead owned by the signed-in Sales employee (never in the pool).
+export async function createMyLead(payload) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/mine`, {
+    method: 'POST', headers: authHeaders(true), body: JSON.stringify(payload)
+  });
+  const data = await handle(res, 'Failed to create lead');
+  return data.data;
+}
+
+// Edits the fields of a lead the signed-in Sales employee owns (open leads only).
+export async function updateMyLead(id, payload) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/${id}/details`, {
+    method: 'PUT', headers: authHeaders(true), body: JSON.stringify(payload)
+  });
+  const data = await handle(res, 'Failed to update lead');
+  return data.data;
+}
+
 export async function acceptLead(id) {
   const res = await authFetch(`${API_BASE_URL}/sales-leads/${id}/accept`, { method: 'POST', headers: authHeaders() });
   const data = await handle(res, 'Failed to accept lead');
@@ -154,6 +172,14 @@ export async function updateLeadStatus(id, status) {
     method: 'PATCH', headers: authHeaders(true), body: JSON.stringify({ status })
   });
   const data = await handle(res, 'Failed to update status');
+  return data.data;
+}
+
+export async function updateLeadRemarks(id, remarks) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/${id}/remarks`, {
+    method: 'PATCH', headers: authHeaders(true), body: JSON.stringify({ remarks })
+  });
+  const data = await handle(res, 'Failed to save remarks');
   return data.data;
 }
 

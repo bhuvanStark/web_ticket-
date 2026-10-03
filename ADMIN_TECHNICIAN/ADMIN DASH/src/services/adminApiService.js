@@ -392,6 +392,39 @@ export async function createServiceRequestInApiAdmin(newTicketData) {
   }
 }
 
+// 9. Update Service Request details (admin Edit). Same field mapping as create;
+// optional fields are always sent so clearing one in the form clears it.
+// Status, assignment and ticket number are not part of this payload.
+export async function updateServiceRequestInApiAdmin(ticketDbId, ticketData) {
+  try {
+    const isEpabx = ticketData.serviceType === 'EPABX';
+
+    const payload = {
+      customer_org: (ticketData.customerOrg || '').trim() || null,
+      facility_location: (ticketData.facilityLocation || '').trim() || null,
+      issue_category: ticketData.issueType,
+      issue_title: ticketData.title || ticketData.issueType || 'Service request',
+      support_category: isEpabx ? 'epabx' : 'av',
+      room_name: isEpabx ? null : (ticketData.roomName || null),
+      contact: ticketData.contact || null,
+      area: ticketData.area || null,
+      preferred_date: ticketData.preferredDate || null,
+      preferred_time: ticketData.preferredTime || null
+    };
+
+    const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}`, {
+      method: 'PATCH',
+      headers: authHeaders(true),
+      body: JSON.stringify(payload)
+    });
+    const rawData = await readApiData(res, 'update ticket');
+    return transformDbTicketToAdmin(rawData);
+  } catch (error) {
+    console.error('updateServiceRequest error:', error.message);
+    throw error;
+  }
+}
+
 // 10. Delete Service Request
 export async function deleteServiceRequestFromApi(ticketDbId) {
   const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}`, {

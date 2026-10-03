@@ -123,6 +123,80 @@ export const createServiceRequest = async (requestData) => {
   }
 };
 
+// Admin "Edit ticket": build the column update from the same fields the create
+// form collects. Whitelisted, so status, assignment and ticket_number can never
+// be changed through this path. Returns { update, errors }.
+export const buildServiceRequestDetailsUpdate = (body = {}) => {
+  const text = (value) => (typeof value === 'string' ? value.trim() : '');
+  const errors = [];
+
+  const issueTitle = text(body.issue_title);
+  const issueCategory = text(body.issue_category);
+  const customerOrg = text(body.customer_org);
+  const facilityLocation = text(body.facility_location);
+  // Same rules as create: anything but 'epabx' folds onto 'av', and EPABX
+  // tickets never carry a room.
+  const supportCategory = String(body.support_category || 'av').toLowerCase() === 'epabx' ? 'epabx' : 'av';
+  const roomName = supportCategory === 'epabx' ? null : (text(body.room_name) || null);
+
+  if (!issueTitle) errors.push('Ticket title is required');
+  if (!issueCategory) errors.push('Issue category is required');
+  if (!customerOrg) errors.push('Customer organisation is required');
+  if (!facilityLocation) errors.push('Facility location is required');
+  if (supportCategory === 'av' && !roomName) errors.push('A room is required for an AV ticket');
+
+  const update = {
+    issue_title: issueTitle,
+    issue_category: issueCategory,
+    customer_org: customerOrg,
+    facility_location: facilityLocation,
+    support_category: supportCategory,
+    room_name: roomName,
+    // Optional fields: clearing them in the form clears them on the ticket.
+    area: text(body.area) || null,
+    contact: text(body.contact) || null,
+    preferred_date: text(body.preferred_date) || null,
+    preferred_time: text(body.preferred_time) || null
+  };
+
+  return { update, errors };
+};
+
+// Apply an admin edit to an existing ticket's details. Returns the updated row,
+// or null when the ticket does not exist.
+export const updateServiceRequestDetails = async (requestId, body) => {
+  const { update, errors } = buildServiceRequestDetailsUpdate(body);
+  if (errors.length > 0) {
+    const error = new Error(errors.join(', '));
+    error.status = 400;
+    throw error;
+  }
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('service_requests')
+    .select('id, issue_title, issue_description')
+    .eq('id', requestId)
+    .maybeSingle();
+  if (fetchError) throw fetchError;
+  if (!existing) return null;
+
+  // Admin-raised tickets store the title as their description (see
+  // createServiceRequestInApiAdmin). Keep that copy in step, but never
+  // overwrite a real description a customer typed.
+  if (existing.issue_description === existing.issue_title) {
+    update.issue_description = update.issue_title;
+  }
+
+  const { data, error } = await supabase
+    .from('service_requests')
+    .update({ ...update, updated_at: new Date().toISOString() })
+    .eq('id', requestId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
 // Update service request status
 export const updateServiceRequestStatus = async (requestId, status, notes = null) => {
   try {
@@ -492,6 +566,7 @@ export default {
   generateTicketNumber,
   validateServiceRequestData,
   createServiceRequest,
+  updateServiceRequestDetails,
   updateServiceRequestStatus,
   completeServiceRequest,
   submitServiceReport,

@@ -9,7 +9,8 @@ import {
   UserCheck,
   Calendar,
   ChevronRight,
-  Plus
+  Plus,
+  Pencil
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
@@ -21,6 +22,7 @@ export const AdminDashboard = () => {
     setSelectedTicketId,
     setIsAssignModalOpen,
     setIsCreateTicketOpen,
+    setEditingTicket,
     setActivePage,
     setPendingHistoryDate,
     globalSearchQuery
@@ -219,17 +221,26 @@ export const AdminDashboard = () => {
                       </div>
                     </div>
 
-                    {/* Right: Assign Tech Action Button */}
-                    <button
-                      onClick={() => {
-                        setSelectedTicketId(t.id);
-                        setIsAssignModalOpen(true);
-                      }}
-                      className="btn btn-primary btn-sm text-xs font-bold shrink-0 self-start md:self-center bg-[#004898] hover:bg-[#00346E] text-white px-4 py-2 rounded-lg shadow-xs"
-                    >
-                      <UserCheck className="w-3.5 h-3.5" />
-                      <span>Assign Tech</span>
-                    </button>
+                    {/* Right: Edit + Assign Tech Action Buttons */}
+                    <div className="flex items-center gap-2 shrink-0 self-start md:self-center">
+                      <button
+                        onClick={() => setEditingTicket(t)}
+                        className="btn btn-sm text-xs font-bold shrink-0 bg-white hover:bg-[#F2F4F7] text-[#344054] border border-[#D0D5DD] px-4 py-2 rounded-lg shadow-xs"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedTicketId(t.id);
+                          setIsAssignModalOpen(true);
+                        }}
+                        className="btn btn-primary btn-sm text-xs font-bold shrink-0 self-start md:self-center bg-[#004898] hover:bg-[#00346E] text-white px-4 py-2 rounded-lg shadow-xs"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Assign Tech</span>
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

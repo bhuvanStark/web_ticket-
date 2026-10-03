@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, PlusCircle, AlertCircle } from 'lucide-react';
+import { X, PlusCircle, AlertCircle, Pencil } from 'lucide-react';
 import { StateSelect } from '../common/StateSelect';
 
 // Issue categories per support line — kept in sync with the customer app's
@@ -34,12 +34,37 @@ const AV_ROOMS = [
   'Other'
 ];
 
+// transformDbTicketToAdmin fills missing values with display placeholders;
+// those must not be pre-filled into the edit form as if they were real data.
+const PLACEHOLDER_VALUES = ['Unknown customer', 'Unknown location', 'Unknown room', '—'];
+const realValue = (value) => (value && !PLACEHOLDER_VALUES.includes(value) ? value : '');
+
+// preferred_date is a DATE column; pg serialises it as an ISO timestamp at
+// local midnight. Read it back as the local calendar date for <input type="date">.
+const toDateInputValue = (value) => {
+  if (!value) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// <input type="time"> only understands HH:MM. Customer-booked tickets store a
+// slot label instead (e.g. "09:00 AM - 11:00 AM"), kept as-is unless replaced.
+const isTimeInputValue = (value) => /^\d{2}:\d{2}/.test(value || '');
+
 export const CreateTicketModal = () => {
   const {
     isCreateTicketOpen,
     setIsCreateTicketOpen,
-    createServiceRequest
+    createServiceRequest,
+    // Edit mode: set by the dashboard's Edit action; null in create mode.
+    editingTicket,
+    setEditingTicket,
+    updateServiceRequest
   } = useApp();
+  const isEditMode = !!editingTicket;
+  const isOpen = isCreateTicketOpen || isEditMode;
 
   // Customer Organisation and Facility Location are plain text stored on this
   // ticket — no lookup, no matching, no profile creation.
@@ -68,10 +93,58 @@ export const CreateTicketModal = () => {
     if (isCreateTicketOpen) setFormError('');
   }, [isCreateTicketOpen]);
 
-  if (!isCreateTicketOpen) return null;
+  // Edit mode: pre-fill every field from the ticket being edited.
+  useEffect(() => {
+    if (!editingTicket) return;
+    const t = editingTicket;
+    const nextType = t.serviceType === 'EPABX' ? 'EPABX' : 'AV';
+    const room = nextType === 'EPABX' ? '' : realValue(t.room);
+    const isFixedRoom = AV_ROOMS.includes(room) && room !== 'Other';
+
+    setFormError('');
+    setCustomerOrg(realValue(t.customer));
+    setFacilityLocation(realValue(t.location));
+    setRoomName(room ? (isFixedRoom ? room : 'Other') : '');
+    setCustomRoomName(room && !isFixedRoom ? room : '');
+    setContact(t.contact || '');
+    setTitle(t.title || '');
+    setServiceType(nextType);
+    setIssueType(t.issueType || (nextType === 'EPABX' ? EPABX_ISSUE_CATEGORIES : AV_ISSUE_CATEGORIES)[0]);
+    setArea(t.area || '');
+    setSelectedDate(toDateInputValue(t.preferredDate));
+    setSelectedTime(t.preferredSlot || '');
+  }, [editingTicket]);
+
+  if (!isOpen) return null;
+
+  // Leaving edit mode resets the form so the next "Create" starts blank.
+  const closeModal = () => {
+    if (isEditMode) {
+      setEditingTicket(null);
+      setCustomerOrg('');
+      setFacilityLocation('');
+      setRoomName('');
+      setCustomRoomName('');
+      setContact('');
+      setTitle('');
+      setServiceType('AV');
+      setIssueType(AV_ISSUE_CATEGORIES[0]);
+      setArea('');
+      setSelectedDate('');
+      setSelectedTime('');
+      setFormError('');
+    } else {
+      setIsCreateTicketOpen(false);
+    }
+  };
 
   const isEpabx = serviceType === 'EPABX';
-  const issueCategories = isEpabx ? EPABX_ISSUE_CATEGORIES : AV_ISSUE_CATEGORIES;
+  const baseIssueCategories = isEpabx ? EPABX_ISSUE_CATEGORIES : AV_ISSUE_CATEGORIES;
+  // Keep a ticket's existing category selectable in edit mode even if it is
+  // not in the current list, so saving never silently changes it.
+  const issueCategories = issueType && !baseIssueCategories.includes(issueType)
+    ? [...baseIssueCategories, issueType]
+    : baseIssueCategories;
 
   const handleSubmit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -94,8 +167,7 @@ export const CreateTicketModal = () => {
     setSubmitting(true);
     setFormError('');
     try {
-      // Wait for the database write to actually succeed before closing.
-      await createServiceRequest({
+      const ticketData = {
         title,
         customerOrg: customerOrg.trim(),
         facilityLocation: facilityLocation.trim(),
@@ -110,12 +182,20 @@ export const CreateTicketModal = () => {
         preferredDate: selectedDate || null,
         preferredTime: selectedTime || null,
         attachments: []
-      });
-      // Success: createServiceRequest already showed the success toast.
-      setIsCreateTicketOpen(false);
+      };
+      // Wait for the database write to actually succeed before closing.
+      if (isEditMode) {
+        await updateServiceRequest(editingTicket.dbId, ticketData);
+      } else {
+        await createServiceRequest(ticketData);
+      }
+      // Success: the context call already showed the success toast.
+      closeModal();
     } catch (err) {
       // Failure: keep the popup open with everything the admin typed, show why.
-      setFormError(err?.message || 'Could not create the ticket. Please try again.');
+      setFormError(err?.message || (isEditMode
+        ? 'Could not update the ticket. Please try again.'
+        : 'Could not create the ticket. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -128,15 +208,19 @@ export const CreateTicketModal = () => {
         <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-lg bg-[#004898] text-white flex items-center justify-center">
-              <PlusCircle className="w-5 h-5" />
+              {isEditMode ? <Pencil className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-[#172033]">Create Service Request</h3>
-              <p className="text-xs text-[#667085]">Log a new support ticket into the operational system</p>
+              <h3 className="font-extrabold text-base text-[#172033]">
+                {isEditMode ? `Edit Service Request ${editingTicket.id}` : 'Create Service Request'}
+              </h3>
+              <p className="text-xs text-[#667085]">
+                {isEditMode ? 'Update the details of this support ticket' : 'Log a new support ticket into the operational system'}
+              </p>
             </div>
           </div>
           <button
-            onClick={() => setIsCreateTicketOpen(false)}
+            onClick={closeModal}
             disabled={submitting}
             className="p-1 text-[#667085] hover:text-[#172033] rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -292,10 +376,15 @@ export const CreateTicketModal = () => {
                 <label className="block text-xs font-bold text-[#172033] mb-1">Preferred Time</label>
                 <input
                   type="time"
-                  value={selectedTime}
+                  value={isTimeInputValue(selectedTime) ? selectedTime : ''}
                   onChange={(e) => setSelectedTime(e.target.value)}
                   className="w-full px-2 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898]"
                 />
+                {selectedTime && !isTimeInputValue(selectedTime) && (
+                  <p className="text-[11px] text-[#667085] mt-1">
+                    Current slot: <span className="font-semibold text-[#172033]">{selectedTime}</span> — pick a time to replace it.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -306,7 +395,7 @@ export const CreateTicketModal = () => {
         <div className="p-5 border-t border-[#E4E7EC] bg-[#FAFCFF] flex items-center justify-end gap-3">
           <button
             type="button"
-            onClick={() => setIsCreateTicketOpen(false)}
+            onClick={closeModal}
             disabled={submitting}
             className="px-4 py-2.5 text-xs font-bold text-[#475467] hover:text-[#172033] hover:bg-[#F2F4F7] rounded-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -318,7 +407,9 @@ export const CreateTicketModal = () => {
             disabled={submitting}
             className="px-6 py-2.5 bg-[#004898] hover:bg-[#003673] text-white font-extrabold text-xs rounded-lg transition-all shadow-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {submitting ? 'Creating…' : 'Create Service Ticket'}
+            {isEditMode
+              ? (submitting ? 'Saving…' : 'Save Changes')
+              : (submitting ? 'Creating…' : 'Create Service Ticket')}
           </button>
         </div>
       </div>

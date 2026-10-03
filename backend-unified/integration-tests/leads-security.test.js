@@ -70,6 +70,10 @@ async function createLead(adminToken, overrides = {}) {
   return body.data;
 }
 
+// Every field a lead needs before it can be marked Won (leadService
+// WON_REQUIRED_FIELDS) — company and phone come from createLead's defaults.
+const WON_READY = { person_to_contact: 'Test Contact', email: 'lead-test@example.com', value_estimate: 1000 };
+
 async function setStatus(adminToken, leadId, status) {
   return fetch(`${baseUrl}/api/sales-leads/${leadId}/status`, {
     method: 'PATCH', headers: adminHeaders(adminToken), body: JSON.stringify({ status })
@@ -99,7 +103,7 @@ test('P1-1: a Sales employee cannot accept a Dead lead directly by ID, bypassing
 test('P1-3: a Sales employee cannot release a Won lead back into the pool', async (t) => {
   const { id: adminId, token: adminToken } = await createSuperAdmin();
   const sales = await createSales();
-  const lead = await createLead(adminToken);
+  const lead = await createLead(adminToken, WON_READY);
   t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id])
     .then(() => pool.query('DELETE FROM sales WHERE id = $1', [sales.id]))
     .then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));
@@ -312,7 +316,7 @@ test('P1 Won is final: nobody can change status, reassign, or release a Won lead
   const { id: adminId, token: adminToken } = await createSuperAdmin();
   const owner = await createSales();
   const other = await createSales();
-  const lead = await createLead(adminToken, { phone: randomPhone(), value_estimate: 1000 });
+  const lead = await createLead(adminToken, { ...WON_READY, phone: randomPhone() });
   t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id])
     .then(() => pool.query('DELETE FROM sales WHERE id = ANY($1)', [[owner.id, other.id]]))
     .then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));
@@ -339,7 +343,7 @@ test('P1 Won is final: nobody can change status, reassign, or release a Won lead
 test('P2 re-setting Won on a Won lead is a no-op: no new win activity, win date unchanged', async (t) => {
   const { id: adminId, token: adminToken } = await createSuperAdmin();
   const owner = await createSales();
-  const lead = await createLead(adminToken, { phone: randomPhone(), value_estimate: 1000 });
+  const lead = await createLead(adminToken, { ...WON_READY, phone: randomPhone() });
   t.after(() => pool.query('DELETE FROM leads WHERE id = $1', [lead.id])
     .then(() => pool.query('DELETE FROM sales WHERE id = $1', [owner.id]))
     .then(() => pool.query('DELETE FROM admins WHERE id = $1', [adminId])));

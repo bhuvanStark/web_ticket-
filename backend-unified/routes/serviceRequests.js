@@ -10,7 +10,7 @@ import {
 import * as serviceRequestService from '../services/serviceRequestService.js';
 import * as notificationService from '../services/notificationService.js';
 import { notifyTechnicianOfAssignment } from '../services/pushNotificationService.js';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -161,6 +161,41 @@ router.post('/', validateServiceRequest, async (req, res) => {
     res.status(201).json({ success: true, data, message: 'Service request created successfully' });
   } catch (error) {
     console.error('Error creating service request:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin edits an existing ticket's details (the fields the create form
+// collects). Status, assignment and ticket number are never touched here.
+router.patch('/:id', requireAdmin, requirePermission('requests'), validateUUID, async (req, res) => {
+  try {
+    const updated = await serviceRequestService.updateServiceRequestDetails(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ success: false, error: 'Service request not found' });
+
+    // Re-read with the same relations as GET /:id so the admin UI can render
+    // the ticket exactly as it does after a list fetch.
+    const { data, error } = await supabase
+      .from('service_requests')
+      .select(`
+        *,
+        customers (id, name, company_name),
+        locations (id, name, city, address),
+        rooms (id, name, room_type, capacity),
+        technician:assigned_technician_id (id, full_name, email, phone, role_title, avatar_url),
+        service_updates (*),
+        service_reports (*),
+        secondary_assignments:service_request_technicians(id, technician_id, service_mode, created_at, technician:technician_id(id, full_name, email, phone, role_title, avatar_url))
+      `)
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+
+    res.json({ success: true, data, message: 'Service request updated successfully' });
+  } catch (error) {
+    if (error.status === 400) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    console.error('Error updating service request:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

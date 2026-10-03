@@ -13,6 +13,7 @@ import {
   removeTechnicianFromApi,
   updateTicketStatusInApi,
   createServiceRequestInApiAdmin,
+  updateServiceRequestInApiAdmin,
   submitServiceReportInApi,
   reassignPendingInApi,
   deleteServiceRequestFromApi,
@@ -201,6 +202,8 @@ export const AppProvider = ({ children }) => {
   const [isTechnicianModalOpen, setIsTechnicianModalOpen] = useState(false);
   const [technicianModalMode, setTechnicianModalMode] = useState('create'); // 'create' | 'edit'
   const [isCreateTicketOpen, setIsCreateTicketOpen] = useState(false);
+  // Ticket being edited in CreateTicketModal's edit mode (null = create mode).
+  const [editingTicket, setEditingTicket] = useState(null);
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   // 'assign' = first assignment / Reassign (existing flow). 'add' = add an
   // ADDITIONAL technician alongside the existing primary. Same popup, same
@@ -1435,6 +1438,22 @@ export const AppProvider = ({ children }) => {
     showToast(`Created new ticket ${finalFormattedTicket.id} successfully!`, 'success');
   };
 
+  // Edit an existing ticket's details — same toast/throw contract as
+  // createServiceRequest so CreateTicketModal handles both identically.
+  const updateServiceRequest = async (ticketDbId, ticketData) => {
+    let updatedTicket = null;
+
+    try {
+      updatedTicket = await updateServiceRequestInApiAdmin(ticketDbId, ticketData);
+    } catch (err) {
+      showToast(`Could not update request: ${err.message}`, 'error');
+      throw err;
+    }
+
+    updateAndSyncTickets(prev => prev.map(t => (t.dbId === ticketDbId ? updatedTicket : t)));
+    showToast(`Updated ticket ${updatedTicket.id} successfully!`, 'success');
+  };
+
   // ============================================
   // PROJECT CATEGORY (V1) — additive. Every mutator below follows the same
   // guard -> try/catch -> optimistic-patch -> toast -> return-bool shape as
@@ -1741,6 +1760,9 @@ export const AppProvider = ({ children }) => {
         requestTechnicianReplacement,
         deleteTicket,
         createServiceRequest,
+        updateServiceRequest,
+        editingTicket,
+        setEditingTicket,
 
         // Project Category (V1) — additive, separate from the ticket state above.
         projects,
