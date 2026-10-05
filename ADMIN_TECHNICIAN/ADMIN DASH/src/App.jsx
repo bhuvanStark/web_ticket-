@@ -45,6 +45,7 @@ import { BackOfficeDashboard } from './components/dashboard/BackOfficeDashboard'
 // TaskPro Sales Module V1 — Sales employee's own Leads page. Additive.
 import { MyLeadsPage } from './components/sales/MyLeadsPage';
 import { ViewAsSalesBanner } from './components/sales/ViewAsSalesBanner';
+import { SalesDailyReportPage } from './components/sales/SalesDailyReportPage';
 
 // Modals & Panels
 import { TicketDetailsModal } from './components/requests/TicketDetailsModal';
@@ -165,6 +166,7 @@ const MainLayout = () => {
       const isViewingAs = baseRole === 'admin';
       const page = activePage === 'my-attendance' && !isViewingAs ? <MyAttendancePage />
         : activePage === 'my-leads' ? <MyLeadsPage />
+        : activePage === 'my-daily-report' ? <SalesDailyReportPage />
         : <SalesDashboard />;
       return <><ViewAsSalesBanner />{page}</>;
     }

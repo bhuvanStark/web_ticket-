@@ -405,6 +405,46 @@ export const requireSales = async (req, res, next) => {
   }
 };
 
+// Sales audit fix — the Sales endpoints both roles share (lead details,
+// history, status, remarks, follow-ups, the realtime stream) used plain
+// requireAuth, which only checks the JWT signature: a deactivated, demoted,
+// or logged-out admin/salesperson kept write access until the token expired.
+// Same live is_active/token_version check as requireAdmin/requireSales, and
+// isSuperAdmin is read from the DB, never trusted from the token. Returns the
+// req.user to use, or throws { status, message }.
+export async function verifyLiveSession(decoded) {
+  const reject = (status, message) => Object.assign(new Error(message), { status });
+  if (decoded.role === 'admin') {
+    const session = await loadAdminSession(decoded.userId);
+    if (!session || !session.is_active) throw reject(401, 'This account is inactive or no longer exists');
+    if (session.token_version !== decoded.tokenVersion) throw reject(401, 'Your session has been revoked — please log in again');
+    return { ...decoded, isSuperAdmin: session.is_super_admin === true };
+  }
+  if (decoded.role === 'sales') {
+    const session = await loadSalesSession(decoded.userId);
+    if (!session || !session.is_active) throw reject(401, 'This account is inactive or no longer exists');
+    if (session.token_version !== decoded.tokenVersion) throw reject(401, 'Your session has been revoked — please log in again');
+    return decoded;
+  }
+  throw reject(403, 'Admin or Sales access required');
+}
+
+export const requireAdminOrSales = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, error: 'Unauthorized', message: 'Missing authorization header' });
+    }
+    const decoded = verifyTokenFn(authHeader.substring(7));
+    req.user = await verifyLiveSession(decoded);
+    req.userId = req.user.userId;
+    next();
+  } catch (error) {
+    const status = error.status || 401;
+    return res.status(status).json({ success: false, error: status === 403 ? 'Forbidden' : 'Unauthorized', message: error.message });
+  }
+};
+
 export const requireBackOffice = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;

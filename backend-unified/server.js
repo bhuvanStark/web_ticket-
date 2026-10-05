@@ -33,7 +33,8 @@ import backOfficeRouter from './routes/backOffice.js';
 // TaskPro Sales Module V1 — leads (separate resource from the sales
 // employee roster above). Additive only.
 import leadsRouter from './routes/leads.js';
-import { startLeadSweepInterval } from './services/leadService.js';
+// Sales Daily Report (pipeline V2) — separate resource from leads.
+import salesDailyReportsRouter from './routes/salesDailyReports.js';
 
 // Load environment variables
 dotenv.config();
@@ -131,6 +132,7 @@ app.use('/api/admin/attendance', adminAttendanceRouter);
 app.use('/api/sales', salesRouter);
 app.use('/api/back-office', backOfficeRouter);
 app.use('/api/sales-leads', leadsRouter);
+app.use('/api/sales-daily-reports', salesDailyReportsRouter);
 
 // ============================================
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)
@@ -174,11 +176,6 @@ const startServer = async () => {
     console.log('Testing PostgreSQL connection...');
     await checkDatabase();
     console.log('PostgreSQL connection successful');
-
-    // TaskPro Sales Module V1 — self-healing 5-day-rule sweep (see
-    // leadService.releaseOverdueLeads's doc comment for why this exists
-    // alongside the lazy per-request sweep).
-    startLeadSweepInterval();
 
     const server = app.listen(PORT, () => {
       console.log(`

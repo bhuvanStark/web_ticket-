@@ -23,13 +23,14 @@ router.use(requireAdmin, requirePermission('sales'));
 
 const SELECT_FIELDS = 'id, email, full_name, phone, location, is_active, created_at, updated_at';
 
-router.get('/', async (_req, res) => {
+// ?include_inactive=true also returns deactivated employees (the Leads tab
+// needs their names for the Won/Lost leads they still own); everything that
+// assigns work keeps using the default active-only list.
+router.get('/', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('sales')
-      .select(SELECT_FIELDS)
-      .eq('is_active', true)
-      .order('full_name', { ascending: true });
+    let q = supabase.from('sales').select(SELECT_FIELDS);
+    if (req.query.include_inactive !== 'true') q = q.eq('is_active', true);
+    const { data, error } = await q.order('full_name', { ascending: true });
     if (error) throw error;
     res.json({ success: true, data: data || [] });
   } catch (error) {

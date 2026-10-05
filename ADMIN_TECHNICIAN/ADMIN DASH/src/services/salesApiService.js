@@ -6,8 +6,10 @@
 // ticket/project/technician-related.
 import { authFetch, readApiData, authHeaders, API_BASE_URL } from './adminApiService';
 
-export async function fetchSalesInApi() {
-  const res = await authFetch(`${API_BASE_URL}/sales`, { headers: authHeaders() });
+// includeInactive: also deactivated employees (for showing names on the
+// leads they still own) — never use that list to assign work.
+export async function fetchSalesInApi({ includeInactive = false } = {}) {
+  const res = await authFetch(`${API_BASE_URL}/sales${includeInactive ? '?include_inactive=true' : ''}`, { headers: authHeaders() });
   return readApiData(res, 'fetch Sales roster');
 }
 

@@ -19,6 +19,7 @@ import {
 // TaskPro Sales Module V1 — Leads tab, additive alongside the roster tab below.
 import { AdminLeadsTab } from './AdminLeadsTab';
 import { AdminLeadsAnalyticsTab } from './AdminLeadsAnalyticsTab';
+import { AdminDailyReportsTab } from './AdminDailyReportsTab';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -376,6 +377,7 @@ export const SalesPage = () => {
         {[
           { id: 'leads', label: 'Leads' },
           { id: 'analytics', label: 'Analytics' },
+          { id: 'daily-reports', label: 'Daily Reports' },
           { id: 'roster', label: 'Sales Team' }
         ].map((t) => (
           <button
@@ -389,7 +391,10 @@ export const SalesPage = () => {
           </button>
         ))}
       </div>
-      {tab === 'leads' ? <AdminLeadsTab /> : tab === 'analytics' ? <AdminLeadsAnalyticsTab /> : <SalesRosterTab />}
+      {tab === 'leads' ? <AdminLeadsTab />
+        : tab === 'analytics' ? <AdminLeadsAnalyticsTab />
+        : tab === 'daily-reports' ? <AdminDailyReportsTab />
+        : <SalesRosterTab />}
     </div>
   );
 };

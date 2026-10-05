@@ -330,7 +330,8 @@ export const Sidebar = () => {
             not "log out". A real technician login keeps the logout button. */}
         {baseRole === 'admin' && (role === 'tech' || role === 'sales') ? (
           <button
-            onClick={() => switchRole('admin')}
+            // Leaving a Sales "View as" returns to the Admin Sales page it came from.
+            onClick={() => { const fromSales = role === 'sales'; switchRole('admin'); if (fromSales) setActivePage('sales'); }}
             title={isSidebarCollapsed ? 'Back to Admin' : ''}
             className={`mt-2 flex items-center justify-center gap-2 rounded-md text-xs font-semibold text-[#004898] hover:bg-[#EFF5FC] border border-[#B3D1F2] transition-all ${isSidebarCollapsed ? 'w-10 h-10 p-0' : 'w-full px-3 py-2'}`}
           >

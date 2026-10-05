@@ -1,18 +1,22 @@
-// Admin → Sales → Analytics. Needs Attention, overall conversion rate and
-// the Sales leaderboard. Self-contained like AdminLeadsTab (own fetch,
-// realtime refresh + poll fallback); every number is computed server-side
-// by leadService.getAnalytics — this file only formats it.
+// Admin → Sales → Analytics. Live pipeline (5 active stages, due <24h,
+// overdue), Needs Attention, overall conversion rate and the Sales
+// leaderboard. Self-contained like AdminLeadsTab (own fetch, realtime
+// refresh + poll fallback); every number is computed server-side by
+// leadService.getAnalytics — this file only formats it.
 //
-// Conversion rate = Won ÷ (Won + Lost), over leads closed in the selected
-// period (India time; weeks start Monday). Open leads are undecided and Dead
-// is an Admin disqualification, so neither counts. Leaderboard order: Won ₹,
-// then conversion rate, then Won count.
+// The leaderboard is ranked by number of Won leads only (ties share a rank);
+// value and conversion rate are not part of the ranking. Clicking a name
+// opens that person's pipeline summary. The period filter (India time;
+// weeks start Monday) applies to Won/Lost outcomes only — the pipeline is
+// always "right now".
 import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { AlertTriangle, Target, Clock3, Inbox, ChevronDown, ChevronUp, Trophy } from 'lucide-react';
+import { AlertTriangle, Target, Clock3, ChevronDown, ChevronUp, Trophy, X, AlarmClock } from 'lucide-react';
 import { fetchLeadsAnalytics, subscribeToLeadEvents } from '../../services/leadsApiService';
 import { LeadStatCard } from './LeadStatCards';
+import { PipelineSummaryBar } from './PipelineSummaryBar';
 import { formatInr } from './leadFormat';
+import { STATUS_LABEL, timerLabel } from './leadPipeline';
 import { TableSkeleton } from '../common/SkeletonLoader';
 
 const PERIODS = [
@@ -20,23 +24,13 @@ const PERIODS = [
   { id: 'month', label: 'This Month' },
   { id: 'week', label: 'This Week' }
 ];
+const periodPhrase = (period) => (period === 'all' ? 'to date' : period === 'month' ? 'this month' : 'this week');
 
 const pct = (rate) => (rate == null ? '—' : `${Math.round(rate * 1000) / 10}%`);
+const openCount = (pipeline) => Object.values(pipeline || {}).reduce((n, s) => n + s.count, 0);
+const overdueCount = (pipeline) => Object.values(pipeline || {}).reduce((n, s) => n + s.overdue, 0);
 
-const timeLeft = (iso) => {
-  const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return 'any moment';
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-};
-
-const daysAgo = (iso) => {
-  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  return `${d} day${d === 1 ? '' : 's'} ago`;
-};
-
-const AttentionGroup = ({ icon: Icon, title, group, renderMeta }) => {
+const AttentionGroup = ({ icon: Icon, title, tone, group }) => {
   const [open, setOpen] = useState(false);
   const hasItems = group.items.length > 0;
   return (
@@ -46,12 +40,11 @@ const AttentionGroup = ({ icon: Icon, title, group, renderMeta }) => {
         className={`w-full flex items-center justify-between gap-3 px-4 py-3 text-left ${hasItems ? 'cursor-pointer hover:bg-[#F8FAFC]' : 'cursor-default'} rounded-xl`}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Icon className="w-4 h-4 text-[#B54708] shrink-0" />
+          <Icon className={`w-4 h-4 shrink-0 ${tone}`} />
           <span className="text-sm font-bold text-[#172033]">{title}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <span className="text-sm font-extrabold text-[#B54708]">{group.count}</span>
-          <span className="text-xs font-bold text-[#344054]">{formatInr(group.value)}</span>
+          <span className={`text-sm font-extrabold ${tone}`}>{group.count}</span>
           {hasItems && (open ? <ChevronUp className="w-4 h-4 text-[#667085]" /> : <ChevronDown className="w-4 h-4 text-[#667085]" />)}
         </div>
       </button>
@@ -61,9 +54,9 @@ const AttentionGroup = ({ icon: Icon, title, group, renderMeta }) => {
             <div key={item.id} className="px-4 py-2 flex items-center justify-between gap-3 text-xs">
               <div className="min-w-0">
                 <div className="font-bold text-[#172033] truncate">{item.company}</div>
-                <div className="text-[#667085]">{renderMeta(item)}</div>
+                <div className="text-[#667085]">{item.assigned_name || 'Unknown'} · {STATUS_LABEL[item.status]}</div>
               </div>
-              <span className="font-semibold text-[#344054] shrink-0">{item.value_estimate == null ? '—' : formatInr(item.value_estimate)}</span>
+              <span className={`font-bold shrink-0 ${tone}`}>{timerLabel(new Date(item.deadline).getTime() - Date.now())}</span>
             </div>
           ))}
         </div>
@@ -73,39 +66,63 @@ const AttentionGroup = ({ icon: Icon, title, group, renderMeta }) => {
 };
 
 const MEDALS = {
-  1: { emoji: '🥇', ring: 'border-[#F5C542]', bg: 'bg-gradient-to-b from-[#FFF8E1] to-white', label: 'text-[#9A6B00]', height: 'sm:pt-8' },
-  2: { emoji: '🥈', ring: 'border-[#C0C7D1]', bg: 'bg-gradient-to-b from-[#F4F6F9] to-white', label: 'text-[#475467]', height: 'sm:pt-5' },
-  3: { emoji: '🥉', ring: 'border-[#D9A273]', bg: 'bg-gradient-to-b from-[#FDF1E7] to-white', label: 'text-[#9C5A24]', height: 'sm:pt-3' }
+  1: { emoji: '🥇', ring: 'border-[#F5C542]', bg: 'bg-gradient-to-b from-[#FFF8E1] to-white', label: 'text-[#9A6B00]' },
+  2: { emoji: '🥈', ring: 'border-[#C0C7D1]', bg: 'bg-gradient-to-b from-[#F4F6F9] to-white', label: 'text-[#475467]' },
+  3: { emoji: '🥉', ring: 'border-[#D9A273]', bg: 'bg-gradient-to-b from-[#FDF1E7] to-white', label: 'text-[#9C5A24]' }
 };
 
-const PodiumCard = ({ entry }) => {
-  const m = MEDALS[entry.rank];
+const NameButton = ({ entry, onOpen, className = '' }) => (
+  <button onClick={() => onOpen(entry)} className={`font-extrabold text-[#172033] hover:text-[#004898] hover:underline truncate max-w-full ${className}`} title="View pipeline">
+    {entry.name}
+  </button>
+);
+
+const PodiumCard = ({ entry, onOpen }) => {
+  const m = MEDALS[entry.rank] || MEDALS[3];
   return (
-    <div className={`rounded-2xl border-2 ${m.ring} ${m.bg} p-5 ${m.height} text-center shadow-sm ${entry.rank === 1 ? 'sm:-mt-4' : ''}`}>
-      <div className="text-4xl leading-none mb-2" aria-label={`Rank ${entry.rank}`}>{m.emoji}</div>
-      <div className="text-base font-extrabold text-[#172033] truncate">{entry.name}</div>
+    <div className={`rounded-2xl border-2 ${m.ring} ${m.bg} p-4 text-center shadow-sm`}>
+      <div className="text-3xl leading-none mb-2" aria-label={`Rank ${entry.rank}`}>{m.emoji}</div>
+      <NameButton entry={entry} onOpen={onOpen} className="text-base block mx-auto" />
       {entry.location && <div className="text-[11px] text-[#667085]">{entry.location}</div>}
-      <div className={`text-2xl font-extrabold mt-3 ${m.label}`}>{formatInr(entry.wonValue)}</div>
-      <div className="text-[11px] font-semibold text-[#667085] uppercase tracking-wider">Won value</div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-lg bg-white/80 border border-[#E4E7EC] py-1.5">
-          <div className="font-extrabold text-[#172033]">{pct(entry.conversionRate)}</div>
-          <div className="text-[10px] text-[#667085]">Conversion</div>
-        </div>
-        <div className="rounded-lg bg-white/80 border border-[#E4E7EC] py-1.5">
-          <div className="font-extrabold text-[#172033]">{entry.wonCount}</div>
-          <div className="text-[10px] text-[#667085]">Won</div>
-        </div>
-      </div>
+      <div className={`text-3xl font-extrabold mt-2 ${m.label}`}>{entry.wonCount}</div>
+      <div className="text-[11px] font-semibold text-[#667085] uppercase tracking-wider">Won</div>
+      <div className="mt-2 text-[11px] text-[#667085]">{entry.lostCount} lost · {openCount(entry.pipeline)} open</div>
     </div>
   );
 };
+
+const SalespersonModal = ({ entry, period, onClose }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl border border-[#E4E7EC]" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-start justify-between p-5 border-b border-[#E4E7EC]">
+        <div>
+          <h3 className="text-lg font-bold text-[#172033]">{entry.name}</h3>
+          <p className="text-xs text-[#667085]">{[entry.location, `Rank #${entry.rank}`].filter(Boolean).join(' · ')}</p>
+        </div>
+        <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
+      </div>
+      <div className="p-5 space-y-4">
+        <div>
+          <h4 className="text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">Current pipeline</h4>
+          <PipelineSummaryBar stages={entry.pipeline} closed={{ won: entry.wonCount, lost: entry.lostCount }} />
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="rounded-lg border border-[#E4E7EC] py-2"><div className="text-lg font-extrabold text-[#172033]">{openCount(entry.pipeline)}</div><div className="text-[11px] text-[#667085]">Open</div></div>
+          <div className="rounded-lg border border-[#FECDCA] bg-[#FEF3F2] py-2"><div className="text-lg font-extrabold text-[#B42318]">{overdueCount(entry.pipeline)}</div><div className="text-[11px] text-[#B42318]">Overdue</div></div>
+          <div className="rounded-lg border border-[#ABEFC6] bg-[#ECFDF3] py-2"><div className="text-lg font-extrabold text-[#027A48]">{entry.wonCount}</div><div className="text-[11px] text-[#027A48]">Won</div></div>
+        </div>
+        <p className="text-[11px] text-[#667085]">Stages show leads open right now. Won/Lost are for leads closed {periodPhrase(period)}.</p>
+      </div>
+    </div>
+  </div>
+);
 
 export const AdminLeadsAnalyticsTab = () => {
   const { showToast } = useApp();
   const [period, setPeriod] = useState('all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [person, setPerson] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -128,23 +145,23 @@ export const AdminLeadsAnalyticsTab = () => {
   if (loading && !data) return <TableSkeleton rows={4} />;
   if (!data) return <div className="p-8 text-center text-sm text-[#667085]">Analytics are unavailable right now.</div>;
 
-  const { needsAttention, overall, leaderboard } = data;
-  const attentionCount = needsAttention.returningSoon.count + needsAttention.stalePool.count;
-  const attentionValue = needsAttention.returningSoon.value + needsAttention.stalePool.value;
+  const { pipeline, needsAttention, overall, leaderboard } = data;
   const closedCount = overall.wonCount + overall.lostCount;
-  // Only people with at least one closed lead in the period make the podium;
-  // a podium of zeros says nothing. Everyone else is listed below.
-  const podium = leaderboard.filter((e) => e.wonCount + e.lostCount > 0).slice(0, 3);
+  // Only people with at least one win make the podium; everyone else is
+  // listed below in rank order.
+  const podium = leaderboard.filter((e) => e.wonCount > 0).slice(0, 3);
   const podiumIds = new Set(podium.map((e) => e.salesId));
   const rest = leaderboard.filter((e) => !podiumIds.has(e.salesId));
   const periodLabel = PERIODS.find((p) => p.id === period)?.label;
+  // Keep the selected person's numbers fresh across refreshes.
+  const personEntry = person ? leaderboard.find((e) => e.salesId === person.salesId) || person : null;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-extrabold text-[#172033] tracking-tight">Sales Analytics</h2>
-          <p className="text-xs text-[#667085] mt-0.5">Conversion and leaderboard reflect leads closed in the selected period (India time).</p>
+          <p className="text-xs text-[#667085] mt-0.5">Pipeline is live. Conversion and leaderboard reflect leads closed in the selected period (India time).</p>
         </div>
         <div className="inline-flex bg-white border border-[#E4E7EC] rounded-lg p-1 self-start">
           {PERIODS.map((p) => (
@@ -159,29 +176,28 @@ export const AdminLeadsAnalyticsTab = () => {
         </div>
       </div>
 
+      <div className="card p-5 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-extrabold text-[#172033] mr-auto">Pipeline now <span className="font-semibold text-[#667085]">· {pipeline.active} open</span></h3>
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#FFFAEB] border border-[#FEDF89] px-2.5 py-1 text-[11px] font-bold text-[#B54708]">
+            <Clock3 className="w-3.5 h-3.5" /> {pipeline.dueSoon} due in &lt;24h
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#FEF3F2] border border-[#FECDCA] px-2.5 py-1 text-[11px] font-bold text-[#B42318]">
+            <AlarmClock className="w-3.5 h-3.5" /> {pipeline.overdue} overdue
+          </span>
+        </div>
+        <PipelineSummaryBar stages={pipeline.stages} />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card p-5 border-l-4 border-l-[#F79009] space-y-3">
           <div className="flex items-center justify-between text-[#667085]">
             <span className="text-xs font-bold uppercase tracking-wider">Needs Attention</span>
             <div className="p-2 rounded-lg bg-[#FEF0C7] text-[#B54708]"><AlertTriangle className="w-5 h-5" /></div>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-[#B54708]">{attentionCount}</span>
-            <span className="text-sm font-bold text-[#344054]">{formatInr(attentionValue)}</span>
-          </div>
-          <p className="text-[11px] text-[#667085]">Current state — not affected by the period filter.</p>
-          <AttentionGroup
-            icon={Clock3}
-            title="Returning to pool within 24h"
-            group={needsAttention.returningSoon}
-            renderMeta={(i) => `${i.assigned_name || 'Unknown'} · returns in ${timeLeft(i.releases_at)}`}
-          />
-          <AttentionGroup
-            icon={Inbox}
-            title={`Pool leads untouched ${needsAttention.stalePool.days}+ days`}
-            group={needsAttention.stalePool}
-            renderMeta={(i) => `Last activity ${daysAgo(i.last_activity_at)}`}
-          />
+          <p className="text-[11px] text-[#667085]">Overdue leads stay with their salesperson. To act on one, open the Leads tab and use the <strong>Overdue</strong> or <strong>Expired</strong> filter (Give back, Give to another salesperson, or Ignore).</p>
+          <AttentionGroup icon={AlarmClock} title="Overdue" tone="text-[#B42318]" group={needsAttention.overdue} />
+          <AttentionGroup icon={Clock3} title="Due within 24 hours" tone="text-[#B54708]" group={needsAttention.dueSoon} />
         </div>
 
         <LeadStatCard label="Overall Conversion Rate" icon={Target} tone="green">
@@ -190,8 +206,7 @@ export const AdminLeadsAnalyticsTab = () => {
             <strong>{overall.wonCount}</strong> won of <strong>{closedCount}</strong> closed · {formatInr(overall.wonValue)} won
           </p>
           <p className="text-[11px] text-[#667085] mt-3 leading-relaxed">
-            Won ÷ (Won + Lost) for leads closed {period === 'all' ? 'to date' : period === 'month' ? 'this month' : 'this week'}.
-            Open leads (New, Meeting, Proposal, Follow-up) and Dead leads are not counted.
+            Won ÷ (Won + Lost) for leads closed {periodPhrase(period)}. Open and Dead leads are not counted.
           </p>
         </LeadStatCard>
       </div>
@@ -200,21 +215,14 @@ export const AdminLeadsAnalyticsTab = () => {
         <div className="flex items-center gap-2">
           <Trophy className="w-5 h-5 text-[#F5A300]" />
           <h3 className="text-base font-extrabold text-[#172033]">Leaderboard · {periodLabel}</h3>
-          <span className="text-[11px] text-[#667085] ml-auto hidden sm:inline">Ranked by Won ₹ → Conversion → Won count</span>
+          <span className="text-[11px] text-[#667085] ml-auto hidden sm:inline">Ranked by Won leads · click a name for their pipeline</span>
         </div>
 
         {podium.length === 0 ? (
-          <p className="text-sm text-center text-[#667085] py-6">No leads were won or lost {period === 'all' ? 'yet' : period === 'month' ? 'this month' : 'this week'}.</p>
+          <p className="text-sm text-center text-[#667085] py-4">No leads were won {period === 'all' ? 'yet' : periodPhrase(period)}.</p>
         ) : (
-          // Classic podium order on wider screens (2 · 1 · 3); rank order when stacked.
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:items-end">
-            {[podium[1], podium[0], podium[2]].map((entry, i) => (
-              entry ? (
-                <div key={entry.salesId} className={entry.rank === 1 ? 'order-first sm:order-none' : entry.rank === 2 ? 'order-2 sm:order-none' : 'order-3 sm:order-none'}>
-                  <PodiumCard entry={entry} />
-                </div>
-              ) : <div key={`empty-${i}`} className="hidden sm:block" />
-            ))}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {podium.map((entry) => <PodiumCard key={entry.salesId} entry={entry} onOpen={setPerson} />)}
           </div>
         )}
 
@@ -225,10 +233,10 @@ export const AdminLeadsAnalyticsTab = () => {
                 <tr>
                   <th className="px-4 py-3">Rank</th>
                   <th className="px-4 py-3">Salesperson</th>
-                  <th className="px-4 py-3 text-right">Won ₹</th>
-                  <th className="px-4 py-3 text-right">Conversion</th>
                   <th className="px-4 py-3 text-right">Won</th>
                   <th className="px-4 py-3 text-right">Lost</th>
+                  <th className="px-4 py-3 text-right">Open</th>
+                  <th className="px-4 py-3 text-right">Overdue</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#F2F4F7]">
@@ -236,13 +244,13 @@ export const AdminLeadsAnalyticsTab = () => {
                   <tr key={e.salesId} className="hover:bg-[#F8FAFC]">
                     <td className="px-4 py-3 font-bold text-[#667085]">#{e.rank}</td>
                     <td className="px-4 py-3">
-                      <div className="font-bold text-[#172033]">{e.name}</div>
+                      <NameButton entry={e} onOpen={setPerson} />
                       {e.location && <div className="text-[11px] text-[#667085]">{e.location}</div>}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-[#344054]">{formatInr(e.wonValue)}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-[#344054]">{pct(e.conversionRate)}</td>
-                    <td className="px-4 py-3 text-right text-[#475467]">{e.wonCount}</td>
+                    <td className="px-4 py-3 text-right font-extrabold text-[#027A48]">{e.wonCount}</td>
                     <td className="px-4 py-3 text-right text-[#475467]">{e.lostCount}</td>
+                    <td className="px-4 py-3 text-right text-[#475467]">{openCount(e.pipeline)}</td>
+                    <td className={`px-4 py-3 text-right font-semibold ${overdueCount(e.pipeline) ? 'text-[#B42318]' : 'text-[#98A2B3]'}`}>{overdueCount(e.pipeline)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -250,6 +258,8 @@ export const AdminLeadsAnalyticsTab = () => {
           </div>
         )}
       </div>
+
+      {personEntry && <SalespersonModal entry={personEntry} period={period} onClose={() => setPerson(null)} />}
     </div>
   );
 };

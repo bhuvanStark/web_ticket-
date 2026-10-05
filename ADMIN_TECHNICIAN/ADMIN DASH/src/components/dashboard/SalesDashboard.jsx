@@ -4,14 +4,14 @@
 // this page reads nothing from AppContext beyond identity/navigation — the
 // same isolation AttendanceBanner itself already guarantees.
 //
-// Lead summary cards (Leads Taken / Won / Returning to Pool in 1 Day) come
+// Lead summary cards (Open Leads / Won / Overdue) come
 // from /api/sales-leads/mine/summary, or — while a Super Admin is viewing as
 // this employee — the read-only /view-as/:id/summary. In that mode the
 // AttendanceBanner is not rendered: check-in/out acts as the employee and
 // needs their own JWT.
 import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Briefcase, Trophy, Hourglass } from 'lucide-react';
+import { Briefcase, Trophy, AlarmClock } from 'lucide-react';
 import { AttendanceBanner } from './AttendanceBanner';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { LeadStatCard, LeadStatGrid } from '../sales/LeadStatCards';
@@ -58,14 +58,14 @@ export const SalesDashboard = () => {
 
       <ErrorBoundary>
         <LeadStatGrid>
-          <LeadStatCard label="Leads Taken" icon={Briefcase} tone="blue" stat={summary?.taken} hint="Assigned to you and still open" onClick={goToLeads} />
+          <LeadStatCard label="Open Leads" icon={Briefcase} tone="blue" stat={summary?.taken} hint={summary?.dueToday ? `${summary.dueToday} follow-up${summary.dueToday === 1 ? '' : 's'} due today` : 'Assigned to you and still in the pipeline'} onClick={goToLeads} />
           <LeadStatCard label="Won" icon={Trophy} tone="green" stat={summary?.won} onClick={goToLeads} />
           <LeadStatCard
-            label="Returning to Pool in 1 Day"
-            icon={Hourglass}
-            tone={summary?.returningSoon?.count ? 'red' : 'amber'}
-            stat={summary?.returningSoon}
-            hint="Reach Meeting to keep these leads"
+            label="Overdue"
+            icon={AlarmClock}
+            tone={summary?.overdue?.count ? 'red' : 'amber'}
+            stat={summary?.overdue}
+            hint={summary?.dueSoon?.count ? `${summary.dueSoon.count} more due within 24 hours` : 'Past their stage deadline'}
             onClick={goToLeads}
           />
         </LeadStatGrid>

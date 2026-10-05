@@ -23,7 +23,8 @@ import {
   History,
   Sparkles,
   Clock3,
-  TrendingUp
+  TrendingUp,
+  FileText
 } from 'lucide-react';
 
 export const techNavItems = [
@@ -44,6 +45,8 @@ export const salesNavItems = [
   // Leads aren't a page that gets hidden by an Admin's enabledModules
   // setting (that system is Admin-only), just always present for Sales.
   { id: 'my-leads', label: 'My Leads', mobileLabel: 'Leads', icon: TrendingUp },
+  // Sales pipeline V2 — one report per day; read-only in Super Admin "View as".
+  { id: 'my-daily-report', label: 'Daily Report', mobileLabel: 'Report', icon: FileText },
   { id: 'my-attendance', label: 'My Attendance', mobileLabel: 'Attendance', icon: Clock3 }
 ];
 

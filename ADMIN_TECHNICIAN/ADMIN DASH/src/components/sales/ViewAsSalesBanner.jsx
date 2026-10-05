@@ -6,7 +6,7 @@ import { Eye, ArrowLeft } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
 export const ViewAsSalesBanner = () => {
-  const { isViewingAsSales, currentUser, switchRole } = useApp();
+  const { isViewingAsSales, currentUser, switchRole, setActivePage } = useApp();
   if (!isViewingAsSales) return null;
   return (
     <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-[#B3D1F2] bg-[#EFF5FC] px-4 py-3">
@@ -17,7 +17,8 @@ export const ViewAsSalesBanner = () => {
         </span>
       </div>
       <button
-        onClick={() => switchRole('admin')}
+        // Back to the Admin Sales page this view was opened from.
+        onClick={() => { switchRole('admin'); setActivePage('sales'); }}
         className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#B3D1F2] bg-white px-3 py-1.5 text-xs font-bold text-[#004898] hover:bg-[#F8FAFC] shrink-0"
       >
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin

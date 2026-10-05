@@ -7,11 +7,13 @@
 // Admin access to everything in this file additionally requires the 'sales'
 // admin_permissions module (§2 "Sales is an Admin module controlled by the
 // RBAC above" — a Super Admin bypasses this the same as any other module).
-// Sales employees reach their own subset (pool/mine/accept/release/status/
-// follow-ups/remarks on leads they own, plus creating and editing their own) through requireSales, unchanged from their
-// existing identity/session.
+// Sales employees reach their own subset (mine/release/status/follow-ups/
+// remarks on leads they own, plus creating and editing their own) through
+// requireSales, unchanged from their existing identity/session. Pipeline V2
+// removed the common pool: Admin assigns leads directly (one or in bulk).
+import crypto from 'node:crypto';
 import express from 'express';
-import { requireAdmin, requirePermission, requireSuperAdmin, requireSales, requireAuth, verifyTokenFn } from '../middleware/auth.js';
+import { requireAdmin, requirePermission, requireSuperAdmin, requireSales, requireAdminOrSales, verifyLiveSession } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
 import { supabase } from '../config/supabaseClient.js';
 import * as leadService from '../services/leadService.js';
@@ -22,22 +24,25 @@ const router = express.Router();
 // Shared-endpoint authorization helper. GET /:id, PATCH /:id/status,
 // POST /:id/follow-ups, and GET /:id/history are reachable by either an
 // admin (with the 'sales' module) or the owning Sales employee — each side
-// otherwise has its own dedicated route (list/pool/mine, assign, accept,
-// etc.), so this is deliberately the only place both roles meet.
+// otherwise has its own dedicated route (list/mine, assign, release,
+// etc.), so this is deliberately the only place both roles meet. Every
+// route using it sits behind requireAdminOrSales, so the session is live
+// (active, not revoked) and req.user.isSuperAdmin comes from the DB.
 // ============================================
+async function hasSalesModule(adminId) {
+  const { data } = await supabase
+    .from('admin_permissions')
+    .select('can_access')
+    .eq('admin_id', adminId)
+    .eq('module', 'sales')
+    .maybeSingle();
+  return data?.can_access === true;
+}
+
 async function actorAndAccess(req, lead) {
   const { role, userId, isSuperAdmin } = req.user;
   if (role === 'admin') {
-    let canAccess = isSuperAdmin === true;
-    if (!canAccess) {
-      const { data } = await supabase
-        .from('admin_permissions')
-        .select('can_access')
-        .eq('admin_id', userId)
-        .eq('module', 'sales')
-        .maybeSingle();
-      canAccess = data?.can_access === true;
-    }
+    const canAccess = isSuperAdmin === true || await hasSalesModule(userId);
     const { data: admin } = await supabase.from('admins').select('full_name').eq('id', userId).maybeSingle();
     return { actor: { type: 'admin', id: userId, name: admin?.full_name || null, isSuperAdmin }, canAccess, isOwner: true };
   }
@@ -49,10 +54,28 @@ async function actorAndAccess(req, lead) {
   return { actor: null, canAccess: false, isOwner: false };
 }
 
+// `code` (e.g. DUPLICATE_LEAD, DUPLICATE_WON, WON_PENDING) and `duplicates` let the UI show
+// the duplicate warning and offer "continue anyway".
 function sendError(res, error) {
   const status = error.status || 500;
-  res.status(status).json({ success: false, error: error.message || 'Error' });
+  res.status(status).json({
+    success: false,
+    error: error.message || 'Error',
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.duplicates ? { duplicates: error.duplicates } : {})
+  });
 }
+
+const confirmed = (req) => req.body?.confirm_duplicate === true;
+
+// Query options shared by the Sales "mine" list and its Super Admin view-as twin.
+const mineOptions = ({ scope, status, q, limit, offset }) => ({
+  scope: scope || 'active',
+  status: status || undefined,
+  q: q || undefined,
+  limit: limit ? Number(limit) : 50,
+  offset: offset ? Number(offset) : 0
+});
 
 // ============================================
 // ADMIN-ONLY
@@ -60,11 +83,16 @@ function sendError(res, error) {
 
 router.get('/', requireAdmin, requirePermission('sales'), async (req, res) => {
   try {
-    const { status, assigned_to, unassigned, limit, offset } = req.query;
+    const { status, assigned_to, unassigned, overdue, expired, won_requests, archived, q, limit, offset } = req.query;
     const result = await leadService.listLeads({
       status: status || undefined,
       assignedTo: assigned_to || undefined,
       unassignedOnly: unassigned === 'true',
+      overdueOnly: overdue === 'true',
+      expiredOnly: expired === 'true',
+      wonRequestsOnly: won_requests === 'true',
+      archivedOnly: archived === 'true',
+      q: q || undefined,
       limit: limit ? Number(limit) : 50,
       offset: offset ? Number(offset) : 0
     });
@@ -121,18 +149,7 @@ router.get('/view-as/:id/summary', requireSuperAdmin, validateUUID, requireSales
 
 router.get('/view-as/:id/mine', requireSuperAdmin, validateUUID, requireSalesEmployee, async (req, res) => {
   try {
-    const { limit, offset } = req.query;
-    const result = await leadService.listMine(req.params.id, { limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
-    res.json({ success: true, data: result.data, pagination: { total: result.count } });
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
-router.get('/view-as/:id/pool', requireSuperAdmin, validateUUID, requireSalesEmployee, async (req, res) => {
-  try {
-    const { limit, offset } = req.query;
-    const result = await leadService.listPool({ limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
+    const result = await leadService.listMine(req.params.id, mineOptions(req.query));
     res.json({ success: true, data: result.data, pagination: { total: result.count } });
   } catch (error) {
     sendError(res, error);
@@ -142,7 +159,7 @@ router.get('/view-as/:id/pool', requireSuperAdmin, validateUUID, requireSalesEmp
 router.post('/', requireAdmin, requirePermission('sales'), async (req, res) => {
   try {
     const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
-    const data = await leadService.createLead(req.body || {}, { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    const data = await leadService.createLead(req.body || {}, { type: 'admin', id: req.user.userId, name: admin?.full_name }, { confirmDuplicate: confirmed(req) });
     res.status(201).json({ success: true, data });
   } catch (error) {
     sendError(res, error);
@@ -152,7 +169,7 @@ router.post('/', requireAdmin, requirePermission('sales'), async (req, res) => {
 router.put('/:id', requireAdmin, requirePermission('sales'), validateUUID, async (req, res) => {
   try {
     const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
-    const data = await leadService.updateLead(req.params.id, req.body || {}, { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    const data = await leadService.updateLead(req.params.id, req.body || {}, { type: 'admin', id: req.user.userId, name: admin?.full_name }, { confirmDuplicate: confirmed(req) });
     res.json({ success: true, data });
   } catch (error) {
     sendError(res, error);
@@ -166,6 +183,45 @@ router.post('/:id/assign', requireAdmin, requirePermission('sales'), validateUUI
     const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
     const data = await leadService.assignLead(req.params.id, sales_id, { type: 'admin', id: req.user.userId, name: admin?.full_name });
     res.json({ success: true, data, message: 'Lead assigned' });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Bulk assignment from the Admin Leads tab's multi-select:
+// { lead_ids: [uuid, ...], sales_id }. Won/archived leads are skipped and
+// reported back in `skipped`.
+router.post('/assign-bulk', requireAdmin, requirePermission('sales'), async (req, res) => {
+  try {
+    const { lead_ids, sales_id } = req.body || {};
+    if (!sales_id) return res.status(400).json({ success: false, error: 'sales_id is required' });
+    const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
+    const data = await leadService.assignLeads(lead_ids, sales_id, { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    res.json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Admin decision on an expired stage: { action: 'ignore' | 'restart' |
+// 'reassign', sales_id (reassign only) }.
+router.post('/:id/expiry', requireAdmin, requirePermission('sales'), validateUUID, async (req, res) => {
+  try {
+    const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
+    const data = await leadService.resolveExpiredLead(req.params.id, { action: req.body?.action, salesId: req.body?.sales_id }, { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    res.json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Admin decision on a Sales Won request (a Won on a lead with duplicates):
+// { action: 'approve' | 'reject', reason (reject only) }.
+router.post('/:id/won-request', requireAdmin, requirePermission('sales'), validateUUID, async (req, res) => {
+  try {
+    const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
+    const data = await leadService.resolveWonRequest(req.params.id, { action: req.body?.action, reason: req.body?.reason }, { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    res.json({ success: true, data });
   } catch (error) {
     sendError(res, error);
   }
@@ -188,7 +244,8 @@ router.delete('/:id', requireAdmin, requirePermission('sales'), validateUUID, as
 
 // §8 Excel import — Upload/parse happens client-side; both endpoints take
 // the same shape: { rows: [{ company, person_to_contact, email, phone,
-// value_estimate }, ...] }. /validate never writes.
+// value_estimate, demand }, ...] }, plus include_duplicates on /import.
+// /validate never writes.
 router.post('/import/validate', requireAdmin, requirePermission('sales'), async (req, res) => {
   try {
     const result = await leadService.checkImportRows(req.body?.rows || []);
@@ -201,7 +258,9 @@ router.post('/import/validate', requireAdmin, requirePermission('sales'), async 
 router.post('/import', requireAdmin, requirePermission('sales'), async (req, res) => {
   try {
     const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
-    const result = await leadService.importLeads(req.body?.rows || [], { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    const result = await leadService.importLeads(req.body?.rows || [], { type: 'admin', id: req.user.userId, name: admin?.full_name }, {
+      includeDuplicates: req.body?.include_duplicates === true
+    });
     res.json({ success: true, data: result });
   } catch (error) {
     sendError(res, error);
@@ -212,20 +271,9 @@ router.post('/import', requireAdmin, requirePermission('sales'), async (req, res
 // SALES-ONLY
 // ============================================
 
-router.get('/pool', requireSales, async (req, res) => {
-  try {
-    const { limit, offset } = req.query;
-    const result = await leadService.listPool({ limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
-    res.json({ success: true, data: result.data, pagination: { total: result.count } });
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
 router.get('/mine', requireSales, async (req, res) => {
   try {
-    const { limit, offset } = req.query;
-    const result = await leadService.listMine(req.user.userId, { limit: limit ? Number(limit) : 50, offset: offset ? Number(offset) : 0 });
+    const result = await leadService.listMine(req.user.userId, mineOptions(req.query));
     res.json({ success: true, data: result.data, pagination: { total: result.count } });
   } catch (error) {
     sendError(res, error);
@@ -242,13 +290,12 @@ router.get('/mine/summary', requireSales, async (req, res) => {
   }
 });
 
-// A Sales employee adding their own lead — assigned to them on creation,
-// never placed in the common pool (leadService.createLead's ownerSalesId).
+// A Sales employee adding their own lead — assigned to them on creation (leadService.createLead's ownerSalesId).
 // The owner is always req.user.userId, never an id from the request body.
 router.post('/mine', requireSales, async (req, res) => {
   try {
     const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
-    const data = await leadService.createLead(req.body || {}, { type: 'sales', id: req.user.userId, name: salesRow?.full_name }, { ownerSalesId: req.user.userId });
+    const data = await leadService.createLead(req.body || {}, { type: 'sales', id: req.user.userId, name: salesRow?.full_name }, { ownerSalesId: req.user.userId, confirmDuplicate: confirmed(req) });
     res.status(201).json({ success: true, data });
   } catch (error) {
     sendError(res, error);
@@ -261,18 +308,8 @@ router.post('/mine', requireSales, async (req, res) => {
 router.put('/:id/details', requireSales, validateUUID, async (req, res) => {
   try {
     const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
-    const data = await leadService.updateLeadAsSales(req.params.id, req.user.userId, req.body || {}, { type: 'sales', id: req.user.userId, name: salesRow?.full_name });
+    const data = await leadService.updateLeadAsSales(req.params.id, req.user.userId, req.body || {}, { type: 'sales', id: req.user.userId, name: salesRow?.full_name }, { confirmDuplicate: confirmed(req) });
     res.json({ success: true, data });
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
-router.post('/:id/accept', requireSales, validateUUID, async (req, res) => {
-  try {
-    const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
-    const data = await leadService.acceptLead(req.params.id, req.user.userId, { type: 'sales', id: req.user.userId, name: salesRow?.full_name });
-    res.json({ success: true, data, message: 'Lead accepted' });
   } catch (error) {
     sendError(res, error);
   }
@@ -282,7 +319,7 @@ router.post('/:id/release', requireSales, validateUUID, async (req, res) => {
   try {
     const { data: salesRow } = await supabase.from('sales').select('full_name').eq('id', req.user.userId).maybeSingle();
     const data = await leadService.releaseLead(req.params.id, req.user.userId, req.body?.reason, { type: 'sales', id: req.user.userId, name: salesRow?.full_name });
-    res.json({ success: true, data, message: 'Lead released back to the pool' });
+    res.json({ success: true, data, message: 'Lead returned to Admin for reassignment' });
   } catch (error) {
     sendError(res, error);
   }
@@ -291,28 +328,52 @@ router.post('/:id/release', requireSales, validateUUID, async (req, res) => {
 // ============================================
 // REALTIME (Phase 7, §5 "realtime updates/events plus API refresh
 // fallback"). Server-Sent Events — plain Express/Node, no new dependency.
-// EventSource cannot send an Authorization header, so the token travels as
-// a query param here only; verified the same way as every other protected
-// route, just not through the header-based middleware.
+//
+// EventSource cannot send an Authorization header. Audit fix: instead of
+// putting the long-lived access token in the URL (where it lands in logs and
+// history), the browser first trades its token for a single-use ticket that
+// expires in 60 seconds (POST /stream-ticket, normal header auth), then
+// opens /stream?ticket=…. The session is re-checked on every heartbeat, so a
+// deactivated or logged-out user's stream closes within ~25s. Sales
+// employees only receive events about leads they own (or just lost);
+// Admins with the Sales module receive everything.
 //
 // Registered here — before the generic '/:id' route below — deliberately:
-// Express matches GET routes in registration order, so '/stream' has to
-// come first or '/:id' would swallow it as id="stream" and run requireAuth
-// against a request that (by design) carries no Authorization header.
+// Express matches routes in registration order, so '/stream' has to come
+// first or '/:id' would swallow it as id="stream".
 // ============================================
-router.get('/stream', async (req, res) => {
+const STREAM_TICKET_TTL_MS = 60 * 1000;
+const streamTickets = new Map(); // ticket -> { user, expiresAt }
+
+// Live session + (for a normal admin) the Sales module. Throws when either is gone.
+async function checkStreamAccess(user) {
+  const live = await verifyLiveSession(user);
+  if (live.role === 'admin' && !live.isSuperAdmin && !await hasSalesModule(live.userId)) {
+    throw Object.assign(new Error('Forbidden'), { status: 403 });
+  }
+  return live;
+}
+
+router.post('/stream-ticket', requireAdminOrSales, async (req, res) => {
   try {
-    const decoded = verifyTokenFn(req.query.token || '');
-    if (!['admin', 'sales'].includes(decoded.role)) throw new Error('Forbidden');
-    if (decoded.role === 'admin' && !decoded.isSuperAdmin) {
-      const { data } = await supabase
-        .from('admin_permissions')
-        .select('can_access')
-        .eq('admin_id', decoded.userId)
-        .eq('module', 'sales')
-        .maybeSingle();
-      if (!data?.can_access) throw new Error('Forbidden');
-    }
+    await checkStreamAccess(req.user);
+    const now = Date.now();
+    for (const [key, entry] of streamTickets) if (entry.expiresAt <= now) streamTickets.delete(key);
+    const ticket = crypto.randomBytes(24).toString('hex');
+    streamTickets.set(ticket, { user: req.user, expiresAt: now + STREAM_TICKET_TTL_MS });
+    res.json({ success: true, data: { ticket, expiresInMs: STREAM_TICKET_TTL_MS } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.get('/stream', async (req, res) => {
+  const entry = streamTickets.get(String(req.query.ticket || ''));
+  streamTickets.delete(String(req.query.ticket || ''));
+  if (!entry || entry.expiresAt <= Date.now()) return res.status(401).end();
+  let user;
+  try {
+    user = await checkStreamAccess(entry.user);
   } catch {
     return res.status(401).end();
   }
@@ -324,13 +385,22 @@ router.get('/stream', async (req, res) => {
   });
   res.write('retry: 5000\n\n');
 
-  const onEvent = (event) => {
+  const onEvent = ({ owners, ...event }) => {
+    if (user.role === 'sales' && !owners.includes(user.userId)) return;
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
   leadService.emitter.on('lead-event', onEvent);
 
-  // Keep intermediary proxies/browsers from silently timing out the connection.
-  const heartbeat = setInterval(() => res.write(':ping\n\n'), 25000);
+  // Heartbeat keeps proxies from timing the connection out, and re-checks
+  // the session so revoked access ends the stream.
+  const heartbeat = setInterval(async () => {
+    try {
+      await checkStreamAccess(entry.user);
+      res.write(':ping\n\n');
+    } catch {
+      res.end();
+    }
+  }, 25000);
 
   req.on('close', () => {
     clearInterval(heartbeat);
@@ -342,14 +412,13 @@ router.get('/stream', async (req, res) => {
 // SHARED (admin-with-sales-permission OR owning Sales employee)
 // ============================================
 
-router.get('/:id', requireAuth, validateUUID, async (req, res) => {
+router.get('/:id', requireAdminOrSales, validateUUID, async (req, res) => {
   try {
     const lead = await leadService.getLead(req.params.id);
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
     const { canAccess, isOwner } = await actorAndAccess(req, lead);
-    // A Sales employee may view an unassigned pool lead (to decide whether to
-    // accept it) or their own lead, but never another salesperson's.
-    const salesAllowed = req.user.role === 'sales' && (!lead.assigned_to || isOwner);
+    // A Sales employee may only view their own leads (no common pool).
+    const salesAllowed = req.user.role === 'sales' && isOwner;
     const adminAllowed = req.user.role === 'admin' && canAccess;
     if (!salesAllowed && !adminAllowed) {
       return res.status(403).json({ success: false, error: 'Forbidden' });
@@ -360,7 +429,7 @@ router.get('/:id', requireAuth, validateUUID, async (req, res) => {
   }
 });
 
-router.get('/:id/history', requireAuth, validateUUID, async (req, res) => {
+router.get('/:id/history', requireAdminOrSales, validateUUID, async (req, res) => {
   try {
     const lead = await leadService.getLead(req.params.id);
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
@@ -369,13 +438,25 @@ router.get('/:id/history', requireAuth, validateUUID, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Forbidden' });
     }
     const history = await leadService.getHistory(req.params.id);
-    res.json({ success: true, data: history });
+    // Admin's expiry decisions, where a reassigned lead was copied from, and
+    // the ids of other leads for the same customer (Won requests and
+    // auto-closes) are internal — a salesperson sees their lead as an
+    // ordinary lead.
+    const INTERNAL_DETAILS = ['source', 'copied_from', 'duplicates', 'won_lead_id', 'requested_by'];
+    const visible = req.user.role === 'sales'
+      ? history
+        .filter((h) => !h.event_type.startsWith('expiry_'))
+        .map((h) => (INTERNAL_DETAILS.some((key) => key in (h.details || {}))
+          ? { ...h, details: Object.fromEntries(Object.entries(h.details).filter(([key]) => !INTERNAL_DETAILS.includes(key))) }
+          : h))
+      : history;
+    res.json({ success: true, data: visible });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-router.patch('/:id/status', requireAuth, validateUUID, async (req, res) => {
+router.patch('/:id/status', requireAdminOrSales, validateUUID, async (req, res) => {
   try {
     const lead = await leadService.getLead(req.params.id);
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
@@ -386,14 +467,19 @@ router.patch('/:id/status', requireAuth, validateUUID, async (req, res) => {
     if (!canAccess || (req.user.role === 'sales' && !isOwner)) {
       return res.status(403).json({ success: false, error: 'Forbidden' });
     }
-    const data = await leadService.updateStatus(req.params.id, req.body?.status, actor);
+    // value_estimate / ref_id: Proposal-onwards moves. lost_reason / lost_note:
+    // Lost and Dead. confirm_duplicate: Admin marking an already-Won customer Won.
+    const { status, value_estimate, ref_id, lost_reason, lost_note } = req.body || {};
+    const data = await leadService.updateStatus(req.params.id, status, actor, {
+      value_estimate, ref_id, lost_reason, lost_note, confirm_duplicate: req.body?.confirm_duplicate === true
+    });
     res.json({ success: true, data });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-router.patch('/:id/remarks', requireAuth, validateUUID, async (req, res) => {
+router.patch('/:id/remarks', requireAdminOrSales, validateUUID, async (req, res) => {
   try {
     const lead = await leadService.getLead(req.params.id);
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
@@ -410,7 +496,7 @@ router.patch('/:id/remarks', requireAuth, validateUUID, async (req, res) => {
   }
 });
 
-router.post('/:id/follow-ups', requireAuth, validateUUID, async (req, res) => {
+router.post('/:id/follow-ups', requireAdminOrSales, validateUUID, async (req, res) => {
   try {
     const lead = await leadService.getLead(req.params.id);
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });

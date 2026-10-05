@@ -1,75 +1,94 @@
 // TaskPro Sales Module V1 (TaskPro_Sales_RBAC_plan.md §3-9) — Admin's Leads
-// management: list/filter, create/edit, direct assignment, status/Dead,
-// history, and the Excel import wizard (Upload -> Validate -> Preview ->
+// management: list/filter/search (paged on the server), create/edit, single
+// + bulk assignment (no common pool — unassigned leads wait here for Admin),
+// status/Dead, Won-request approvals, the archive, history, and the Excel
+// import wizard (Upload -> Validate -> Preview ->
 // Confirm -> Transactional Import, §8). Self-contained (own fetch on mount),
 // same pattern SalesRosterTab already uses — Leads never need to live in
 // AppContext's global state, nothing else in the app reads them.
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
-  Search, Plus, Pencil, Trash2, UserPlus, History as HistoryIcon, X,
-  Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, Inbox, Briefcase, Trophy, ListChecks
+  Search, Plus, Pencil, Trash2, UserPlus, History as HistoryIcon, X, Check, MapPin,
+  Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, UserX, Briefcase, Trophy, ArrowRightCircle,
+  AlarmClock, Copy, TimerReset, Hourglass, Archive
 } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { fetchSalesInApi } from '../../services/salesApiService';
 import {
-  fetchLeads, fetchLead, createLead, updateLead, assignLead, deleteLead,
-  fetchLeadHistory, updateLeadStatus, addFollowUp,
-  validateImport, confirmImport, subscribeToLeadEvents, fetchLeadsSummary
+  fetchLeads, fetchLead, createLead, updateLead, assignLeadsBulk, resolveExpiredLead, resolveWonRequest, deleteLead,
+  fetchLeadHistory,
+  validateImport, confirmImport, subscribeToLeadEvents, fetchLeadsSummary, fetchLeadsAnalytics
 } from '../../services/leadsApiService';
 import { LeadStatCard, LeadStatGrid } from './LeadStatCards';
-import { LeadStatusModal, LeadRemarks } from './LeadQuickActions';
+import { LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistoryList } from './LeadQuickActions';
+import { useDuplicateAwareSave } from './useDuplicateAwareSave';
+import { LeadTimerBattery } from './LeadTimerBattery';
+import { LeadPagination } from './LeadPagination';
+import {
+  ALL_STATUSES, ACTIVE_STATUSES, CLOSED_STATUSES, PROPOSAL_STAGES, STATUS_LABEL, STATUS_COLOR, LEADS_PAGE_SIZE,
+  REF_ID_TEMPLATE, isRefIdTemplate, money, isAssignable, assignBlockReason, followUpInfo, STAGE_DAYS,
+  pageCount, isWonPending, lostReasonLabel
+} from './leadPipeline';
 
-const STATUS_OPTIONS = ['new', 'meeting', 'proposal', 'follow_up', 'won', 'lost', 'dead'];
-const STATUS_LABEL = { new: 'New', meeting: 'Meeting', proposal: 'Proposal', follow_up: 'Follow-up', won: 'Won', lost: 'Lost', dead: 'Dead' };
-const STATUS_COLOR = {
-  new: 'bg-[#EFF5FC] text-[#004898]',
-  meeting: 'bg-[#FFFAEB] text-[#B54708]',
-  proposal: 'bg-[#F4F3FF] text-[#5925DC]',
-  follow_up: 'bg-[#ECFDF3] text-[#027A48]',
-  won: 'bg-[#ECFDF3] text-[#027A48]',
-  lost: 'bg-[#FEF3F2] text-[#B42318]',
-  dead: 'bg-[#F2F4F7] text-[#475467]'
+// ExcelJS cell → the text the sheet shows. Rich text, hyperlinks (Excel
+// links typed emails automatically) and formulas arrive as objects, and
+// String() used to store them as "[object Object]". The server applies the
+// same rule (leadService.cellText) as a backstop.
+const cellText = (value) => {
+  if (value == null) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === 'object') {
+    if (Array.isArray(value.richText)) return value.richText.map((part) => part?.text ?? '').join('').trim();
+    if ('text' in value) return cellText(value.text);
+    if ('result' in value) return cellText(value.result);
+    return '';
+  }
+  return String(value).trim();
 };
-
-const money = (v) => (v == null ? '—' : `₹${Number(v).toLocaleString('en-IN')}`);
 
 const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
   const isEdit = !!lead;
+  const isClosed = isEdit && CLOSED_STATUSES.includes(lead.status);
+  const inProposal = isEdit && PROPOSAL_STAGES.includes(lead.status);
   const [company, setCompany] = useState(lead?.company || '');
   const [personToContact, setPersonToContact] = useState(lead?.person_to_contact || '');
   const [email, setEmail] = useState(lead?.email || '');
   const [phone, setPhone] = useState(lead?.phone || '');
   const [valueEstimate, setValueEstimate] = useState(lead?.value_estimate ?? '');
-  const [saving, setSaving] = useState(false);
+  const [refId, setRefId] = useState(lead?.ref_id || (inProposal ? REF_ID_TEMPLATE : ''));
+  const [demand, setDemand] = useState(lead?.demand || '');
+  const [remarks, setRemarks] = useState(lead?.remarks || '');
+  // A same Company + Phone match returns a warning; Admin can edit or continue.
+  const { run, saving, warning } = useDuplicateAwareSave(
+    (payload) => (isEdit ? updateLead(lead.id, payload) : createLead(payload)),
+    { onSaved: () => { showToast(isEdit ? 'Lead updated' : 'Lead created — select it in the list to assign a salesperson', 'success'); onSaved(); }, showToast }
+  );
 
-  const submit = async (e) => {
+  const submit = (e) => {
     e.preventDefault();
-    if (saving) return;
-    setSaving(true);
-    try {
-      const payload = {
-        company, person_to_contact: personToContact || null, email: email || null,
-        phone, value_estimate: valueEstimate === '' ? null : Number(valueEstimate)
-      };
-      if (isEdit) await updateLead(lead.id, payload); else await createLead(payload);
-      showToast(isEdit ? 'Lead updated' : 'Lead created', 'success');
-      onSaved();
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      setSaving(false);
+    if (inProposal && isRefIdTemplate(refId)) {
+      showToast('Replace the example Ref ID with the real reference.', 'error');
+      return;
     }
+    run({
+      company, person_to_contact: personToContact || null, email: email || null,
+      phone, value_estimate: valueEstimate === '' ? null : Number(valueEstimate),
+      remarks: remarks || null,
+      // Ref ID and Demand are only editable while the lead is active.
+      ...(isClosed ? {} : { demand: demand || null }),
+      ...(inProposal ? { ref_id: refId } : {})
+    });
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC]">
+      <div className="w-full max-w-md max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
           <h3 className="text-lg font-bold text-[#172033]">{isEdit ? 'Edit Lead' : 'Add Lead'}</h3>
           <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
         </div>
-        <form onSubmit={submit} className="p-5 space-y-3">
+        <form onSubmit={submit} className="p-5 space-y-3 overflow-y-auto">
           <div>
             <label className="block text-xs font-bold text-[#344054] mb-1">Company *</label>
             <input required value={company} onChange={(e) => setCompany(e.target.value)} className="form-input text-sm" />
@@ -86,10 +105,32 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
             <label className="block text-xs font-bold text-[#344054] mb-1">Email</label>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="form-input text-sm" />
           </div>
+          {inProposal ? (
+            <ProposalFields valueEstimate={valueEstimate} setValueEstimate={setValueEstimate} refId={refId} setRefId={setRefId} required />
+          ) : (
+            <div>
+              <label className="block text-xs font-bold text-[#344054] mb-1">Value Estimate</label>
+              <input type="number" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} className="form-input text-sm" />
+            </div>
+          )}
+          {isClosed && lead.ref_id && (
+            <div>
+              <label className="block text-xs font-bold text-[#344054] mb-1">Ref ID</label>
+              <div className="text-sm font-mono text-[#475467]">{lead.ref_id}</div>
+            </div>
+          )}
           <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Value Estimate</label>
-            <input type="number" min="0" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} className="form-input text-sm" />
+            <label className="block text-xs font-bold text-[#344054] mb-1">Demand</label>
+            <textarea value={demand} onChange={(e) => setDemand(e.target.value)} disabled={isClosed} rows={2} maxLength={2000} className="form-input text-sm disabled:bg-[#F8FAFC]" />
+            {isClosed && <p className="text-[11px] text-[#667085] mt-1">Locked — this lead is {STATUS_LABEL[lead.status]}.</p>}
           </div>
+          <div>
+            <label className="block text-xs font-bold text-[#344054] mb-1">Remarks</label>
+            <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} maxLength={5000} className="form-input text-sm" />
+          </div>
+          {isEdit && lead.status === 'won' && (
+            <p className="text-[11px] text-[#B54708] bg-[#FFFAEB] border border-[#FEDF89] rounded-lg px-3 py-2">This lead is Won — every change is recorded in its history with the old and new value, and the value must stay above ₹0.</p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
             <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-60">
@@ -98,20 +139,90 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
           </div>
         </form>
       </div>
+      {warning}
     </div>
   );
 };
 
-const AssignModal = ({ lead, roster, onClose, onSaved, showToast }) => {
-  const [salesId, setSalesId] = useState(lead.assigned_to || '');
+const initials = (name) => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+
+// Searchable sales-team list with each person's open-lead count — shared by
+// Assign Salesperson and the Expired-lead review. `exclude` hides one person.
+const SalesPicker = ({ roster, value, onChange, exclude }) => {
+  const [search, setSearch] = useState('');
+  const [activeLoad, setActiveLoad] = useState(null); // { salesId: open leads }
+
+  // Optional: if the counts fail to load the list simply shows none.
+  useEffect(() => {
+    let cancelled = false;
+    fetchLeadsAnalytics('all')
+      .then((data) => {
+        if (cancelled) return;
+        setActiveLoad(Object.fromEntries((data?.leaderboard || []).map((e) => [
+          e.salesId, Object.values(e.pipeline || {}).reduce((n, st) => n + st.count, 0)
+        ])));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const q = search.trim().toLowerCase();
+  const people = roster
+    .filter((s) => s.id !== exclude)
+    .filter((s) => !q || [s.full_name, s.email, s.location].some((v) => (v || '').toLowerCase().includes(q)));
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2" />
+        <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search sales team by name, email or location…" className="w-full pl-9 pr-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]" />
+      </div>
+      {people.length === 0 && (
+        <p className="text-xs text-[#98A2B3] text-center py-4">{search ? `No salesperson matches “${search}”.` : 'No other active salespeople.'}</p>
+      )}
+      {people.map((s) => {
+        const selected = s.id === value;
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onChange(s.id)}
+            className={`w-full p-3 rounded-xl border transition-all flex items-center gap-3 text-left ${selected ? 'border-[#004898] bg-[#EFF5FC] ring-1 ring-[#004898]/20' : 'border-[#E4E7EC] bg-white hover:border-[#B3D1F2] hover:shadow-sm'}`}
+          >
+            <span className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0 ${selected ? 'bg-[#004898] text-white' : 'bg-[#EFF5FC] text-[#004898]'}`}>
+              {selected ? <Check className="w-4 h-4" /> : initials(s.full_name)}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-bold text-sm text-[#172033] truncate">{s.full_name}</span>
+              <span className="block text-xs text-[#667085] truncate">
+                {s.location ? <><MapPin className="inline w-3 h-3 -mt-0.5" /> {s.location}</> : s.email}
+              </span>
+            </span>
+            {activeLoad && <span className="text-[11px] font-semibold text-[#667085] shrink-0">{activeLoad[s.id] || 0} open</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+// Assign one or many leads to a salesperson — searchable team list (same
+// pattern as Assign Technician), pick a person, confirm.
+const AssignSalesModal = ({ leads, roster, onClose, onSaved, showToast }) => {
+  const single = leads.length === 1 ? leads[0] : null;
+  const [salesId, setSalesId] = useState(single?.assigned_to || '');
   const [saving, setSaving] = useState(false);
-  const submit = async (e) => {
-    e.preventDefault();
+  const chosen = roster.find((s) => s.id === salesId);
+
+  const submit = async () => {
     if (!salesId || saving) return;
     setSaving(true);
     try {
-      await assignLead(lead.id, salesId);
-      showToast('Lead assigned', 'success');
+      const result = await assignLeadsBulk(leads.map((l) => l.id), salesId);
+      const msg = result.skipped
+        ? `${result.assigned} assigned to ${chosen?.full_name}; ${result.skipped} skipped (only New or Unassigned leads can be assigned)`
+        : `${result.assigned} lead${result.assigned === 1 ? '' : 's'} assigned to ${chosen?.full_name}`;
+      showToast(msg, result.skipped ? 'info' : 'success');
       onSaved();
     } catch (err) {
       showToast(err.message, 'error');
@@ -119,45 +230,208 @@ const AssignModal = ({ lead, roster, onClose, onSaved, showToast }) => {
       setSaving(false);
     }
   };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC]">
-          <h3 className="text-lg font-bold text-[#172033]">Assign Lead</h3>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={submit} className="p-5 space-y-3">
-          <p className="text-sm text-[#667085]">Assign <span className="font-semibold text-[#172033]">{lead.company}</span> directly to a salesperson.</p>
-          <select required value={salesId} onChange={(e) => setSalesId(e.target.value)} className="form-input text-sm">
-            <option value="">Select salesperson…</option>
-            {roster.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
-          </select>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-60">
-              {saving ? 'Assigning…' : 'Assign'}
-            </button>
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col">
+        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-extrabold text-base text-[#172033]">Assign Salesperson</h3>
+            <p className="text-xs text-[#667085] truncate">
+              {single ? single.company : `${leads.length} leads selected`}
+            </p>
+            {!single && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {leads.slice(0, 6).map((l) => <span key={l.id} className="rounded-full bg-white border border-[#E4E7EC] px-2 py-0.5 text-[10px] font-semibold text-[#344054]">{l.company}</span>)}
+                {leads.length > 6 && <span className="text-[10px] font-semibold text-[#667085] px-1">+{leads.length - 6} more</span>}
+              </div>
+            )}
           </div>
-        </form>
+          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-5 overflow-y-auto flex-1">
+          <SalesPicker roster={roster} value={salesId} onChange={setSalesId} />
+        </div>
+
+        <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
+          <button type="button" onClick={submit} disabled={!salesId || saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50">
+            {saving ? 'Assigning…' : chosen ? `Assign ${single ? '' : `${leads.length} `}to ${chosen.full_name.split(' ')[0]}` : 'Choose a salesperson'}
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
-const DetailModal = ({ leadId, roster, onClose, onChanged, showToast }) => {
+// Admin decision on a lead whose stage timer expired. The lead stays with its
+// salesperson whatever Admin picks:
+//   Give back  — same salesperson, back to New with a fresh timer.
+//   Give to …  — another salesperson gets a new lead for this customer; the
+//                current one keeps theirs (first Won freezes the other).
+//   Ignore     — leave it; it returns here only if a later stage expires.
+const ExpiredLeadModal = ({ lead, roster, salesName, onClose, onDone, showToast }) => {
+  const owner = salesName(lead.assigned_to);
+  const [choice, setChoice] = useState('restart');
+  const [salesId, setSalesId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const target = roster.find((s) => s.id === salesId);
+
+  const options = [
+    { id: 'restart', title: `Give back to ${owner}`, hint: `Restarts at New with a fresh ${STAGE_DAYS.new}-day timer. Value, Ref ID and history are kept.` },
+    { id: 'reassign', title: 'Give to another salesperson', hint: `They get a new lead for this customer with a fresh timer. ${owner} keeps theirs — the first one Won freezes the other.` },
+    { id: 'ignore', title: 'Ignore', hint: `Leave it with ${owner}, still overdue. It comes back here only if a later stage also expires.` }
+  ];
+
+  const submit = async () => {
+    if (saving || (choice === 'reassign' && !salesId)) return;
+    setSaving(true);
+    try {
+      await resolveExpiredLead(lead.id, choice, choice === 'reassign' ? salesId : undefined);
+      showToast(
+        choice === 'restart' ? `Given back to ${owner} with a fresh timer`
+          : choice === 'reassign' ? `New lead given to ${target?.full_name}`
+          : 'Expired lead ignored',
+        'success'
+      );
+      onDone();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col">
+        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-extrabold text-base text-[#172033]">Review Expired Lead</h3>
+            <p className="text-sm font-bold text-[#172033] truncate">{lead.company}</p>
+            <div className="mt-1 flex items-center gap-3 flex-wrap text-xs text-[#667085]">
+              <span>{owner}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
+              <LeadTimerBattery lead={lead} />
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-5 space-y-2 overflow-y-auto flex-1">
+          {options.map((o) => (
+            <label key={o.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${choice === o.id ? 'border-[#004898] bg-[#EFF5FC]' : 'border-[#E4E7EC] hover:border-[#B3D1F2]'}`}>
+              <input type="radio" name="expiry-choice" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-1 accent-[#004898]" />
+              <span>
+                <span className="block text-sm font-bold text-[#172033]">{o.title}</span>
+                <span className="block text-xs text-[#667085]">{o.hint}</span>
+              </span>
+            </label>
+          ))}
+          {choice === 'reassign' && (
+            <div className="pt-2">
+              <SalesPicker roster={roster} value={salesId} onChange={setSalesId} exclude={lead.assigned_to} />
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
+          <button type="button" onClick={submit} disabled={saving || (choice === 'reassign' && !salesId)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50">
+            {saving ? 'Saving…'
+              : choice === 'restart' ? `Give back to ${owner.split(' ')[0]}`
+              : choice === 'reassign' ? (target ? `Give to ${target.full_name.split(' ')[0]}` : 'Choose a salesperson')
+              : 'Ignore'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Admin decision on a Sales Won request (the lead has duplicates). Approve:
+// the lead becomes Won for its salesperson and the other open leads for the
+// customer close as Lost. Reject: needs a reason; the salesperson gets the
+// lead back with the timer time it had left.
+const WonRequestModal = ({ lead, salesName, onClose, onDone, showToast }) => {
+  const [choice, setChoice] = useState('approve');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const owner = salesName(lead.assigned_to);
+
+  const submit = async () => {
+    if (saving || (choice === 'reject' && !reason.trim())) return;
+    setSaving(true);
+    try {
+      const result = await resolveWonRequest(lead.id, choice, choice === 'reject' ? reason.trim() : undefined);
+      showToast(choice === 'approve'
+        ? `Marked Won for ${owner}${result?.autoClosed ? ` — ${result.autoClosed} other lead${result.autoClosed === 1 ? '' : 's'} closed as Lost` : ''}`
+        : 'Won request rejected', 'success');
+      onDone();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col">
+        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-extrabold text-base text-[#172033]">Review Won Request</h3>
+            <p className="text-sm font-bold text-[#172033] truncate">{lead.company}</p>
+            <p className="text-xs text-[#667085]">
+              {owner} · {STATUS_LABEL[lead.status]} · {money(lead.value_estimate)} · requested {new Date(lead.won_requested_at).toLocaleString()}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto flex-1">
+          <p className="text-xs text-[#344054] bg-[#FFFAEB] border border-[#FEDF89] rounded-lg px-3 py-2">
+            {lead.duplicate_count > 0
+              ? `${lead.duplicate_count} other lead${lead.duplicate_count === 1 ? '' : 's'} exist for this customer (same company and phone).`
+              : 'Other leads exist for this customer.'} Check the deal is genuine before approving.
+          </p>
+          {[
+            { id: 'approve', title: 'Approve — mark Won', hint: `Credited to ${owner}. Other open leads for this customer are closed as Lost (duplicate).` },
+            { id: 'reject', title: 'Reject', hint: `${owner} keeps the lead in ${STATUS_LABEL[lead.status]}; the paused timer resumes.` }
+          ].map((o) => (
+            <label key={o.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${choice === o.id ? 'border-[#004898] bg-[#EFF5FC]' : 'border-[#E4E7EC] hover:border-[#B3D1F2]'}`}>
+              <input type="radio" name="won-request-choice" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-1 accent-[#004898]" />
+              <span>
+                <span className="block text-sm font-bold text-[#172033]">{o.title}</span>
+                <span className="block text-xs text-[#667085]">{o.hint}</span>
+              </span>
+            </label>
+          ))}
+          {choice === 'reject' && (
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000} placeholder="Why is it rejected? (shown in the lead's history) *" className="form-input text-sm" />
+          )}
+        </div>
+        <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
+          <button type="button" onClick={submit} disabled={saving || (choice === 'reject' && !reason.trim())} className={`px-4 py-2 text-sm font-semibold rounded-lg text-white disabled:opacity-50 ${choice === 'approve' ? 'bg-[#027A48] hover:bg-[#05603A]' : 'bg-[#D92D20] hover:bg-[#B42318]'}`}>
+            {saving ? 'Saving…' : choice === 'approve' ? 'Approve Won' : 'Reject Request'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showToast }) => {
   const [lead, setLead] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState('');
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const found = await fetchLead(leadId);
       setLead(found || null);
-      setStatus(found?.status || '');
       setHistory(await fetchLeadHistory(leadId));
     } catch (err) {
       showToast(err.message, 'error');
@@ -168,95 +442,72 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, showToast }) => {
 
   useEffect(() => { load(); }, [load]);
 
-  const applyStatus = async () => {
-    if (!status || status === lead.status || busy) return;
-    setBusy(true);
-    try {
-      await updateLeadStatus(leadId, status);
-      showToast('Status updated', 'success');
-      await load();
-      onChanged();
-    } catch (err) {
-      showToast(err.message, 'error');
-      setStatus(lead.status);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitFollowUp = async (e) => {
-    e.preventDefault();
-    if (!note.trim() || busy) return;
-    setBusy(true);
-    try {
-      await addFollowUp(leadId, note.trim());
-      setNote('');
-      showToast('Follow-up added', 'success');
-      await load();
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const salesName = (id) => roster.find((s) => s.id === id)?.full_name || '—';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <h3 className="text-lg font-bold text-[#172033]">{lead?.company || 'Lead'}</h3>
+          <div className="min-w-0">
+            <h3 className="text-lg font-bold text-[#172033] truncate">{lead?.company || 'Lead'}</h3>
+            {lead && (
+              <div className="mt-1 flex items-center gap-3 flex-wrap">
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
+                {lead.assigned_to && <LeadTimerBattery lead={lead} />}
+                {followUpInfo(lead) && <span className={`text-[11px] font-bold ${followUpInfo(lead).due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUpInfo(lead).label}</span>}
+              </div>
+            )}
+          </div>
           <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
         </div>
         {loading || !lead ? (
           <div className="p-8 text-center text-[#667085] text-sm">Loading…</div>
         ) : (
           <div className="p-5 overflow-y-auto space-y-5">
+            {lead.archived_at && (
+              <p className="text-xs text-[#344054] bg-[#F2F4F7] border border-[#E4E7EC] rounded-lg px-3 py-2 flex gap-2">
+                <Archive className="w-4 h-4 shrink-0" /> Archived {new Date(lead.archived_at).toLocaleDateString()} — read-only.
+              </p>
+            )}
+            {isWonPending(lead) && (
+              <p className="text-xs text-[#5925DC] bg-[#F4F3FF] border border-[#D9D6FE] rounded-lg px-3 py-2 flex gap-2">
+                <Hourglass className="w-4 h-4 shrink-0" /> {salesName(lead.assigned_to)} asked to mark this lead Won. Review it from the lead list (Won Requests).
+              </p>
+            )}
+            {lead.duplicate_count > 0 && (
+              <p className="text-xs text-[#344054] bg-[#F2F4F7] border border-[#E4E7EC] rounded-lg px-3 py-2 flex gap-2">
+                <Copy className="w-4 h-4 shrink-0" />
+                {`${lead.duplicate_count} other lead${lead.duplicate_count === 1 ? ' has' : 's have'} the same company and phone.`}
+              </p>
+            )}
+            {lostReasonLabel(lead) && (
+              <p className="text-xs text-[#344054] bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg px-3 py-2">
+                <strong>{STATUS_LABEL[lead.status]}:</strong> {lostReasonLabel(lead)}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div><span className="text-[#667085]">Phone</span><div className="font-semibold text-[#172033]">{lead.phone}</div></div>
               <div><span className="text-[#667085]">Contact</span><div className="font-semibold text-[#172033]">{lead.person_to_contact || '—'}</div></div>
-              <div><span className="text-[#667085]">Email</span><div className="font-semibold text-[#172033]">{lead.email || '—'}</div></div>
+              <div><span className="text-[#667085]">Email</span><div className="font-semibold text-[#172033] break-all">{lead.email || '—'}</div></div>
               <div><span className="text-[#667085]">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
-              <div><span className="text-[#667085]">Assigned To</span><div className="font-semibold text-[#172033]">{lead.assigned_to ? salesName(lead.assigned_to) : 'Unassigned (pool)'}</div></div>
-              <div><span className="text-[#667085]">Accepted At</span><div className="font-semibold text-[#172033]">{lead.accepted_at ? new Date(lead.accepted_at).toLocaleString() : '—'}</div></div>
+              <div><span className="text-[#667085]">Assigned To</span><div className="font-semibold text-[#172033]">{lead.assigned_to ? salesName(lead.assigned_to) : 'Unassigned'}</div></div>
+              <div><span className="text-[#667085]">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
+              <div className="col-span-2"><span className="text-[#667085]">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
             </div>
 
-            <LeadRemarks lead={lead} onSaved={() => { load(); onChanged(); }} showToast={showToast} />
-
-            <div className="flex items-center gap-2">
-              <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input text-sm flex-1">
-                {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-              </select>
-              <button onClick={applyStatus} disabled={busy || status === lead.status} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50 whitespace-nowrap">
-                Update Status
+            {lead.status !== 'won' && !lead.archived_at && !isWonPending(lead) && (
+              <button onClick={() => onChangeStatus(lead)} className="w-full px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] inline-flex items-center justify-center gap-2">
+                <ArrowRightCircle className="w-4 h-4" /> Change Status
               </button>
-            </div>
+            )}
 
-            <form onSubmit={submitFollowUp} className="flex items-center gap-2">
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a follow-up note…" className="form-input text-sm flex-1" />
-              <button type="submit" disabled={busy || !note.trim()} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] disabled:opacity-50 whitespace-nowrap">
-                Add
-              </button>
-            </form>
+            {!lead.archived_at && <FollowUpForm lead={lead} onSaved={() => { load(); onChanged(); }} showToast={showToast} />}
+
+            <LeadRemarks lead={lead} readOnly={!!lead.archived_at} onSaved={() => { load(); onChanged(); }} showToast={showToast} />
 
             <div>
               <h4 className="text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">History</h4>
-              <div className="space-y-2 max-h-56 overflow-y-auto">
-                {history.map((h) => (
-                  <div key={h.id} className="text-xs border-l-2 border-[#E4E7EC] pl-3 py-1">
-                    <div className="font-semibold text-[#172033]">
-                      {h.event_type.replace(/_/g, ' ')}
-                      {h.actor_name ? <span className="text-[#667085] font-normal"> — {h.actor_name}</span> : null}
-                    </div>
-                    {h.details?.reason && <div className="text-[#667085]">Reason: {h.details.reason}</div>}
-                    {h.details?.note && <div className="text-[#667085]">{h.details.note}</div>}
-                    {h.event_type === 'remarks_updated' && <div className="text-[#667085] whitespace-pre-wrap">{h.details?.remarks || 'Remarks cleared'}</div>}
-                    {h.details?.from && h.details?.to && <div className="text-[#667085]">{h.details.from} → {h.details.to}</div>}
-                    <div className="text-[#98A2B3]">{new Date(h.created_at).toLocaleString()}</div>
-                  </div>
-                ))}
-              </div>
+              <LeadHistoryList history={history} salesName={salesName} showActor />
             </div>
           </div>
         )}
@@ -267,6 +518,7 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, showToast }) => {
 
 // Upload -> Validate -> Preview -> Confirm -> Transactional Import (§8).
 const ImportModal = ({ onClose, onImported, showToast }) => {
+  const [includeDuplicates, setIncludeDuplicates] = useState(false);
   const [step, setStep] = useState('upload'); // upload | preview | done
   const [rows, setRows] = useState([]);
   const [preview, setPreview] = useState(null);
@@ -299,17 +551,24 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
       const contactCol = find('person_to_contact', 'contact', 'person');
       const emailCol = find('email');
       const valueCol = find('value_estimate', 'value', 'estimate');
+      const demandCol = find('demand');
 
       const parsedRows = [];
+      const text = (row, col) => (col ? cellText(row.getCell(col).value) : '');
       for (let r = 2; r <= sheet.rowCount; r += 1) {
         const row = sheet.getRow(r);
         if (row.values.length <= 1) continue; // blank row
+        const valueCell = valueCol ? row.getCell(valueCol).value : '';
         parsedRows.push({
-          company: companyCol ? String(row.getCell(companyCol).value ?? '').trim() : '',
-          phone: phoneCol ? String(row.getCell(phoneCol).value ?? '').trim() : '',
-          person_to_contact: contactCol ? String(row.getCell(contactCol).value ?? '').trim() : '',
-          email: emailCol ? String(row.getCell(emailCol).value ?? '').trim() : '',
-          value_estimate: valueCol ? row.getCell(valueCol).value ?? '' : ''
+          company: text(row, companyCol),
+          phone: text(row, phoneCol),
+          person_to_contact: text(row, contactCol),
+          email: text(row, emailCol),
+          // Numbers stay numbers; formulas use their result; anything else as shown.
+          value_estimate: typeof valueCell === 'number' ? valueCell
+            : valueCell && typeof valueCell === 'object' && typeof valueCell.result === 'number' ? valueCell.result
+            : cellText(valueCell),
+          demand: text(row, demandCol)
         });
       }
       if (!parsedRows.length) throw new Error('No data rows found — check the file has a header row plus at least one lead.');
@@ -329,7 +588,7 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
     if (busy) return;
     setBusy(true);
     try {
-      const outcome = await confirmImport(rows);
+      const outcome = await confirmImport(rows, includeDuplicates);
       setResult(outcome);
       setStep('done');
       onImported();
@@ -353,7 +612,7 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
             <FileSpreadsheet className="w-12 h-12 text-[#B3D1F2] mx-auto" />
             <p className="text-sm text-[#667085]">
               Upload an .xlsx file with columns <strong>Company</strong> and <strong>Phone</strong> (required), plus optional
-              Person to Contact, Email, and Value Estimate.
+              Person to Contact, Email, Value Estimate and Demand. Imported leads start Unassigned — select them in the list and assign a salesperson.
             </p>
             <input
               ref={fileInputRef}
@@ -378,7 +637,7 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
             <div className="p-5 flex gap-4 text-sm border-b border-[#E4E7EC] shrink-0">
               <span className="text-[#027A48] font-semibold flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> {preview.valid.length} ready to import</span>
               <span className="text-[#B42318] font-semibold flex items-center gap-1"><XCircle className="w-4 h-4" /> {preview.failed.length} failed</span>
-              <span className="text-[#B54708] font-semibold flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> {preview.duplicates.length} duplicate</span>
+              <span className="text-[#B54708] font-semibold flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> {preview.duplicates.length} possible duplicate</span>
             </div>
             <div className="overflow-y-auto flex-1 p-5">
               <table className="w-full text-xs text-left border-collapse">
@@ -395,7 +654,7 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
                         {r.errors.length ? (
                           <span className="text-[#B42318]">{r.errors.join(', ')}</span>
                         ) : r.duplicateOf ? (
-                          <span className="text-[#B54708]">Duplicate ({r.duplicateOf})</span>
+                          <span className="text-[#B54708]">Possible duplicate — {r.duplicateOf.includes('same phone') ? r.duplicateOf : `same company & phone (${r.duplicateOf})`}</span>
                         ) : (
                           <span className="text-[#027A48]">Ready</span>
                         )}
@@ -404,21 +663,24 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
                   ))}
                 </tbody>
               </table>
-              {(preview.failed.length > 0 || preview.duplicates.length > 0) && (
-                <p className="text-xs text-[#667085] mt-3">
-                  Failed and duplicate rows will be skipped — only the {preview.valid.length} ready row(s) will be imported.
-                  Fix and re-upload the rest separately.
-                </p>
+              {preview.duplicates.length > 0 && (
+                <label className="mt-3 flex items-start gap-2 text-xs text-[#344054] cursor-pointer">
+                  <input type="checkbox" checked={includeDuplicates} onChange={(e) => setIncludeDuplicates(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#B54708]" />
+                  <span>Also import the {preview.duplicates.length} possible duplicate(s). Check them first — duplicates are allowed, but once one is Won the others still open are closed as Lost.</span>
+                </label>
+              )}
+              {preview.failed.length > 0 && (
+                <p className="text-xs text-[#667085] mt-3">Failed rows will be skipped — fix and re-upload them separately.</p>
               )}
             </div>
             <div className="p-5 border-t border-[#E4E7EC] flex justify-end gap-2 shrink-0">
               <button onClick={() => setStep('upload')} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Back</button>
               <button
                 onClick={doConfirm}
-                disabled={busy || !preview.valid.length}
+                disabled={busy || !(preview.valid.length + (includeDuplicates ? preview.duplicates.length : 0))}
                 className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50"
               >
-                {busy ? 'Importing…' : `Confirm Import (${preview.valid.length})`}
+                {busy ? 'Importing…' : `Confirm Import (${preview.valid.length + (includeDuplicates ? preview.duplicates.length : 0)})`}
               </button>
             </div>
           </div>
@@ -428,8 +690,9 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
           <div className="p-8 text-center space-y-3">
             <CheckCircle2 className="w-12 h-12 text-[#12B76A] mx-auto" />
             <p className="text-sm font-semibold text-[#172033]">{result.imported} lead(s) imported successfully.</p>
+            {result.imported > 0 && <p className="text-xs text-[#667085]">They are Unassigned — turn on “Unassigned only”, select them and use Assign Salesperson.</p>}
             {(result.failed.length > 0 || result.duplicates.length > 0) && (
-              <p className="text-xs text-[#667085]">{result.failed.length} failed, {result.duplicates.length} skipped as duplicates — not imported.</p>
+              <p className="text-xs text-[#667085]">{result.failed.length} failed{includeDuplicates ? '' : `, ${result.duplicates.length} possible duplicate(s) skipped`} — not imported.</p>
             )}
             <button onClick={onClose} className="px-5 py-2.5 rounded-lg bg-[#004898] text-white text-sm font-semibold hover:bg-[#00346E]">Done</button>
           </div>
@@ -441,53 +704,132 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
 
 export const AdminLeadsTab = () => {
   const { showToast } = useApp();
-  const [leads, setLeads] = useState([]);
-  const [roster, setRoster] = useState([]);
+  const [list, setList] = useState({ rows: [], total: 0 }); // the current page
+  const [roster, setRoster] = useState([]); // everyone, incl. deactivated (for names)
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [query, setQuery] = useState(''); // debounced search sent to the server
   const [statusFilter, setStatusFilter] = useState('');
+  const [salesFilter, setSalesFilter] = useState('');
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [expiredOnly, setExpiredOnly] = useState(false);
+  const [wonRequestsOnly, setWonRequestsOnly] = useState(false);
+  const [archivedOnly, setArchivedOnly] = useState(false);
+  const [expiredLead, setExpiredLead] = useState(null);
+  const [wonRequestLead, setWonRequestLead] = useState(null);
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState(() => new Map()); // id -> lead, kept across pages
   const [formModal, setFormModal] = useState(null); // { lead? } or null
-  const [assignModal, setAssignModal] = useState(null); // lead or null
+  const [assignTargets, setAssignTargets] = useState(null); // [lead, ...] or null
   const [detailId, setDetailId] = useState(null);
   const [statusLead, setStatusLead] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [summary, setSummary] = useState(null);
+  const requestSeq = useRef(0);
+  const leads = list.rows;
+  const activeRoster = roster.filter((s) => s.is_active);
+
+  // Search runs on the server, 300ms after typing stops.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // The roster (incl. deactivated people, for names on their old leads).
+  const loadRoster = useCallback(() => {
+    fetchSalesInApi({ includeInactive: true })
+      .then((data) => setRoster(Array.isArray(data) ? data : []))
+      .catch((err) => console.warn('Sales roster unavailable:', err));
+  }, []);
+  useEffect(() => { loadRoster(); }, [loadRoster]);
 
   const load = useCallback(async () => {
+    // Only the newest request may update the table, so a slow response for
+    // an earlier filter or page can never overwrite the current one.
+    const seq = ++requestSeq.current;
     // Summary cards are fetched on their own: a stats failure leaves the
     // cards at their last value and never blocks the lead table.
-    fetchLeadsSummary().then(setSummary).catch((err) => console.warn('Lead summary unavailable:', err));
+    fetchLeadsSummary().then((data) => { if (seq === requestSeq.current) setSummary(data); })
+      .catch((err) => console.warn('Lead summary unavailable:', err));
     try {
-      const [leadsData, rosterData] = await Promise.all([
-        fetchLeads(statusFilter ? { status: statusFilter } : {}),
-        fetchSalesInApi()
-      ]);
-      setLeads(Array.isArray(leadsData) ? leadsData : []);
-      setRoster(Array.isArray(rosterData) ? rosterData : []);
+      // Filters, search and paging all run on the server, so they cover
+      // every lead.
+      const data = await fetchLeads({
+        status: statusFilter || undefined,
+        assigned_to: unassignedOnly ? undefined : salesFilter || undefined,
+        unassigned: unassignedOnly,
+        overdue: overdueOnly,
+        expired: expiredOnly,
+        wonRequests: wonRequestsOnly,
+        archived: archivedOnly,
+        q: query || undefined,
+        limit: LEADS_PAGE_SIZE,
+        offset: (page - 1) * LEADS_PAGE_SIZE
+      });
+      if (seq !== requestSeq.current) return;
+      // A refresh that empties the current page steps back a page.
+      if (!data.rows.length && page > 1) { setPage(pageCount(data.total)); return; }
+      setList(data);
     } catch (err) {
-      showToast(err.message, 'error');
+      if (seq === requestSeq.current) showToast(err.message, 'error');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  }, [statusFilter, showToast]);
+  }, [statusFilter, salesFilter, unassignedOnly, overdueOnly, expiredOnly, wonRequestsOnly, archivedOnly, query, page, showToast]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Realtime (Phase 7): refresh on any lead event, with a 20s poll as the
-  // API-refresh fallback the plan requires in case the stream drops.
+  // Realtime (Phase 7): refresh on lead events (coalesced), with a 20s poll
+  // as the API-refresh fallback the plan requires in case the stream drops.
   useEffect(() => {
     const source = subscribeToLeadEvents(() => load());
     const poll = setInterval(load, 20000);
     return () => { source?.close(); clearInterval(poll); };
   }, [load]);
 
-  const salesName = (id) => roster.find((s) => s.id === id)?.full_name || '—';
+  // A filter or search change starts again on page 1 with nothing selected,
+  // so a selection never includes leads outside the current filter.
+  useEffect(() => { setPage(1); setSelected(new Map()); }, [statusFilter, salesFilter, unassignedOnly, overdueOnly, expiredOnly, wonRequestsOnly, archivedOnly, query]);
 
-  const filtered = leads.filter((l) =>
-    (l.company || '').toLowerCase().includes(search.toLowerCase()) ||
-    (l.phone || '').includes(search)
-  );
+  const salesName = (id) => {
+    const person = roster.find((s) => s.id === id);
+    if (!person) return '—';
+    return person.is_active ? person.full_name : `${person.full_name} (inactive)`;
+  };
+
+  // Only New/Unassigned active leads can be assigned, so only they can be selected.
+  const selectable = archivedOnly ? [] : leads.filter(isAssignable);
+  const selectedLeads = [...selected.values()];
+  const allSelected = selectable.length > 0 && selectable.every((l) => selected.has(l.id));
+  const someSelected = selectable.some((l) => selected.has(l.id));
+  const alreadyOwned = selectedLeads.filter((l) => l.assigned_to).length;
+
+  // Drop selections on this page that stopped being assignable after a refresh.
+  useEffect(() => {
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const lead of leads) {
+        if (next.has(lead.id) && !isAssignable(lead)) { next.delete(lead.id); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [leads]);
+
+  const toggle = (lead) => setSelected((prev) => {
+    const next = new Map(prev);
+    if (next.has(lead.id)) next.delete(lead.id); else next.set(lead.id, lead);
+    return next;
+  });
+  // The header checkbox selects / clears the assignable rows on this page.
+  const toggleAll = () => setSelected((prev) => {
+    const next = new Map(prev);
+    if (allSelected) selectable.forEach((l) => next.delete(l.id));
+    else selectable.forEach((l) => next.set(l.id, l));
+    return next;
+  });
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
@@ -501,18 +843,42 @@ export const AdminLeadsTab = () => {
     }
   };
 
+  // Mutually exclusive "queue" views: Won requests and the archive.
+  const toggleQueue = (which) => {
+    setWonRequestsOnly((v) => (which === 'won' ? !v : false));
+    setArchivedOnly((v) => (which === 'archived' ? !v : false));
+  };
+
+  const chip = (active) => `px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${active ? 'border-[#004898] bg-[#EFF5FC] text-[#004898]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`;
+  const selectCls = 'text-xs font-semibold text-[#172033] border border-[#E4E7EC] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#004898]';
+  const iconCls = 'p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed';
+
   if (loading) return <TableSkeleton rows={4} />;
 
   return (
     <div className="space-y-4">
-      {/* Company-wide totals — independent of the status filter/search below. */}
+      {/* Company-wide totals — independent of the filters/search below. */}
       <LeadStatGrid>
-        <LeadStatCard label="Leads in Common Pool" icon={Inbox} tone="blue" stat={summary?.pool} />
-        <LeadStatCard label="Leads Taken" icon={Briefcase} tone="amber" stat={summary?.taken} hint="Assigned and still open" />
+        <LeadStatCard
+          label="Unassigned"
+          icon={UserX}
+          tone={summary?.unassigned?.count ? 'red' : 'blue'}
+          stat={summary?.unassigned}
+          hint={unassignedOnly ? 'Showing unassigned only — click to show all' : 'Click to show only these'}
+          onClick={() => { setSalesFilter(''); setUnassignedOnly((v) => !v); }}
+        />
+        <LeadStatCard label="Open Leads" icon={Briefcase} tone="amber" stat={summary?.taken} hint="Assigned and still in the pipeline" />
         <LeadStatCard label="Won Leads" icon={Trophy} tone="green" stat={summary?.won} />
       </LeadStatGrid>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {summary?.wonRequests > 0 && !wonRequestsOnly && (
+        <button onClick={() => toggleQueue('won')} className="w-full text-left text-xs text-[#5925DC] bg-[#F4F3FF] border border-[#D9D6FE] rounded-lg px-3 py-2 flex items-center gap-2 hover:bg-[#EBE9FE]">
+          <Hourglass className="w-4 h-4 shrink-0" />
+          <span><strong>{summary.wonRequests} Won request{summary.wonRequests === 1 ? '' : 's'}</strong> waiting for your approval — click to review.</span>
+        </button>
+      )}
+
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold">
             <Plus className="w-4 h-4" /> Add Lead
@@ -521,15 +887,36 @@ export const AdminLeadsTab = () => {
             <Upload className="w-3.5 h-3.5" /> Import Excel
           </button>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative w-full sm:w-72">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-60">
             <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company or phone…" style={{ paddingLeft: '36px' }} className="form-input text-xs" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company, phone, contact or Ref ID…" style={{ paddingLeft: '36px' }} className="form-input text-xs" />
           </div>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="text-xs font-semibold text-[#172033] border border-[#E4E7EC] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#004898]">
-            <option value="">All Statuses</option>
-            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+          <select value={unassignedOnly ? '' : salesFilter} onChange={(e) => { setUnassignedOnly(false); setSalesFilter(e.target.value); }} className={selectCls} aria-label="Salesperson">
+            <option value="">All Salespeople</option>
+            {roster.map((s) => <option key={s.id} value={s.id}>{s.full_name}{s.is_active ? '' : ' (inactive)'}</option>)}
           </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectCls} aria-label="Status">
+            <option value="">All Statuses</option>
+            {ALL_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
+          </select>
+          <button onClick={() => { setSalesFilter(''); setUnassignedOnly((v) => !v); }} aria-pressed={unassignedOnly} className={chip(unassignedOnly)}>
+            <UserX className="w-3.5 h-3.5" /> Unassigned
+          </button>
+          <button onClick={() => setOverdueOnly((v) => !v)} aria-pressed={overdueOnly} className={chip(overdueOnly)}>
+            <AlarmClock className="w-3.5 h-3.5" /> Overdue
+          </button>
+          <button onClick={() => setExpiredOnly((v) => !v)} aria-pressed={expiredOnly} className={chip(expiredOnly)} title="Expired stages waiting for your decision">
+            <TimerReset className="w-3.5 h-3.5" /> Expired
+            <span className={`rounded-full px-1.5 text-[10px] ${summary?.expired ? 'bg-[#B42318] text-white' : 'bg-[#F2F4F7] text-[#667085]'}`}>{summary?.expired ?? 0}</span>
+          </button>
+          <button onClick={() => toggleQueue('won')} aria-pressed={wonRequestsOnly} className={chip(wonRequestsOnly)} title="Sales Won requests waiting for your approval">
+            <Hourglass className="w-3.5 h-3.5" /> Won Requests
+            <span className={`rounded-full px-1.5 text-[10px] ${summary?.wonRequests ? 'bg-[#5925DC] text-white' : 'bg-[#F2F4F7] text-[#667085]'}`}>{summary?.wonRequests ?? 0}</span>
+          </button>
+          <button onClick={() => toggleQueue('archived')} aria-pressed={archivedOnly} className={chip(archivedOnly)} title="Archived leads (read-only)">
+            <Archive className="w-3.5 h-3.5" /> Archived
+          </button>
         </div>
       </div>
 
@@ -538,66 +925,184 @@ export const AdminLeadsTab = () => {
           <table className="w-full text-xs text-left border-collapse bg-white">
             <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px] tracking-wider border-b border-[#E4E7EC]">
               <tr>
-                <th className="px-6 py-4">Company</th>
-                <th className="px-6 py-4">Phone</th>
-                <th className="px-6 py-4">Value</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4">Assigned To</th>
-                <th className="px-6 py-4 text-right">Actions</th>
+                <th className="pl-4 pr-2 py-4 w-8">
+                  <input
+                    type="checkbox"
+                    aria-label="Select assignable leads on this page"
+                    title="Select the New / Unassigned leads on this page"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                    onChange={toggleAll}
+                    disabled={!selectable.length}
+                    className="w-4 h-4 accent-[#004898] cursor-pointer align-middle disabled:opacity-30"
+                  />
+                </th>
+                <th className="px-4 py-4">Company</th>
+                <th className="px-4 py-4">Phone</th>
+                <th className="px-4 py-4">Value</th>
+                <th className="px-4 py-4">Status</th>
+                <th className="px-4 py-4">Assigned To</th>
+                <th className="px-4 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F2F4F7]">
-              {filtered.length === 0 ? (
-                <tr><td colSpan="6" className="p-8 text-center text-[#667085]">No leads match the selected filters.</td></tr>
-              ) : filtered.map((l) => (
-                <tr key={l.id} className="hover:bg-[#F8FAFC] transition-all">
-                  <td className="px-6 py-4 align-middle">
-                    <button onClick={() => setDetailId(l.id)} className="font-extrabold text-[13px] text-[#004898] hover:underline text-left">{l.company}</button>
-                    {l.person_to_contact && <div className="text-[11px] text-[#667085]">{l.person_to_contact}</div>}
-                  </td>
-                  <td className="px-6 py-4 align-middle text-[#475467] font-medium">{l.phone}</td>
-                  <td className="px-6 py-4 align-middle text-[#475467] font-medium">{money(l.value_estimate)}</td>
-                  <td className="px-6 py-4 align-middle">
-                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[l.status]}`}>{STATUS_LABEL[l.status]}</span>
-                  </td>
-                  <td className="px-6 py-4 align-middle text-[#475467] font-medium">{l.assigned_to ? salesName(l.assigned_to) : <span className="text-[#98A2B3] italic">Unassigned</span>}</td>
-                  <td className="px-6 py-4 align-middle">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => setStatusLead(l)}
-                        disabled={l.status === 'won'}
-                        title={l.status === 'won' ? 'A Won lead is final' : 'Change status'}
-                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#E4E7EC] hover:border-[#B3D1F2] text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                      ><ListChecks className="w-3.5 h-3.5" /> Status</button>
-                      <button onClick={() => setDetailId(l.id)} title="Details, remarks, history & status" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><HistoryIcon className="w-4 h-4" /></button>
-                      <button
-                        onClick={() => setAssignModal(l)}
-                        disabled={l.status === 'won'}
-                        title={l.status === 'won' ? 'Won leads cannot be reassigned' : 'Assign'}
-                        className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed"
-                      ><UserPlus className="w-4 h-4" /></button>
-                      <button onClick={() => setFormModal({ lead: l })} title="Edit" className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC]"><Pencil className="w-4 h-4" /></button>
-                      <button onClick={() => setPendingDelete(l)} title="Delete" className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B]"><Trash2 className="w-4 h-4" /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {leads.length === 0 ? (
+                <tr><td colSpan="7" className="p-8 text-center text-[#667085]">
+                  {query ? 'No leads match your search.'
+                    : wonRequestsOnly ? 'No Won requests waiting.'
+                    : archivedOnly ? 'No archived leads.'
+                    : expiredOnly ? 'No expired leads waiting for a decision.'
+                    : overdueOnly ? 'No overdue leads — nice.'
+                    : 'No leads match the selected filters.'}
+                </td></tr>
+              ) : leads.map((l) => {
+                const isSelected = selected.has(l.id);
+                const isWon = l.status === 'won';
+                const archived = !!l.archived_at;
+                const pending = isWonPending(l);
+                const blockReason = archived ? 'Archived leads are read-only' : assignBlockReason(l);
+                const followUp = followUpInfo(l);
+                const closeReason = CLOSED_STATUSES.includes(l.status) ? lostReasonLabel(l) : null;
+                return (
+                  <tr key={l.id} className={`transition-all ${isSelected ? 'bg-[#EFF5FC]' : 'hover:bg-[#F8FAFC]'}`}>
+                    <td className="pl-4 pr-2 py-4 align-middle">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${l.company}`}
+                        checked={isSelected}
+                        onChange={() => toggle(l)}
+                        disabled={!!blockReason}
+                        title={blockReason || undefined}
+                        className="w-4 h-4 accent-[#004898] cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 align-middle"
+                      />
+                    </td>
+                    <td className="px-4 py-4 align-middle">
+                      <button onClick={() => setDetailId(l.id)} className="font-extrabold text-[13px] text-[#004898] hover:underline text-left">{l.company}</button>
+                      {l.duplicate_count > 0 && (
+                        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[#F2F4F7] px-2 py-0.5 text-[10px] font-bold text-[#475467] align-middle"
+                          title={`${l.duplicate_count} other lead(s) with the same company and phone`}>
+                          <Copy className="w-3 h-3" /> Duplicate
+                        </span>
+                      )}
+                      {l.person_to_contact && <div className="text-[11px] text-[#667085]">{l.person_to_contact}</div>}
+                      {followUp && <div className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#98A2B3]'}`}>{followUp.label}</div>}
+                    </td>
+                    <td className="px-4 py-4 align-middle text-[#475467] font-medium">{l.phone}</td>
+                    <td className="px-4 py-4 align-middle text-[#475467] font-medium">{money(l.value_estimate)}</td>
+                    <td className="px-4 py-4 align-middle">
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[l.status]}`}>{STATUS_LABEL[l.status]}</span>
+                        {archived && <span className="text-[11px] font-semibold text-[#667085]">Archived</span>}
+                        {!archived && l.assigned_to && ACTIVE_STATUSES.includes(l.status) && <LeadTimerBattery lead={l} />}
+                        {closeReason && <span className="text-[11px] text-[#667085] max-w-[180px] truncate" title={closeReason}>{closeReason}</span>}
+                        {!archived && pending && (
+                          <button onClick={() => setWonRequestLead(l)} className="inline-flex items-center gap-1 rounded-lg bg-[#F4F3FF] border border-[#D9D6FE] px-2 py-1 text-[11px] font-bold text-[#5925DC] hover:bg-[#EBE9FE]">
+                            <Hourglass className="w-3.5 h-3.5" /> Won request · Review
+                          </button>
+                        )}
+                        {!archived && l.expired && (
+                          <button onClick={() => setExpiredLead(l)} className="inline-flex items-center gap-1 rounded-lg bg-[#FEF3F2] border border-[#FECDCA] px-2 py-1 text-[11px] font-bold text-[#B42318] hover:bg-[#FEE4E2]">
+                            <TimerReset className="w-3.5 h-3.5" /> Expired · Review
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 align-middle text-[#475467] font-medium">{l.assigned_to ? salesName(l.assigned_to) : <span className="inline-flex items-center gap-1 rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[11px] font-bold text-[#B42318]">Unassigned</span>}</td>
+                    <td className="px-4 py-4 align-middle">
+                      <div className="flex items-center justify-end gap-2">
+                        {!archived && (
+                          <button
+                            onClick={() => setStatusLead(l)}
+                            disabled={isWon || pending}
+                            title={isWon ? 'A Won lead is final' : pending ? 'Approve or reject the Won request first' : 'Change status'}
+                            className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#E4E7EC] hover:border-[#B3D1F2] text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                          ><ArrowRightCircle className="w-3.5 h-3.5" /> Change Status</button>
+                        )}
+                        <button onClick={() => setDetailId(l.id)} title="Details, follow-ups, remarks & history" className={iconCls}><HistoryIcon className="w-4 h-4" /></button>
+                        {!archived && (
+                          <>
+                            <button onClick={() => setAssignTargets([l])} disabled={!!blockReason} title={blockReason || 'Assign salesperson'} className={iconCls}><UserPlus className="w-4 h-4" /></button>
+                            <button onClick={() => setFormModal({ lead: l })} title={isWon ? 'Edit (changes are recorded in history)' : 'Edit'} className={iconCls}><Pencil className="w-4 h-4" /></button>
+                            <button
+                              onClick={() => setPendingDelete(l)}
+                              disabled={isWon}
+                              title={isWon ? 'A Won lead is a permanent record and can’t be deleted or archived' : 'Delete'}
+                              className={`${iconCls} hover:bg-[#FEF3F2] text-[#D92D20] hover:border-[#FDA29B]`}
+                            ><Trash2 className="w-4 h-4" /></button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
+      <LeadPagination page={page} totalPages={pageCount(list.total)} count={list.total} onChange={setPage} />
+
+      {/* Floating bulk-action bar — appears while any lead is selected. */}
+      {selectedLeads.length > 0 && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-xl">
+          <div className="flex items-center gap-3 rounded-2xl bg-[#172033] text-white shadow-2xl px-4 py-3">
+            <span className="flex items-center justify-center w-7 h-7 rounded-full bg-[#004898] text-xs font-extrabold shrink-0">{selectedLeads.length}</span>
+            <span className="text-sm font-semibold flex-1 min-w-0 truncate">
+              lead{selectedLeads.length === 1 ? '' : 's'} selected{pageCount(list.total) > 1 ? ' (across pages)' : ''}
+              {alreadyOwned > 0 && <span className="block text-[11px] font-normal text-white/70">{alreadyOwned} already assigned — will move to the new salesperson</span>}
+            </span>
+            <button onClick={() => setAssignTargets(selectedLeads)} className="px-3 py-2 rounded-lg bg-white text-[#004898] text-xs font-extrabold hover:bg-[#EFF5FC] inline-flex items-center gap-1.5 whitespace-nowrap">
+              <UserPlus className="w-4 h-4" /> Assign Salesperson
+            </button>
+            <button onClick={() => setSelected(new Map())} title="Clear selection" className="p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10"><X className="w-4 h-4" /></button>
+          </div>
+        </div>
+      )}
+
       {formModal && (
         <LeadFormModal lead={formModal.lead} onClose={() => setFormModal(null)} onSaved={() => { setFormModal(null); load(); }} showToast={showToast} />
       )}
-      {assignModal && (
-        <AssignModal lead={assignModal} roster={roster.filter((s) => s.is_active)} onClose={() => setAssignModal(null)} onSaved={() => { setAssignModal(null); load(); }} showToast={showToast} />
+      {assignTargets && (
+        <AssignSalesModal
+          leads={assignTargets}
+          roster={activeRoster}
+          onClose={() => setAssignTargets(null)}
+          onSaved={() => { setAssignTargets(null); setSelected(new Map()); load(); }}
+          showToast={showToast}
+        />
       )}
       {detailId && (
-        <DetailModal leadId={detailId} roster={roster} onClose={() => setDetailId(null)} onChanged={load} showToast={showToast} />
+        <DetailModal
+          leadId={detailId}
+          roster={roster}
+          onClose={() => setDetailId(null)}
+          onChanged={load}
+          onChangeStatus={(lead) => { setDetailId(null); setStatusLead(lead); }}
+          showToast={showToast}
+        />
+      )}
+      {expiredLead && (
+        <ExpiredLeadModal
+          lead={expiredLead}
+          roster={activeRoster}
+          salesName={salesName}
+          onClose={() => setExpiredLead(null)}
+          onDone={() => { setExpiredLead(null); load(); }}
+          showToast={showToast}
+        />
+      )}
+      {wonRequestLead && (
+        <WonRequestModal
+          lead={wonRequestLead}
+          salesName={salesName}
+          onClose={() => setWonRequestLead(null)}
+          onDone={() => { setWonRequestLead(null); load(); }}
+          showToast={showToast}
+        />
       )}
       {statusLead && (
-        <LeadStatusModal lead={statusLead} statusOptions={STATUS_OPTIONS} onClose={() => setStatusLead(null)} onDone={() => { setStatusLead(null); load(); }} showToast={showToast} />
+        <LeadStatusModal lead={statusLead} isAdmin onClose={() => setStatusLead(null)} onDone={() => { setStatusLead(null); load(); }} showToast={showToast} />
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImported={load} showToast={showToast} />
@@ -610,8 +1115,8 @@ export const AdminLeadsTab = () => {
               <div>
                 <h3 className="text-lg font-bold text-[#172033]">Delete Lead</h3>
                 <p className="mt-1 text-sm text-[#667085]">
-                  Delete <span className="font-semibold text-[#172033]">{pendingDelete.company}</span>? Leads with no activity are removed permanently;
-                  leads with history (assignment, status changes, etc.) are archived instead, to preserve the record.
+                  Delete <span className="font-semibold text-[#172033]">{pendingDelete.company}</span>? A lead that was never assigned and has no activity is removed permanently;
+                  any other lead is archived instead, so its history is kept (see the Archived filter).
                 </p>
               </div>
             </div>
