@@ -160,4 +160,21 @@ router.post('/:employeeType/:employeeId/mark-emergency-holiday', validateEmploye
   }
 });
 
+// POST /api/admin/attendance/:employeeType/:employeeId/mark-present  { date? }
+// Admin override of the check-in-only Present rule — stored as
+// 'admin_present' and shown as "Marked by admin". Works on a day with no
+// record (insert), or an 'absent'/'emergency_holiday' record (converted);
+// a day with a real check-in is a 409.
+router.post('/:employeeType/:employeeId/mark-present', validateEmployeeType, validateUUIDParam('employeeId'), validateAttendanceDateBody, async (req, res) => {
+  try {
+    const data = await attendanceService.markPresentByAdmin(req.params.employeeType, req.params.employeeId, req.body?.date, req.user.userId);
+    res.json({ success: true, data, message: 'Marked present' });
+  } catch (error) {
+    if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+    if (error.code === 'ALREADY_HAS_ATTENDANCE') return res.status(409).json({ success: false, error: error.message });
+    console.error('Error marking present:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
 export default router;

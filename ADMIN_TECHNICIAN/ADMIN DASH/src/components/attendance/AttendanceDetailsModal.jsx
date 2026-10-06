@@ -4,7 +4,7 @@
 // while that page is open. Attendance-only fields; no tickets, no projects.
 import React, { useState } from 'react';
 import { LocationSummary } from './LocationSummary';
-import { X, LogOut, ShieldAlert, MapPin, Clock, CalendarOff } from 'lucide-react';
+import { X, LogOut, ShieldAlert, MapPin, Clock, CalendarOff, UserCheck } from 'lucide-react';
 
 const LOCATION_LABELS = {
   gps_captured: 'Location captured',
@@ -28,7 +28,7 @@ const fmtDuration = (minutes) => {
 // before Attendance was unified across all three roles); `onMarkAbsent` now
 // takes (employeeType, employeeId) since an id alone is ambiguous once
 // there are three identity tables — see attendanceApiService.markAbsentInApi.
-export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent, onMarkEmergencyHoliday }) => {
+export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent, onMarkEmergencyHoliday, onMarkPresent }) => {
   const [isWorking, setIsWorking] = useState(false);
   if (!row) return null;
 
@@ -67,6 +67,10 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
           ) : bucket === 'emergency_holiday' ? (
             <div className="flex items-center gap-2 text-[#175CD3] bg-[#EFF8FF] rounded-lg px-3 py-2 text-xs font-bold">
               <CalendarOff className="w-4 h-4" /> Emergency holiday for this day
+            </div>
+          ) : bucket === 'admin_present' ? (
+            <div className="flex items-center gap-2 text-[#027A48] bg-[#ECFDF3] rounded-lg px-3 py-2 text-xs font-bold">
+              <UserCheck className="w-4 h-4" /> Marked present by admin — no check-in recorded
             </div>
           ) : bucket === 'unmarked' ? (
             <div className="text-xs font-bold text-[#667085] bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg px-3 py-2">
@@ -153,7 +157,19 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
               <CalendarOff className="w-4 h-4" /> {isWorking ? 'Marking…' : 'Mark Emergency Holiday'}
             </button>
           )}
-          {/* checked_out and emergency_holiday: view-only, no actions. */}
+          {/* Admin override of the check-in-only Present rule: offered on any
+              day without a real check-in (absent / holiday converted in place).
+              Stored as 'admin_present' and labelled "Marked by admin". */}
+          {(bucket === 'unmarked' || bucket === 'absent' || bucket === 'emergency_holiday') && onMarkPresent && (
+            <button
+              onClick={() => run(() => onMarkPresent(employee.employee_type, employee.id))}
+              disabled={isWorking}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#027A48] text-white hover:bg-[#05603A] transition-all cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+            >
+              <UserCheck className="w-4 h-4" /> {isWorking ? 'Marking…' : 'Mark Present'}
+            </button>
+          )}
+          {/* checked_out and admin_present: view-only, no actions. */}
         </div>
       </div>
     </div>

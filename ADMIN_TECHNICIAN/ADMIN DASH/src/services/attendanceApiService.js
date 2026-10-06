@@ -137,6 +137,21 @@ export async function markEmergencyHolidayInApi(employeeType, employeeId, date) 
   return readApiData(res, 'mark emergency holiday');
 }
 
+export async function markPresentInApi(employeeType, employeeId, date) {
+  const res = await authFetch(`${API_BASE_URL}/admin/attendance/${employeeType}/${employeeId}/mark-present`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify({ date })
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const err = new Error(payload?.error || 'Failed to mark present');
+    err.code = res.status === 409 ? 'ALREADY_HAS_ATTENDANCE' : null;
+    throw err;
+  }
+  return readApiData(res, 'mark present');
+}
+
 // `branch`/`employeeType`/`search` scope the bulk action to exactly the
 // same set the Admin page's currently-filtered rows represent — audit fix:
 // previously only `date` was sent, so the button's filtered count didn't

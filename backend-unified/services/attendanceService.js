@@ -290,7 +290,8 @@ const buildRowsForDate = (dateKey, employees, records) => {
 // (never `counts`) reflect branch/search/card scoping.
 const scopeRows = (rows, { cardFilter, branch, employeeId, search } = {}) => {
   let scoped = rows;
-  if (cardFilter === 'present') scoped = scoped.filter((r) => r.bucket === 'checked_out');
+  // Admin-marked present days count as Present (they leave the Absent list).
+  if (cardFilter === 'present') scoped = scoped.filter((r) => r.bucket === 'checked_out' || r.bucket === 'admin_present');
   else if (cardFilter === 'not_yet_checked_out') scoped = scoped.filter((r) => r.bucket === 'checked_in');
   // Emergency-holiday rows stay in the Absent card's list (that's where the
   // Eye action marks them), but are never counted in the Absent KPI.
@@ -317,7 +318,7 @@ export const listForAdmin = async ({ date, employeeId, cardFilter, branch, emplo
   const rows = buildRowsForDate(dateKey, employees, records);
 
   const counts = {
-    present: rows.filter((r) => r.bucket === 'checked_out').length,
+    present: rows.filter((r) => r.bucket === 'checked_out' || r.bucket === 'admin_present').length,
     absent: rows.filter((r) => r.bucket === 'absent').length,
     not_yet_checked_out: rows.filter((r) => r.bucket === 'checked_in').length
   };
@@ -512,6 +513,83 @@ export const markEmergencyHoliday = async (employeeType, employeeId, date, admin
       throw err;
     }
     throw new Error(`Failed to mark emergency holiday: ${error.message}`);
+  }
+  return normalizeRecord(data);
+};
+
+// Admin marks one employee present for a day without a real check-in — a
+// deliberate admin override of the "only a check-in makes you present" rule,
+// so it gets its own 'admin_present' status (no times, no location; see
+// migration 038) rather than a fabricated checked_out row, and the UI labels
+// it "Marked by admin". Offered on 'unmarked' (insert), 'absent' and
+// 'emergency_holiday' (converted in place) days; never on a day with a real
+// check-in. The in-place update is guarded on the status that was read, so a
+// concurrent change to the row can never be silently overwritten.
+const ADMIN_PRESENT_CONVERTIBLE = ['absent', 'emergency_holiday'];
+
+export const markPresentByAdmin = async (employeeType, employeeId, date, adminId) => {
+  if (!isEmployeeType(employeeType)) throw new Error(`Unknown employee type: ${employeeType}`);
+  const dateKey = resolveDateKey(date);
+  const { data: employee, error: lookupError } = await supabase
+    .from(OWNER_TABLE[employeeType])
+    .select('id')
+    .eq('id', employeeId)
+    .maybeSingle();
+  if (lookupError) throw new Error(`Failed to verify employee: ${lookupError.message}`);
+  if (!employee) {
+    const err = new Error('Employee not found');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from('attendance_records')
+    .select('*')
+    .eq(OWNER_COLUMN[employeeType], employeeId)
+    .eq('attendance_date', dateKey)
+    .maybeSingle();
+  if (existingError) throw new Error(`Failed to check existing attendance: ${existingError.message}`);
+
+  const conflict = (message) => {
+    const err = new Error(message);
+    err.code = 'ALREADY_HAS_ATTENDANCE';
+    return err;
+  };
+
+  if (existing) {
+    if (existing.status === 'admin_present') throw conflict('This day is already marked present by an admin');
+    if (!ADMIN_PRESENT_CONVERTIBLE.includes(existing.status)) throw conflict('This employee already checked in that day');
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .update({ status: 'admin_present', marked_absent_by: adminId || null })
+      .eq('id', existing.id)
+      .eq('status', existing.status)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to mark present: ${error.message}`);
+    if (!data) throw conflict('Attendance for that day changed — refresh and try again');
+    return normalizeRecord(data);
+  }
+
+  const { data, error } = await supabase
+    .from('attendance_records')
+    .insert([{
+      [OWNER_COLUMN[employeeType]]: employeeId,
+      attendance_date: dateKey,
+      status: 'admin_present',
+      location_status: 'no_location',
+      marked_absent_by: adminId || null
+    }])
+    .select('*')
+    .single();
+  if (error) {
+    if (error.code === '23505') throw conflict('Attendance for that day changed — refresh and try again');
+    if (error.code === '23503') {
+      const err = new Error('Employee not found');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    throw new Error(`Failed to mark present: ${error.message}`);
   }
   return normalizeRecord(data);
 };

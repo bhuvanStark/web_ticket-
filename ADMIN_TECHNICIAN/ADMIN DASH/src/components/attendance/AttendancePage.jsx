@@ -22,6 +22,7 @@ import {
   fetchAdminAttendanceExportInApi,
   markAbsentInApi,
   markEmergencyHolidayInApi,
+  markPresentInApi,
   markAllAbsentInApi,
   adminCheckOutInApi,
   bulkCheckOutInApi
@@ -79,6 +80,9 @@ const STATUS_BADGES = {
   checked_out: { label: 'Present', className: 'bg-[#ECFDF3] text-[#027A48]' },
   absent: { label: 'Absent', className: 'bg-[#FEF3F2] text-[#D92D20]' },
   emergency_holiday: { label: 'Emergency Holiday', className: 'bg-[#EFF8FF] text-[#175CD3]' },
+  // Admin override (no check-in) — same green as Present, with a
+  // "Marked by admin" note rendered under the badge in the Status column.
+  admin_present: { label: 'Present', className: 'bg-[#ECFDF3] text-[#027A48]', note: 'Marked by admin' },
   unmarked: { label: 'No Check-In', className: 'bg-[#F8FAFC] text-[#667085]' }
 };
 
@@ -220,6 +224,17 @@ export const AttendancePage = () => {
     }
   };
 
+  const handleMarkPresent = async (empType, employeeId) => {
+    try {
+      await markPresentInApi(empType, employeeId, date);
+      showToast?.('Marked present.', 'success');
+      setDetailsRow(null);
+      fetchData();
+    } catch (err) {
+      showToast?.(err.message || 'Mark present failed', 'error');
+    }
+  };
+
   // Scoped to exactly the same branch/employee-type/search currently
   // applied to the on-screen rows, so the bulk action's real effect always
   // matches the filtered count shown on its trigger button (audit fix —
@@ -346,7 +361,7 @@ export const AttendancePage = () => {
             <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">Total Present</span>
           </div>
           <div className="text-4xl font-black text-[#172033] mb-1">{counts.present}</div>
-          <p className="text-xs font-medium text-[#667085]">Checked in and checked out</p>
+          <p className="text-xs font-medium text-[#667085]">Checked in and checked out, or marked by admin</p>
         </button>
 
         <button
@@ -563,6 +578,7 @@ export const AttendancePage = () => {
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-[11px] font-bold ${badge.className}`}>
                           {badge.label}
                         </span>
+                        {badge.note && <p className="text-[10px] font-semibold text-[#667085] mt-1">{badge.note}</p>}
                       </td>
                       <td className="py-4 px-6 text-right">
                         <button
@@ -590,6 +606,7 @@ export const AttendancePage = () => {
           onCheckOut={handleCheckOut}
           onMarkAbsent={handleMarkAbsent}
           onMarkEmergencyHoliday={handleMarkEmergencyHoliday}
+          onMarkPresent={handleMarkPresent}
         />
       )}
 
