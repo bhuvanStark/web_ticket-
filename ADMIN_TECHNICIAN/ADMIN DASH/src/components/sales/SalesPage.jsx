@@ -9,7 +9,7 @@
 // Branch filter as the Technician page, per the plan.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, TrendingUp, X, CheckCircle, Eye } from 'lucide-react';
+import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, TrendingUp, CheckCircle, Eye, Phone, MapPin } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { EMPLOYEE_LOCATIONS } from '../../utils/employeeLocations';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
@@ -20,6 +20,7 @@ import {
 import { AdminLeadsTab } from './AdminLeadsTab';
 import { AdminLeadsAnalyticsTab } from './AdminLeadsAnalyticsTab';
 import { AdminDailyReportsTab } from './AdminDailyReportsTab';
+import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -75,21 +76,9 @@ const SalesFormModal = ({ mode, employee, onClose, onSaved, showToast }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#004898] text-white flex items-center justify-center">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-            <h3 className="font-extrabold text-lg text-[#172033]">{isEdit ? 'Edit Sales Employee' : 'Add Sales Employee'}</h3>
-          </div>
-          <button onClick={onClose} disabled={isSubmitting} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg hover:bg-white transition-all disabled:opacity-50">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto flex-1">
+    <SalesModal onClose={isSubmitting ? undefined : onClose} onSubmit={handleSave} size="lg">
+      <ModalHeader title={isEdit ? 'Edit Sales Employee' : 'Add Sales Employee'} icon={TrendingUp} onClose={onClose} closeDisabled={isSubmitting} />
+      <ModalBody className="space-y-4">
           <div>
             <label className="form-label">Full Name *</label>
             <input
@@ -117,7 +106,7 @@ const SalesFormModal = ({ mode, employee, onClose, onSaved, showToast }) => {
             <div>
               <label className="form-label">Phone *</label>
               <input
-                type="text" value={phone}
+                type="tel" inputMode="tel" value={phone}
                 onChange={(e) => { setPhone(e.target.value); if (touched.phone) markTouched('phone'); }}
                 onBlur={() => markTouched('phone')}
                 placeholder="+91 98765 11223"
@@ -137,16 +126,15 @@ const SalesFormModal = ({ mode, employee, onClose, onSaved, showToast }) => {
             </select>
           </div>
 
-          <div className="pt-3 border-t border-[#E4E7EC] flex items-center justify-end gap-3">
-            <button type="button" onClick={onClose} disabled={isSubmitting} className="btn btn-secondary">Cancel</button>
-            <button type="submit" disabled={isSubmitting} className="btn btn-primary disabled:opacity-70">
-              <CheckCircle className="w-4 h-4" />
-              <span>{isSubmitting ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Employee'}</span>
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} disabled={isSubmitting} className={btnSecondary}>Cancel</button>
+        <button type="submit" disabled={isSubmitting} className={btnPrimary}>
+          <CheckCircle className="w-4 h-4" />
+          <span>{isSubmitting ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Employee'}</span>
+        </button>
+      </ModalFooter>
+    </SalesModal>
   );
 };
 
@@ -222,10 +210,10 @@ const SalesRosterTab = () => {
   if (loading) return <TableSkeleton rows={4} />;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="sales-module space-y-5 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
-          <h2 className="text-2xl font-extrabold text-[#172033] tracking-tight">Sales Roster</h2>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-[#172033] tracking-tight">Sales Roster</h2>
           <p className="text-xs md:text-sm text-[#667085] mt-0.5">Manage Sales employees and their branch assignment.</p>
         </div>
         <button onClick={() => setModal({ mode: 'create' })} className="btn btn-primary shadow-sm text-xs font-bold">
@@ -234,7 +222,7 @@ const SalesRosterTab = () => {
         </button>
       </div>
 
-      <div className="card p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-[#E4E7EC] shadow-xs">
+      <div className="card p-3 sm:p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 border border-[#E4E7EC] shadow-xs">
         <div className="relative w-full sm:w-96">
           <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
           <input
@@ -254,12 +242,51 @@ const SalesRosterTab = () => {
           <option value="">All Branches</option>
           {branches.map((b) => <option key={b} value={b}>{b}</option>)}
         </select>
-        <div className="text-xs font-bold text-[#004898] bg-[#EFF5FC] px-3 py-1.5 rounded-lg border border-[#B3D1F2] shrink-0">
+        <div className="text-xs font-bold text-[#004898] bg-[#EFF5FC] px-3 py-1.5 rounded-lg border border-[#B3D1F2] shrink-0 self-start sm:self-auto">
           Total Sales Employees: {filtered.length}
         </div>
       </div>
 
-      <div className="card overflow-hidden border border-[#E4E7EC] shadow-xs">
+      {/* Phones: one card per employee. */}
+      <div className="md:hidden space-y-2.5">
+        {filtered.length === 0 ? (
+          <div className="card p-8 text-center text-sm text-[#667085]">No Sales employees match the selected filters.</div>
+        ) : filtered.map((e) => (
+          <div key={e.id} className="rounded-2xl border border-[#E4E7EC] bg-white shadow-xs">
+            <div className="p-3.5 flex items-start gap-3">
+              <span className="w-10 h-10 rounded-full bg-[#EFF5FC] text-[#004898] flex items-center justify-center text-xs font-extrabold shrink-0">
+                {(e.full_name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('')}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="font-extrabold text-[14px] text-[#172033] truncate">{e.full_name}</div>
+                <div className="text-[12px] text-[#667085] truncate">{e.email}</div>
+                <div className="mt-1 flex items-center gap-3 flex-wrap text-[12px] text-[#475467]">
+                  {e.phone && <a href={`tel:${e.phone}`} className="inline-flex items-center gap-1"><Phone className="w-3 h-3" /> {e.phone}</a>}
+                  {e.location && <span className="inline-flex items-center gap-1"><MapPin className="w-3 h-3" /> {e.location}</span>}
+                </div>
+              </div>
+            </div>
+            <div className="px-3.5 py-2.5 border-t border-[#F2F4F7] flex items-center gap-2">
+              {canViewAs && (
+                <button onClick={() => viewAsSales(e)} className="flex-1 justify-center px-2.5 py-2 rounded-lg bg-white text-[#004898] border border-[#B3D1F2] inline-flex items-center gap-1.5 text-[12px] font-bold">
+                  <Eye className="w-4 h-4" /> View as
+                </button>
+              )}
+              <button onClick={() => setModal({ mode: 'edit', employee: e })} aria-label="Edit" className={`${canViewAs ? '' : 'flex-1 '}p-2 rounded-lg bg-white text-[#172033] border border-[#E4E7EC] inline-flex items-center justify-center`}>
+                <Pencil className="w-4 h-4" />
+              </button>
+              <button onClick={() => handleDeactivate(e)} disabled={deactivatingId === e.id} aria-label="Deactivate" className="p-2 rounded-lg bg-white text-[#475467] border border-[#E4E7EC] inline-flex items-center justify-center disabled:opacity-60">
+                <UserX className="w-4 h-4" />
+              </button>
+              <button onClick={() => setPendingDelete(e)} aria-label="Delete permanently" className="p-2 rounded-lg bg-white text-[#D92D20] border border-[#E4E7EC] inline-flex items-center justify-center">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block card overflow-hidden border border-[#E4E7EC] shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left border-collapse bg-white">
             <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px] tracking-wider border-b border-[#E4E7EC]">
@@ -336,9 +363,9 @@ const SalesRosterTab = () => {
       )}
 
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-            <div className="flex items-start gap-3 p-5">
+        <SalesModal onClose={isDeleting ? undefined : () => setPendingDelete(null)}>
+            <ModalBody>
+            <div className="flex items-start gap-3">
               <div className="shrink-0 w-10 h-10 rounded-full bg-[#FEF3F2] flex items-center justify-center">
                 <AlertTriangle className="w-5 h-5 text-[#D92D20]" />
               </div>
@@ -349,16 +376,14 @@ const SalesRosterTab = () => {
                 </p>
               </div>
             </div>
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-xl">
-              <button onClick={() => setPendingDelete(null)} disabled={isDeleting} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] transition-all cursor-pointer disabled:opacity-60">
-                Cancel
-              </button>
-              <button onClick={confirmDelete} disabled={isDeleting} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#D92D20] text-white hover:bg-[#B42318] transition-all cursor-pointer disabled:opacity-60">
+            </ModalBody>
+            <ModalFooter>
+              <button onClick={() => setPendingDelete(null)} disabled={isDeleting} className={btnSecondary}>Cancel</button>
+              <button onClick={confirmDelete} disabled={isDeleting} className={btnDanger}>
                 {isDeleting ? 'Deleting…' : 'Delete'}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalFooter>
+        </SalesModal>
       )}
     </div>
   );
@@ -372,8 +397,9 @@ export const SalesPage = () => {
   const [tab, setTab] = useState('leads');
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-1 border-b border-[#E4E7EC]">
+    <div className="space-y-5 sm:space-y-6">
+      {/* Phones: a swipeable row that doesn't wrap or clip any tab. */}
+      <div className="sales-scroll-x -mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-1 shadow-[inset_0_-1px_0_#E4E7EC] overflow-x-auto">
         {[
           { id: 'leads', label: 'Leads' },
           { id: 'analytics', label: 'Analytics' },
@@ -383,7 +409,7 @@ export const SalesPage = () => {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors -mb-px ${
+            className={`shrink-0 whitespace-nowrap px-3 sm:px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               tab === t.id ? 'border-[#004898] text-[#004898]' : 'border-transparent text-[#667085] hover:text-[#172033]'
             }`}
           >

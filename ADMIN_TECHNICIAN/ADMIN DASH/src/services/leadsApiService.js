@@ -106,6 +106,16 @@ export async function deleteLead(id) {
   return handle(res, 'Failed to delete lead');
 }
 
+// Bulk delete: per lead, hard delete if it has no history, otherwise archive.
+// Returns { deleted, archived, skipped, skippedIds }.
+export async function deleteLeadsBulk(leadIds) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/delete-bulk`, {
+    method: 'POST', headers: authHeaders(true), body: JSON.stringify({ lead_ids: leadIds })
+  });
+  const data = await handle(res, 'Failed to delete leads');
+  return data.data;
+}
+
 export async function validateImport(rows) {
   const res = await authFetch(`${API_BASE_URL}/sales-leads/import/validate`, {
     method: 'POST', headers: authHeaders(true), body: JSON.stringify({ rows })

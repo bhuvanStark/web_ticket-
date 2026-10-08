@@ -1399,23 +1399,21 @@ export async function addFollowUp(id, note, nextActionDate, actor) {
 // DELETE (§9 — hard delete only with no dependent history; else archive)
 // ============================================
 
-// A Won lead is a permanent sales record: it can't be deleted or archived
-// (audit fix — archiving one used to drop it from Analytics). A lead is
-// hard-deleted only if it was never owned and has no activity beyond its
-// 'created' row; anything else is archived so its history survives.
+// A lead is hard-deleted only if it was never owned and has no activity
+// beyond its 'created' row; anything else is archived so its history
+// survives. Won leads are allowed too (Admin decision) — they always have
+// history, so they are archived, which drops them out of Analytics; the
+// Admin confirmation warns about that.
 export async function deleteOrArchiveLead(id, actor) {
   const lead = await getLead(id);
   if (!lead) throw Object.assign(new Error('Lead not found'), { status: 404 });
   if (lead.archived_at) throw Object.assign(new Error('This lead is already archived.'), { status: 409 });
-  if (lead.status === 'won') {
-    throw Object.assign(new Error('A Won lead is a permanent sales record and cannot be deleted or archived.'), { status: 409 });
-  }
   const { rows } = await query('SELECT event_type FROM lead_history WHERE lead_id = $1', [id]);
   const canHardDelete = !lead.assigned_to && rows.every((r) => r.event_type === 'created');
 
   if (canHardDelete) {
     const { rowCount } = await query(
-      "DELETE FROM leads WHERE id = $1 AND assigned_to IS NULL AND status <> 'won' AND archived_at IS NULL",
+      "DELETE FROM leads WHERE id = $1 AND assigned_to IS NULL AND archived_at IS NULL",
       [id]
     );
     if (!rowCount) throw Object.assign(new Error('This lead was just changed by someone else. Refresh and try again.'), { status: 409 });
@@ -1426,7 +1424,7 @@ export async function deleteOrArchiveLead(id, actor) {
   const archived = await withTransaction(async (client) => {
     const { rows: updated } = await client.query(
       `UPDATE leads SET archived_at = now(), won_requested_at = NULL, won_requested_by = NULL, updated_at = now()
-       WHERE id = $1 AND archived_at IS NULL AND status <> 'won'
+       WHERE id = $1 AND archived_at IS NULL
        RETURNING assigned_to`,
       [id]
     );
@@ -1438,6 +1436,34 @@ export async function deleteOrArchiveLead(id, actor) {
 
   publish('lead_archived', { id }, [archived.assigned_to]);
   return { archived: true };
+}
+
+// Bulk delete from the Admin Leads tab's multi-select. Each lead goes
+// through deleteOrArchiveLead on its own, so the hard-delete-vs-archive rule
+// is decided per lead; a lead that can't be removed (already archived,
+// gone, changed concurrently) is skipped and reported back, not fatal.
+export async function deleteOrArchiveLeads(ids, actor) {
+  if (!Array.isArray(ids) || !ids.length) throw Object.assign(new Error('Select at least one lead'), { status: 400 });
+  const unique = [...new Set(ids.map(String))];
+  if (unique.length > MAX_BULK_ASSIGN) {
+    throw Object.assign(new Error(`You can delete at most ${MAX_BULK_ASSIGN} leads at once`), { status: 400 });
+  }
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!unique.every((id) => uuidRe.test(id))) throw Object.assign(new Error('Invalid lead id'), { status: 400 });
+
+  let deleted = 0;
+  let archived = 0;
+  const skippedIds = [];
+  for (const id of unique) {
+    try {
+      const result = await deleteOrArchiveLead(id, actor);
+      if (result.archived) archived++; else deleted++;
+    } catch (err) {
+      if (!err.status) throw err;
+      skippedIds.push(id);
+    }
+  }
+  return { deleted, archived, skipped: skippedIds.length, skippedIds };
 }
 
 // ============================================

@@ -21,6 +21,7 @@ import { useDuplicateAwareSave } from './useDuplicateAwareSave';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { PipelineSummaryBar } from './PipelineSummaryBar';
 import { LeadPagination } from './LeadPagination';
+import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
 import {
   STATUS_LABEL, STATUS_COLOR, CLOSED_STATUSES, PROPOSAL_STAGES, LEADS_PAGE_SIZE,
   REF_ID_TEMPLATE, isRefIdTemplate, money, stageTimer, followUpInfo, pageCount, isWonPending, lostReasonLabel
@@ -60,59 +61,70 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
     });
   };
 
+  const label = 'block text-xs font-bold text-[#344054] mb-1.5';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <h3 className="text-lg font-bold text-[#172033]">{isEdit ? 'Edit Lead' : 'Add Lead'}</h3>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={submit} className="p-5 space-y-3 overflow-y-auto">
+    <SalesModal onClose={onClose} onSubmit={submit} size="lg">
+      <ModalHeader
+        title={isEdit ? 'Edit Lead' : 'Add Lead'}
+        subtitle={isEdit ? lead.company : 'This lead will be assigned to you.'}
+        onClose={onClose}
+      />
+      <ModalBody className="space-y-5">
+        <section className="space-y-3">
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#98A2B3]">Customer</h4>
           <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Company *</label>
-            <input required value={company} onChange={(e) => setCompany(e.target.value)} className="form-input text-sm" />
+            <label className={label}>Company *</label>
+            <input required value={company} onChange={(e) => setCompany(e.target.value)} placeholder="e.g. Acme Pvt Ltd" autoComplete="organization" className="form-input text-sm" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Phone *</label>
+              <input required type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" className="form-input text-sm" />
+            </div>
+            <div>
+              <label className={label}>Person to Contact</label>
+              <input value={personToContact} onChange={(e) => setPersonToContact(e.target.value)} autoComplete="name" className="form-input text-sm" />
+            </div>
           </div>
           <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Phone *</label>
-            <input required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" className="form-input text-sm" />
+            <label className={label}>Email</label>
+            <input type="email" inputMode="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" className="form-input text-sm" />
           </div>
-          <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Person to Contact</label>
-            <input value={personToContact} onChange={(e) => setPersonToContact(e.target.value)} className="form-input text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="form-input text-sm" />
-          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#98A2B3]">Deal</h4>
           {inProposal ? (
             <ProposalFields valueEstimate={valueEstimate} setValueEstimate={setValueEstimate} refId={refId} setRefId={setRefId} required />
           ) : (
             <div>
-              <label className="block text-xs font-bold text-[#344054] mb-1">Value Estimate (₹)</label>
-              <input type="number" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} placeholder="Required from Proposal onwards" className="form-input text-sm" />
+              <label className={label}>Value Estimate (₹)</label>
+              <input type="number" inputMode="decimal" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} placeholder="Required from Proposal onwards" className="form-input text-sm" />
             </div>
           )}
           <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Demand</label>
-            <textarea value={demand} onChange={(e) => setDemand(e.target.value)} rows={2} maxLength={2000} placeholder="What the customer needs…" className="form-input text-sm" />
+            <label className={label}>Demand</label>
+            <textarea value={demand} onChange={(e) => setDemand(e.target.value)} rows={3} maxLength={2000} placeholder="What the customer needs…" className="form-input text-sm resize-none" />
           </div>
           <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Remarks</label>
-            <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} maxLength={5000} className="form-input text-sm" />
+            <label className={label}>Remarks</label>
+            <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={3} maxLength={5000} placeholder="Anything else worth noting…" className="form-input text-sm resize-none" />
           </div>
-          <p className="text-[11px] text-[#667085]">
-            {isEdit ? '' : 'This lead will be assigned to you. '}A lead can be marked Won once it reaches Proposal and every field is filled — including Ref ID and a value above ₹0.
-          </p>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-60">
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Lead'}
-            </button>
-          </div>
-        </form>
-      </div>
+        </section>
+
+        <p className="text-[11px] text-[#667085] bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg px-3 py-2">
+          A lead can be marked Won once it reaches Proposal and every field is filled — including Ref ID and a value above ₹0.
+        </p>
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="submit" disabled={saving} className={btnPrimary}>
+          {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Lead'}
+        </button>
+      </ModalFooter>
       {warning}
-    </div>
+    </SalesModal>
   );
 };
 
@@ -134,24 +146,19 @@ const ReleaseModal = ({ lead, onClose, onDone, showToast }) => {
     }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC]">
-          <h3 className="text-lg font-bold text-[#172033]">Release Lead</h3>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={submit} className="p-5 space-y-3">
-          <p className="text-sm text-[#667085]">Give <span className="font-semibold text-[#172033]">{lead.company}</span> back to Admin. It returns as a <strong>New, unassigned</strong> lead and leaves your list; its history and your notes are kept. A reason is required.</p>
-          <textarea required value={reason} onChange={(e) => setReason(e.target.value)} rows={3} className="form-input text-sm" placeholder="Why are you releasing this lead?" />
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-            <button type="submit" disabled={busy || !reason.trim()} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#D92D20] text-white hover:bg-[#B42318] disabled:opacity-60">
-              {busy ? 'Releasing…' : 'Release'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <SalesModal onClose={onClose} onSubmit={submit} size="sm">
+      <ModalHeader title="Release Lead" onClose={onClose} />
+      <ModalBody className="space-y-3">
+        <p className="text-sm text-[#667085]">Give <span className="font-semibold text-[#172033]">{lead.company}</span> back to Admin. It returns as a <strong>New, unassigned</strong> lead and leaves your list; its history and your notes are kept. A reason is required.</p>
+        <textarea required value={reason} onChange={(e) => setReason(e.target.value)} rows={3} className="form-input text-sm resize-none" placeholder="Why are you releasing this lead?" />
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="submit" disabled={busy || !reason.trim()} className={btnDanger}>
+          {busy ? 'Releasing…' : 'Release'}
+        </button>
+      </ModalFooter>
+    </SalesModal>
   );
 };
 
@@ -180,20 +187,15 @@ const DetailModal = ({ lead: initialLead, onClose, onChanged, onChangeStatus, sh
   const closeReason = lostReasonLabel(lead);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <div className="min-w-0">
-            <h3 className="text-lg font-bold text-[#172033] truncate">{lead.company}</h3>
-            <div className="mt-1 flex items-center gap-3 flex-wrap">
-              <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
-              <LeadTimerBattery lead={lead} />
-              {followUp && <span className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUp.label}</span>}
-            </div>
-          </div>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
+    <SalesModal onClose={onClose} size="2xl" closeOnBackdrop tall>
+      <ModalHeader title={lead.company} onClose={onClose}>
+        <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
+          <LeadTimerBattery lead={lead} />
+          {followUp && <span className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUp.label}</span>}
         </div>
-        <div className="p-5 overflow-y-auto space-y-5">
+      </ModalHeader>
+      <ModalBody className="space-y-5">
           {pending && (
             <p className="text-xs text-[#5925DC] bg-[#F4F3FF] border border-[#D9D6FE] rounded-lg px-3 py-2 flex gap-2">
               <Hourglass className="w-4 h-4 shrink-0" /> Won request sent — an Admin is reviewing it because another lead exists for this customer. Status and details are locked and the timer is paused; notes and remarks still work.
@@ -204,13 +206,13 @@ const DetailModal = ({ lead: initialLead, onClose, onChanged, onChangeStatus, sh
               <strong>{STATUS_LABEL[lead.status]}:</strong> {closeReason}
             </p>
           )}
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><span className="text-[#667085]">Phone</span><div className="font-semibold text-[#172033]">{lead.phone}</div></div>
-            <div><span className="text-[#667085]">Contact</span><div className="font-semibold text-[#172033]">{lead.person_to_contact || '—'}</div></div>
-            <div><span className="text-[#667085]">Email</span><div className="font-semibold text-[#172033] break-all">{lead.email || '—'}</div></div>
-            <div><span className="text-[#667085]">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
-            <div><span className="text-[#667085]">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
-            <div className="col-span-2"><span className="text-[#667085]">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
+          <div className="grid grid-cols-2 gap-3 text-sm rounded-xl bg-[#F8FAFC] border border-[#E4E7EC] p-3">
+            <div><span className="text-[#667085] text-xs">Phone</span><div className="font-semibold text-[#172033]"><a href={`tel:${lead.phone}`} className="hover:text-[#004898]">{lead.phone}</a></div></div>
+            <div><span className="text-[#667085] text-xs">Contact</span><div className="font-semibold text-[#172033]">{lead.person_to_contact || '—'}</div></div>
+            <div><span className="text-[#667085] text-xs">Email</span><div className="font-semibold text-[#172033] break-all">{lead.email || '—'}</div></div>
+            <div><span className="text-[#667085] text-xs">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
+            <div><span className="text-[#667085] text-xs">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
+            <div className="col-span-2"><span className="text-[#667085] text-xs">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
           </div>
 
           {!readOnly && !pending && !CLOSED_STATUSES.includes(lead.status) && (
@@ -227,13 +229,12 @@ const DetailModal = ({ lead: initialLead, onClose, onChanged, onChangeStatus, sh
             <h4 className="text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">History</h4>
             <LeadHistoryList history={history} />
           </div>
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+    </SalesModal>
   );
 };
 
-const iconBtn = 'p-1.5 rounded-lg bg-white border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed';
+const iconBtn = 'p-2 md:p-1.5 rounded-lg bg-white border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed';
 
 // Which server list a strip filter needs: Won/Lost and Due today are their
 // own lists; everything else filters the active list.
@@ -306,17 +307,17 @@ export const MyLeadsPage = () => {
   const total = list?.total || 0;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-extrabold text-[#172033] tracking-tight">My Leads</h2>
+    <div className="sales-module space-y-5">
+      <div className="flex items-start sm:items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-[#172033] tracking-tight">My Leads</h2>
           <p className="text-xs md:text-sm text-[#667085] mt-0.5">
             Welcome back, <strong className="text-[#004898]">{currentUser.name}</strong>.
             {overdueTotal > 0 && <span className="ml-1 font-semibold text-[#B42318]">{overdueTotal} lead{overdueTotal === 1 ? ' is' : 's are'} overdue.</span>}
           </p>
         </div>
         {!isViewingAsSales && (
-          <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold self-start sm:self-auto">
+          <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold shrink-0">
             <Plus className="w-4 h-4" /> Add Lead
           </button>
         )}
@@ -329,7 +330,7 @@ export const MyLeadsPage = () => {
         onSelect={setStageFilter}
       />
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company, phone, contact or Ref ID…" style={{ paddingLeft: '36px' }} className="form-input text-xs" />
@@ -337,13 +338,13 @@ export const MyLeadsPage = () => {
         <button
           onClick={() => setStageFilter((f) => (f === 'due' ? null : 'due'))}
           aria-pressed={stageFilter === 'due'}
-          className={`self-start px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${stageFilter === 'due' ? 'border-[#B54708] bg-[#FFFAEB] text-[#B54708]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`}
+          className={`px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${stageFilter === 'due' ? 'border-[#B54708] bg-[#FFFAEB] text-[#B54708]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`}
         >
           <CalendarClock className="w-3.5 h-3.5" /> Due Today
           <span className={`rounded-full px-1.5 text-[10px] ${dueToday ? 'bg-[#B54708] text-white' : 'bg-[#F2F4F7] text-[#667085]'}`}>{dueToday}</span>
         </button>
         {stageFilter && (
-          <button onClick={() => setStageFilter(null)} className="self-start inline-flex items-center gap-1 rounded-full bg-[#EFF5FC] px-3 py-1 text-[11px] font-bold text-[#004898] hover:bg-[#DCEBFA]">
+          <button onClick={() => setStageFilter(null)} className="inline-flex items-center gap-1 rounded-full bg-[#EFF5FC] px-3 py-1 text-[11px] font-bold text-[#004898] hover:bg-[#DCEBFA]">
             {stageFilter === 'closed' ? 'Won / Lost / Dead' : stageFilter === 'due' ? 'Due Today' : STATUS_LABEL[stageFilter]} <X className="w-3 h-3" /> Show open leads
           </button>
         )}
@@ -370,7 +371,7 @@ export const MyLeadsPage = () => {
             const overdue = stageTimer(l)?.overdue;
             const followUp = followUpInfo(l);
             return (
-              <div key={l.id} className={`px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 hover:bg-[#F8FAFC] transition-colors ${overdue ? 'border-l-4 border-l-[#F04438]' : 'border-l-4 border-l-transparent'}`}>
+              <div key={l.id} className={`px-4 py-3.5 md:py-3 flex flex-col md:flex-row md:items-center gap-2.5 md:gap-3 hover:bg-[#F8FAFC] transition-colors ${overdue ? 'border-l-4 border-l-[#F04438]' : 'border-l-4 border-l-transparent'}`}>
                 <button onClick={() => setDetailLead(l)} className="min-w-0 flex-1 text-left">
                   <div className="font-extrabold text-[13px] text-[#172033] truncate">{l.company}</div>
                   <div className="text-[11px] text-[#667085] truncate">
@@ -387,7 +388,7 @@ export const MyLeadsPage = () => {
                     </div>
                   )}
                 </button>
-                <div className="flex items-center gap-4 md:w-[230px] shrink-0">
+                <div className="flex items-center justify-between md:justify-start gap-4 md:w-[230px] shrink-0">
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[l.status]} w-[76px] text-center`}>{STATUS_LABEL[l.status]}</span>
                   <LeadTimerBattery lead={l} />
                 </div>
@@ -397,7 +398,7 @@ export const MyLeadsPage = () => {
                       onClick={() => setStatusLead(l)}
                       disabled={locked}
                       title={locked ? lockReason : 'Change status'}
-                      className="px-2.5 py-1.5 rounded-lg bg-[#004898] hover:bg-[#00346E] text-white text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                      className="flex-1 md:flex-none justify-center px-2.5 py-2 md:py-1.5 rounded-lg bg-[#004898] hover:bg-[#00346E] text-white text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                     ><ArrowRightCircle className="w-3.5 h-3.5" /> Change Status</button>
                   )}
                   {!isViewingAsSales && (

@@ -11,13 +11,14 @@
 // always "right now".
 import React, { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { AlertTriangle, Target, Clock3, ChevronDown, ChevronUp, Trophy, X, AlarmClock } from 'lucide-react';
+import { AlertTriangle, Target, Clock3, ChevronDown, ChevronUp, Trophy, AlarmClock } from 'lucide-react';
 import { fetchLeadsAnalytics, subscribeToLeadEvents } from '../../services/leadsApiService';
 import { LeadStatCard } from './LeadStatCards';
 import { PipelineSummaryBar } from './PipelineSummaryBar';
 import { formatInr } from './leadFormat';
 import { STATUS_LABEL, timerLabel } from './leadPipeline';
 import { TableSkeleton } from '../common/SkeletonLoader';
+import { SalesModal, ModalHeader, ModalBody } from './SalesModal';
 
 const PERIODS = [
   { id: 'all', label: 'All Time' },
@@ -80,9 +81,9 @@ const NameButton = ({ entry, onOpen, className = '' }) => (
 const PodiumCard = ({ entry, onOpen }) => {
   const m = MEDALS[entry.rank] || MEDALS[3];
   return (
-    <div className={`rounded-2xl border-2 ${m.ring} ${m.bg} p-4 text-center shadow-sm`}>
+    <div className={`rounded-2xl border-2 ${m.ring} ${m.bg} p-3 sm:p-4 text-center shadow-sm min-w-0`}>
       <div className="text-3xl leading-none mb-2" aria-label={`Rank ${entry.rank}`}>{m.emoji}</div>
-      <NameButton entry={entry} onOpen={onOpen} className="text-base block mx-auto" />
+      <NameButton entry={entry} onOpen={onOpen} className="text-sm sm:text-base block mx-auto" />
       {entry.location && <div className="text-[11px] text-[#667085]">{entry.location}</div>}
       <div className={`text-3xl font-extrabold mt-2 ${m.label}`}>{entry.wonCount}</div>
       <div className="text-[11px] font-semibold text-[#667085] uppercase tracking-wider">Won</div>
@@ -92,16 +93,9 @@ const PodiumCard = ({ entry, onOpen }) => {
 };
 
 const SalespersonModal = ({ entry, period, onClose }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-    <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl border border-[#E4E7EC]" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-start justify-between p-5 border-b border-[#E4E7EC]">
-        <div>
-          <h3 className="text-lg font-bold text-[#172033]">{entry.name}</h3>
-          <p className="text-xs text-[#667085]">{[entry.location, `Rank #${entry.rank}`].filter(Boolean).join(' · ')}</p>
-        </div>
-        <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-      </div>
-      <div className="p-5 space-y-4">
+  <SalesModal onClose={onClose} size="2xl" closeOnBackdrop>
+      <ModalHeader title={entry.name} subtitle={[entry.location, `Rank #${entry.rank}`].filter(Boolean).join(' · ')} onClose={onClose} />
+      <ModalBody className="space-y-4 pb-6">
         <div>
           <h4 className="text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">Current pipeline</h4>
           <PipelineSummaryBar stages={entry.pipeline} closed={{ won: entry.wonCount, lost: entry.lostCount }} />
@@ -112,9 +106,8 @@ const SalespersonModal = ({ entry, period, onClose }) => (
           <div className="rounded-lg border border-[#ABEFC6] bg-[#ECFDF3] py-2"><div className="text-lg font-extrabold text-[#027A48]">{entry.wonCount}</div><div className="text-[11px] text-[#027A48]">Won</div></div>
         </div>
         <p className="text-[11px] text-[#667085]">Stages show leads open right now. Won/Lost are for leads closed {periodPhrase(period)}.</p>
-      </div>
-    </div>
-  </div>
+      </ModalBody>
+  </SalesModal>
 );
 
 export const AdminLeadsAnalyticsTab = () => {
@@ -157,18 +150,18 @@ export const AdminLeadsAnalyticsTab = () => {
   const personEntry = person ? leaderboard.find((e) => e.salesId === person.salesId) || person : null;
 
   return (
-    <div className="space-y-6">
+    <div className="sales-module space-y-5 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-extrabold text-[#172033] tracking-tight">Sales Analytics</h2>
           <p className="text-xs text-[#667085] mt-0.5">Pipeline is live. Conversion and leaderboard reflect leads closed in the selected period (India time).</p>
         </div>
-        <div className="inline-flex bg-white border border-[#E4E7EC] rounded-lg p-1 self-start">
+        <div className="grid grid-cols-3 sm:inline-flex bg-white border border-[#E4E7EC] rounded-lg p-1 sm:self-start">
           {PERIODS.map((p) => (
             <button
               key={p.id}
               onClick={() => setPeriod(p.id)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${period === p.id ? 'bg-[#004898] text-white shadow-xs' : 'text-[#667085] hover:text-[#172033]'}`}
+              className={`px-3 py-2 sm:py-1.5 text-xs font-bold rounded-md transition-all whitespace-nowrap ${period === p.id ? 'bg-[#004898] text-white shadow-xs' : 'text-[#667085] hover:text-[#172033]'}`}
             >
               {p.label}
             </button>
@@ -176,9 +169,9 @@ export const AdminLeadsAnalyticsTab = () => {
         </div>
       </div>
 
-      <div className="card p-5 space-y-3">
+      <div className="card p-4 sm:p-5 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-extrabold text-[#172033] mr-auto">Pipeline now <span className="font-semibold text-[#667085]">· {pipeline.active} open</span></h3>
+          <h3 className="text-sm font-extrabold text-[#172033] w-full sm:w-auto sm:mr-auto">Pipeline now <span className="font-semibold text-[#667085]">· {pipeline.active} open</span></h3>
           <span className="inline-flex items-center gap-1 rounded-full bg-[#FFFAEB] border border-[#FEDF89] px-2.5 py-1 text-[11px] font-bold text-[#B54708]">
             <Clock3 className="w-3.5 h-3.5" /> {pipeline.dueSoon} due in &lt;24h
           </span>
@@ -190,7 +183,7 @@ export const AdminLeadsAnalyticsTab = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="card p-5 border-l-4 border-l-[#F79009] space-y-3">
+        <div className="card p-4 sm:p-5 border-l-4 border-l-[#F79009] space-y-3">
           <div className="flex items-center justify-between text-[#667085]">
             <span className="text-xs font-bold uppercase tracking-wider">Needs Attention</span>
             <div className="p-2 rounded-lg bg-[#FEF0C7] text-[#B54708]"><AlertTriangle className="w-5 h-5" /></div>
@@ -211,7 +204,7 @@ export const AdminLeadsAnalyticsTab = () => {
         </LeadStatCard>
       </div>
 
-      <div className="card p-5 space-y-5">
+      <div className="card p-4 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Trophy className="w-5 h-5 text-[#F5A300]" />
           <h3 className="text-base font-extrabold text-[#172033]">Leaderboard · {periodLabel}</h3>
@@ -221,13 +214,33 @@ export const AdminLeadsAnalyticsTab = () => {
         {podium.length === 0 ? (
           <p className="text-sm text-center text-[#667085] py-4">No leads were won {period === 'all' ? 'yet' : periodPhrase(period)}.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 min-[420px]:grid-cols-3 gap-2 sm:gap-4">
             {podium.map((entry) => <PodiumCard key={entry.salesId} entry={entry} onOpen={setPerson} />)}
           </div>
         )}
 
         {rest.length > 0 && (
-          <div className="overflow-x-auto border border-[#E4E7EC] rounded-xl">
+          <div className="md:hidden border border-[#E4E7EC] rounded-xl divide-y divide-[#F2F4F7]">
+            {rest.map((e) => (
+              <button key={e.salesId} onClick={() => setPerson(e)} className="w-full px-3.5 py-3 flex items-center gap-3 text-left active:bg-[#F8FAFC]">
+                <span className="w-8 text-xs font-bold text-[#667085] shrink-0">#{e.rank}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-extrabold text-sm text-[#172033] truncate">{e.name}</span>
+                  <span className="block text-[11px] text-[#667085] truncate">
+                    {e.lostCount} lost · {openCount(e.pipeline)} open
+                    {overdueCount(e.pipeline) > 0 && <span className="text-[#B42318] font-semibold"> · {overdueCount(e.pipeline)} overdue</span>}
+                  </span>
+                </span>
+                <span className="text-right shrink-0">
+                  <span className="block text-lg font-extrabold text-[#027A48] leading-none">{e.wonCount}</span>
+                  <span className="block text-[10px] font-semibold text-[#667085] uppercase">Won</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {rest.length > 0 && (
+          <div className="hidden md:block overflow-x-auto border border-[#E4E7EC] rounded-xl">
             <table className="w-full text-xs text-left border-collapse bg-white">
               <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px] tracking-wider border-b border-[#E4E7EC]">
                 <tr>

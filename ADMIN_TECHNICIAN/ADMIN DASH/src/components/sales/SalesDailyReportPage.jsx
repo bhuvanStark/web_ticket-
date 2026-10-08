@@ -12,6 +12,7 @@ import { fetchMyReports, createTodayReport, updateMyReport, fetchViewAsReports }
 import { generateSalesDailyReportPDF, formatReportDate } from '../../utils/salesDailyReportPdf';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { STATUS_LABEL, STATUS_COLOR } from './leadPipeline';
+import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary } from './SalesModal';
 
 // Read-only list of a report's entries — shared with the Admin tab. Status
 // and timer are frozen as of the report's last save.
@@ -112,17 +113,13 @@ const ReportFormModal = ({ report, onClose, onSaved, showToast }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl max-h-[92vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <div>
-            <h3 className="text-lg font-bold text-[#172033]">{isEdit ? 'Edit Today’s Report' : 'Add Report'}</h3>
-            <p className="text-xs text-[#667085]">{isEdit ? formatReportDate(report.report_date) : 'Today'} · one report per day</p>
-          </div>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={submit} className="flex flex-col min-h-0 flex-1">
-          <div className="p-5 space-y-3 overflow-y-auto flex-1">
+    <SalesModal onClose={onClose} onSubmit={submit} size="2xl">
+      <ModalHeader
+        title={isEdit ? 'Edit Today’s Report' : 'Add Report'}
+        subtitle={`${isEdit ? formatReportDate(report.report_date) : 'Today'} · one report per day`}
+        onClose={onClose}
+      />
+      <ModalBody className="space-y-3">
             {entries.length === 0 && (
               <div className="rounded-xl border border-dashed border-[#D0D5DD] p-6 text-center text-sm text-[#667085]">
                 Add the leads you worked on today, or a potential lead you found.
@@ -148,7 +145,7 @@ const ReportFormModal = ({ report, onClose, onSaved, showToast }) => {
                   </div>
                   <button type="button" onClick={() => remove(en.key)} title="Remove" className="p-1.5 rounded-lg text-[#98A2B3] hover:text-[#D92D20] hover:bg-[#FEF3F2]"><Trash2 className="w-4 h-4" /></button>
                 </div>
-                <textarea value={en.comment} onChange={(e) => update(en.key, { comment: e.target.value })} rows={2} maxLength={2000} placeholder="What did you do on this today? *" className="form-input text-sm" />
+                <textarea value={en.comment} onChange={(e) => update(en.key, { comment: e.target.value })} rows={2} maxLength={2000} placeholder="What did you do on this today? *" className="form-input text-sm resize-none" />
               </div>
             ))}
 
@@ -156,7 +153,7 @@ const ReportFormModal = ({ report, onClose, onSaved, showToast }) => {
               <div className="rounded-xl border border-[#B3D1F2] bg-white shadow-sm">
                 <div className="p-2 border-b border-[#E4E7EC] relative">
                   <Search className="w-4 h-4 text-[#98A2B3] absolute left-4 top-1/2 -translate-y-1/2" />
-                  <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your leads…" className="w-full pl-8 pr-8 py-2 text-sm outline-none" />
+                  <input autoFocus={window.matchMedia?.('(min-width: 768px)').matches} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your leads…" className="w-full pl-8 pr-8 py-2 text-sm outline-none" />
                   <button type="button" onClick={() => { setPickerOpen(false); setQuery(''); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98A2B3] hover:text-[#172033]"><X className="w-4 h-4" /></button>
                 </div>
                 <div className="max-h-56 overflow-y-auto divide-y divide-[#F2F4F7]">
@@ -178,27 +175,22 @@ const ReportFormModal = ({ report, onClose, onSaved, showToast }) => {
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setPickerOpen(true)} className="px-3 py-2 text-xs font-bold rounded-lg border border-[#B3D1F2] bg-[#EFF5FC] text-[#004898] hover:bg-[#DCEBFA] inline-flex items-center gap-1.5">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
+              <button type="button" onClick={() => setPickerOpen(true)} className="justify-center px-3 py-2.5 sm:py-2 text-xs font-bold rounded-lg border border-[#B3D1F2] bg-[#EFF5FC] text-[#004898] hover:bg-[#DCEBFA] inline-flex items-center gap-1.5">
                 <Plus className="w-3.5 h-3.5" /> Existing Lead
               </button>
-              <button type="button" onClick={addPotential} className="px-3 py-2 text-xs font-bold rounded-lg border border-[#D9D6FE] bg-[#F4F3FF] text-[#5925DC] hover:bg-[#EBE9FE] inline-flex items-center gap-1.5">
+              <button type="button" onClick={addPotential} className="justify-center px-3 py-2.5 sm:py-2 text-xs font-bold rounded-lg border border-[#D9D6FE] bg-[#F4F3FF] text-[#5925DC] hover:bg-[#EBE9FE] inline-flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" /> Potential Lead
               </button>
             </div>
-          </div>
-          <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-between gap-3 shrink-0">
-            <span className="text-[11px] text-[#B54708] min-h-[1em]">{entries.length > 0 && problem}</span>
-            <div className="flex gap-2">
-              <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-              <button type="submit" disabled={saving || !!problem} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50">
-                {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Save Report'}
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter start={entries.length > 0 && problem ? <span className="text-[11px] text-[#B54708]">{problem}</span> : null}>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="submit" disabled={saving || !!problem} className={btnPrimary}>
+          {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Save Report'}
+        </button>
+      </ModalFooter>
+    </SalesModal>
   );
 };
 
@@ -224,11 +216,11 @@ export const ReportRow = ({ report, salesName, showSalesName = false, onEdit }) 
           </span>
           {open ? <ChevronUp className="w-4 h-4 text-[#98A2B3] shrink-0" /> : <ChevronDown className="w-4 h-4 text-[#98A2B3] shrink-0" />}
         </button>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 pl-12 sm:pl-0 [&>button]:flex-1 sm:[&>button]:flex-none">
           {onEdit && report.editable && (
-            <button onClick={() => onEdit(report)} className="px-3 py-1.5 rounded-lg border border-[#E4E7EC] bg-white text-[#172033] text-[11px] font-bold hover:bg-[#F8FAFC] inline-flex items-center gap-1"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+            <button onClick={() => onEdit(report)} className="justify-center px-3 py-2 sm:py-1.5 rounded-lg border border-[#E4E7EC] bg-white text-[#172033] text-[11px] font-bold hover:bg-[#F8FAFC] inline-flex items-center gap-1"><Pencil className="w-3.5 h-3.5" /> Edit</button>
           )}
-          <button onClick={() => generateSalesDailyReportPDF(report, report.sales_name || salesName)} className="px-3 py-1.5 rounded-lg border border-[#E4E7EC] bg-white text-[#004898] text-[11px] font-bold hover:bg-[#EFF5FC] hover:border-[#B3D1F2] inline-flex items-center gap-1"><Download className="w-3.5 h-3.5" /> Download PDF</button>
+          <button onClick={() => generateSalesDailyReportPDF(report, report.sales_name || salesName)} className="justify-center px-3 py-2 sm:py-1.5 rounded-lg border border-[#E4E7EC] bg-white text-[#004898] text-[11px] font-bold hover:bg-[#EFF5FC] hover:border-[#B3D1F2] inline-flex items-center gap-1"><Download className="w-3.5 h-3.5" /> Download PDF</button>
         </div>
       </div>
       {open && <div className="px-4 pb-3 sm:pl-16"><ReportItemsList items={report.items} /></div>}
@@ -258,10 +250,10 @@ export const SalesDailyReportPage = () => {
   const today = useMemo(() => reports.find((r) => r.editable), [reports]);
 
   return (
-    <div className="space-y-5">
+    <div className="sales-module space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-extrabold text-[#172033] tracking-tight">Daily Report</h2>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-[#172033] tracking-tight">Daily Report</h2>
           <p className="text-xs md:text-sm text-[#667085] mt-0.5">One report per day — the leads you worked on and any potential leads.</p>
         </div>
         {!isViewingAsSales && (

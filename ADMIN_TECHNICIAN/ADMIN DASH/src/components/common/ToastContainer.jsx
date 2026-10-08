@@ -8,7 +8,7 @@ export const ToastContainer = () => {
   if (!toast) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-200">
+    <div className="fixed bottom-6 right-6 z-[200] animate-in slide-in-from-bottom-5 fade-in duration-200">
       <div className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border text-sm font-semibold ${
         toast.type === 'success'
           ? 'bg-[#ECFDF3] border-[#ABE5C6] text-[#027A48]'

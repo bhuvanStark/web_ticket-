@@ -22,7 +22,7 @@ export const LeadStatCard = ({ label, icon: Icon, tone = 'blue', stat, hint, onC
   return (
     <Wrapper
       onClick={onClick}
-      className={`card p-5 border-l-4 ${t.border} text-left w-full ${onClick ? 'hover:shadow-md transition-shadow cursor-pointer' : ''}`}
+      className={`card p-4 sm:p-5 border-l-4 ${t.border} text-left w-full ${onClick ? 'hover:shadow-md transition-shadow cursor-pointer' : ''}`}
     >
       <div className="flex items-center justify-between text-[#667085] mb-2">
         <span className="text-xs font-bold uppercase tracking-wider">{label}</span>
@@ -36,7 +36,7 @@ export const LeadStatCard = ({ label, icon: Icon, tone = 'blue', stat, hint, onC
         stat ? (
           <>
             <div className="flex items-baseline gap-2 flex-wrap">
-              <span className={`text-3xl font-extrabold ${t.text}`}>{stat.count}</span>
+              <span className={`text-2xl sm:text-3xl font-extrabold ${t.text}`}>{stat.count}</span>
               <span className="text-sm font-bold text-[#344054]">{formatInr(stat.value)}</span>
             </div>
             {stat.missingValue > 0 && (

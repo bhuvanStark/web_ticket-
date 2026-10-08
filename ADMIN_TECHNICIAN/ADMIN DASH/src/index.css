@@ -365,3 +365,54 @@ body {
 .form-input-search {
   padding-left: 40px !important;
 }
+
+/* ── Sales module popups (components/sales/SalesModal.jsx) ──────────────
+   Opacity/transform only, so the open animation stays on the compositor
+   and never repaints the page underneath. Phones: the sheet slides up.
+   Desktop: a short fade + lift. */
+@keyframes sales-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sales-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes sales-pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+.sales-modal-overlay { animation: sales-fade-in 180ms ease-out both; }
+.sales-modal-panel { animation: sales-sheet-up 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (min-width: 640px) {
+  .sales-modal-panel { animation: sales-pop-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sales-modal-overlay, .sales-modal-panel { animation: none; }
+}
+
+/* Momentum scrolling inside the sheet; the page behind never scrolls. */
+.sales-modal-body {
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-bottom: 16px;
+}
+
+/* iOS Safari zooms the page when a field under 16px gets focus — keep Sales
+   fields at 16px on phones so tapping one doesn't jolt the layout. */
+@media (max-width: 767px) {
+  .sales-module input:not([type="checkbox"]):not([type="radio"]),
+  .sales-module select,
+  .sales-module textarea,
+  .sales-modal-panel input:not([type="checkbox"]):not([type="radio"]),
+  .sales-modal-panel select,
+  .sales-modal-panel textarea {
+    font-size: 16px;
+  }
+}
+
+/* Horizontal chip rows on phones: swipe instead of wrapping into a wall. */
+.sales-scroll-x {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.sales-scroll-x::-webkit-scrollbar { display: none; }
+
+/* Reports → technician drill-down (components/reports/TechReportDetailPanel.jsx):
+   slides up on phones, in from the right on desktop. */
+@keyframes tech-report-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes tech-report-in { from { transform: translateX(100%); } to { transform: none; } }
+.tech-report-panel { animation: tech-report-up 280ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (min-width: 768px) { .tech-report-panel { animation-name: tech-report-in; } }
+@media (prefers-reduced-motion: reduce) { .tech-report-panel { animation: none; } }

@@ -17,6 +17,7 @@ import { TableSkeleton } from '../common/SkeletonLoader';
 import { AttendanceDetailsModal } from './AttendanceDetailsModal';
 import { LocationSummary } from './LocationSummary';
 import { exportAttendance } from '../../utils/attendanceExport';
+import { exportAttendanceCalendar } from '../../utils/attendanceCalendarExport';
 import {
   fetchAdminAttendanceInApi,
   fetchAdminAttendanceExportInApi,
@@ -57,6 +58,10 @@ const EXPORT_RANGE_OPTIONS = [
 // is computed relative to it (never "today" in the browser's own timezone),
 // so Export Range always agrees with whatever day the Admin has the list
 // pinned to.
+// Multi-day ranges that export as a calendar matrix (one row per employee,
+// one column per day) unless the Admin picks the detailed log instead.
+const CALENDAR_RANGES = ['week', 'month', 'custom'];
+
 const resolveExportRange = (rangeKey, anchor, customStart, customEnd) => {
   switch (rangeKey) {
     case 'last2': return { start: addDays(anchor, -1), end: anchor };
@@ -137,6 +142,9 @@ export const AttendancePage = () => {
   const [exportRange, setExportRange] = useState('today');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  // 'calendar' | 'detailed' — only offered for CALENDAR_RANGES.
+  const [exportLayout, setExportLayout] = useState('calendar');
+  const isCalendarExport = CALENDAR_RANGES.includes(exportRange) && exportLayout === 'calendar';
   const [pendingBulk, setPendingBulk] = useState(null); // 'check-out-all' | 'mark-all-absent'
   const [isBulkWorking, setIsBulkWorking] = useState(false);
   const dropdownRef = useRef(null);
@@ -286,8 +294,13 @@ export const AttendancePage = () => {
             employeeType: employeeType || undefined,
             search: debouncedSearch || undefined
           })).rows || [];
-      exportAttendance(exportRows, date, format);
-      showToast?.(`Exporting ${exportRows.length} record${exportRows.length === 1 ? '' : 's'} to ${format.toUpperCase()}...`, 'info');
+      if (isCalendarExport) {
+        exportAttendanceCalendar(exportRows, { start, end }, format);
+        showToast?.(`Exporting attendance calendar (${start} to ${end}) to ${format.toUpperCase()}...`, 'info');
+      } else {
+        exportAttendance(exportRows, date, format);
+        showToast?.(`Exporting ${exportRows.length} record${exportRows.length === 1 ? '' : 's'} to ${format.toUpperCase()}...`, 'info');
+      }
     } catch (err) {
       showToast?.(err.message || 'Export failed', 'error');
     } finally {
@@ -481,6 +494,31 @@ export const AttendancePage = () => {
               min={customStart || undefined}
               className="px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold text-[#172033] outline-none focus:border-[#004898]"
             />
+          </div>
+        )}
+
+        {CALENDAR_RANGES.includes(exportRange) && (
+          <div className="flex items-center gap-2 sm:ml-auto">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#667085] shrink-0">Layout</span>
+            <div className="inline-flex bg-[#F8FAFC] border border-[#E4E7EC] rounded-lg p-0.5">
+              {[
+                { value: 'calendar', label: 'Calendar', title: 'One row per employee, one column per day — status only' },
+                { value: 'detailed', label: 'Detailed log', title: 'One row per employee per day, with check-in/out, duration and location' }
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setExportLayout(opt.value)}
+                  title={opt.title}
+                  aria-pressed={exportLayout === opt.value}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                    exportLayout === opt.value ? 'bg-white text-[#004898] shadow-xs border border-[#E4E7EC]' : 'text-[#667085] hover:text-[#172033] border border-transparent'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>

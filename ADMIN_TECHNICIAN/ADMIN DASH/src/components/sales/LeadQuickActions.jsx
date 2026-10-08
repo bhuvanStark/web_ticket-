@@ -6,13 +6,14 @@
 // Dead is Admin-only, closed leads are locked for Sales — the UI only
 // mirrors them so users see why before submitting.
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle, Copy, Hourglass } from 'lucide-react';
+import { AlertTriangle, Copy, Hourglass } from 'lucide-react';
 import { updateLeadStatus, updateLeadRemarks, addFollowUp } from '../../services/leadsApiService';
 import {
   STATUS_LABEL, STATUS_COLOR, PROPOSAL_STAGES, CLOSED_STATUSES, REF_ID_TEMPLATE, LOST_REASONS,
   isRefIdTemplate, nextStatuses, todayKey, isWonPending, keepsStageClock, money
 } from './leadPipeline';
 import { LeadTimerBattery } from './LeadTimerBattery';
+import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary } from './SalesModal';
 
 // Mirrors leadService.WON_REQUIRED_FIELDS.
 const WON_REQUIRED = [
@@ -110,13 +111,9 @@ export const LeadStatusModal = ({ lead, isAdmin = false, onClose, onDone, showTo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <h3 className="text-lg font-bold text-[#172033]">Change Status</h3>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={submit} className="p-5 space-y-4 overflow-y-auto">
+    <SalesModal onClose={onClose} onSubmit={submit}>
+        <ModalHeader title="Change Status" onClose={onClose} />
+        <ModalBody className="space-y-4">
           <div className="flex items-center justify-between gap-3 rounded-lg bg-[#F8FAFC] border border-[#E4E7EC] px-3 py-2">
             <div className="min-w-0">
               <div className="text-sm font-bold text-[#172033] truncate">{lead.company}</div>
@@ -144,7 +141,7 @@ export const LeadStatusModal = ({ lead, isAdmin = false, onClose, onDone, showTo
                     type="button"
                     onClick={() => { setStatus(s); setWonConfirmed(false); }}
                     aria-pressed={status === s}
-                    className={`px-3 py-2 rounded-lg border text-xs font-bold transition-all ${
+                    className={`px-3 py-2.5 sm:py-2 rounded-lg border text-xs font-bold transition-all ${
                       status === s ? 'border-[#004898] ring-1 ring-[#004898]/30 ' + STATUS_COLOR[s] : 'border-[#E4E7EC] bg-white text-[#344054] hover:border-[#B3D1F2]'
                     }`}
                   >
@@ -187,17 +184,15 @@ export const LeadStatusModal = ({ lead, isAdmin = false, onClose, onDone, showTo
             </label>
           )}
           {status === 'lost' && <p className="text-xs text-[#667085]">A Lost lead is closed — only an Admin can reopen it.</p>}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-            {options.length > 0 && (
-              <button type="submit" disabled={blocked} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50">
-                {busy ? 'Updating…' : `Move to ${STATUS_LABEL[status]}`}
-              </button>
-            )}
-          </div>
-        </form>
-      </div>
+        </ModalBody>
+        <ModalFooter>
+          <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+          {options.length > 0 && (
+            <button type="submit" disabled={blocked} className={btnPrimary}>
+              {busy ? 'Updating…' : `Move to ${STATUS_LABEL[status]}`}
+            </button>
+          )}
+        </ModalFooter>
       {duplicateWon && (
         <DuplicateWarningModal
           title="Customer already Won"
@@ -211,7 +206,7 @@ export const LeadStatusModal = ({ lead, isAdmin = false, onClose, onDone, showTo
           onContinue={() => { setDuplicateWon(null); send(true); }}
         />
       )}
-    </div>
+    </SalesModal>
   );
 };
 
@@ -271,11 +266,11 @@ export const DuplicateWarningModal = ({
   continueLabel = 'Continue Anyway',
   editLabel = 'Edit Details'
 }) => (
-  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-    <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-      <div className="flex items-start gap-3 p-5">
+  <SalesModal onClose={onEdit} nested>
+    <ModalBody>
+      <div className="flex items-start gap-3">
         <div className="shrink-0 w-10 h-10 rounded-full bg-[#FFFAEB] flex items-center justify-center"><Copy className="w-5 h-5 text-[#B54708]" /></div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h3 className="text-lg font-bold text-[#172033]">{title}</h3>
           <p className="mt-1 text-sm text-[#667085]">{message}</p>
           <div className="mt-3 rounded-lg border border-[#E4E7EC] divide-y divide-[#F2F4F7] max-h-48 overflow-y-auto">
@@ -292,14 +287,14 @@ export const DuplicateWarningModal = ({
           <p className="mt-2 text-[11px] text-[#667085]">{note}</p>
         </div>
       </div>
-      <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-xl">
-        <button type="button" onClick={onEdit} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">{editLabel}</button>
-        <button type="button" onClick={onContinue} disabled={saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#B54708] text-white hover:bg-[#93370D] disabled:opacity-60">
-          {saving ? 'Saving…' : continueLabel}
-        </button>
-      </div>
-    </div>
-  </div>
+    </ModalBody>
+    <ModalFooter>
+      <button type="button" onClick={onEdit} className={btnSecondary}>{editLabel}</button>
+      <button type="button" onClick={onContinue} disabled={saving} className="px-4 py-2.5 sm:py-2 text-sm font-semibold rounded-lg bg-[#B54708] text-white hover:bg-[#93370D] disabled:opacity-60 transition-colors">
+        {saving ? 'Saving…' : continueLabel}
+      </button>
+    </ModalFooter>
+  </SalesModal>
 );
 
 // Log a follow-up note and/or set the next follow-up date (drives "Due
@@ -339,13 +334,13 @@ export const FollowUpForm = ({ lead, onSaved, showToast, disabled = false }) => 
       <input value={note} onChange={(e) => setNote(e.target.value)} disabled={disabled} placeholder="What happened? (optional if only changing the date)" className="form-input text-sm" />
       <div className="flex flex-wrap items-center gap-2">
         {isActive && (
-          <label className="text-xs font-bold text-[#344054] flex items-center gap-2">
-            Next follow-up
-            <input type="date" value={date} min={todayKey()} onChange={(e) => setDate(e.target.value)} disabled={disabled} className="form-input text-sm w-auto" />
+          <label className="text-xs font-bold text-[#344054] flex items-center gap-2 flex-1 sm:flex-none min-w-0">
+            <span className="shrink-0">Next follow-up</span>
+            <input type="date" value={date} min={todayKey()} onChange={(e) => setDate(e.target.value)} disabled={disabled} className="form-input text-sm w-full sm:w-auto min-w-0" />
           </label>
         )}
-        {isActive && date && <button type="button" onClick={() => setDate('')} disabled={disabled} className="text-[11px] font-semibold text-[#667085] hover:text-[#B42318]">Clear date</button>}
-        <button type="submit" disabled={!canSave} className="ml-auto px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50 whitespace-nowrap">
+        {isActive && date && <button type="button" onClick={() => setDate('')} disabled={disabled} className="text-[11px] font-semibold text-[#667085] hover:text-[#B42318] py-2">Clear date</button>}
+        <button type="submit" disabled={!canSave} className="w-full sm:w-auto sm:ml-auto px-4 py-2.5 sm:py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50 whitespace-nowrap">
           {busy ? 'Saving…' : 'Save Follow-up'}
         </button>
       </div>

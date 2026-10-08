@@ -35,6 +35,8 @@ import backOfficeRouter from './routes/backOffice.js';
 import leadsRouter from './routes/leads.js';
 // Sales Daily Report (pipeline V2) — separate resource from leads.
 import salesDailyReportsRouter from './routes/salesDailyReports.js';
+// Admin Reports — technician performance (read-only). Additive.
+import techReportsRouter from './routes/techReports.js';
 
 // Load environment variables
 dotenv.config();
@@ -138,6 +140,7 @@ app.use('/api/sales-daily-reports', salesDailyReportsRouter);
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)
 // ============================================
 
+app.use('/api/admin/tech-reports', techReportsRouter);
 app.use('/api/admin', adminRoutes);
 
 // ============================================

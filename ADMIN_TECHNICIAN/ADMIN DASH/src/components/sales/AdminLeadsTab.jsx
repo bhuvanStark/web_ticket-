@@ -16,7 +16,7 @@ import {
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { fetchSalesInApi } from '../../services/salesApiService';
 import {
-  fetchLeads, fetchLead, createLead, updateLead, assignLeadsBulk, resolveExpiredLead, resolveWonRequest, deleteLead,
+  fetchLeads, fetchLead, createLead, updateLead, assignLeadsBulk, resolveExpiredLead, resolveWonRequest, deleteLead, deleteLeadsBulk,
   fetchLeadHistory,
   validateImport, confirmImport, subscribeToLeadEvents, fetchLeadsSummary, fetchLeadsAnalytics
 } from '../../services/leadsApiService';
@@ -25,6 +25,7 @@ import { LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistory
 import { useDuplicateAwareSave } from './useDuplicateAwareSave';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { LeadPagination } from './LeadPagination';
+import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
 import {
   ALL_STATUSES, ACTIVE_STATUSES, CLOSED_STATUSES, PROPOSAL_STAGES, STATUS_LABEL, STATUS_COLOR, LEADS_PAGE_SIZE,
   REF_ID_TEMPLATE, isRefIdTemplate, money, isAssignable, assignBlockReason, followUpInfo, STAGE_DAYS,
@@ -82,35 +83,33 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <h3 className="text-lg font-bold text-[#172033]">{isEdit ? 'Edit Lead' : 'Add Lead'}</h3>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={submit} className="p-5 space-y-3 overflow-y-auto">
+    <SalesModal onClose={onClose} onSubmit={submit} size="lg">
+      <ModalHeader title={isEdit ? 'Edit Lead' : 'Add Lead'} subtitle={isEdit ? lead.company : 'Starts Unassigned — assign a salesperson from the list.'} onClose={onClose} />
+      <ModalBody className="space-y-3">
           <div>
             <label className="block text-xs font-bold text-[#344054] mb-1">Company *</label>
-            <input required value={company} onChange={(e) => setCompany(e.target.value)} className="form-input text-sm" />
+            <input required value={company} onChange={(e) => setCompany(e.target.value)} placeholder="e.g. Acme Pvt Ltd" className="form-input text-sm" />
           </div>
-          <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Phone *</label>
-            <input required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" className="form-input text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-[#344054] mb-1">Person to Contact</label>
-            <input value={personToContact} onChange={(e) => setPersonToContact(e.target.value)} className="form-input text-sm" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-[#344054] mb-1">Phone *</label>
+              <input required type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" className="form-input text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-[#344054] mb-1">Person to Contact</label>
+              <input value={personToContact} onChange={(e) => setPersonToContact(e.target.value)} className="form-input text-sm" />
+            </div>
           </div>
           <div>
             <label className="block text-xs font-bold text-[#344054] mb-1">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="form-input text-sm" />
+            <input type="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" className="form-input text-sm" />
           </div>
           {inProposal ? (
             <ProposalFields valueEstimate={valueEstimate} setValueEstimate={setValueEstimate} refId={refId} setRefId={setRefId} required />
           ) : (
             <div>
               <label className="block text-xs font-bold text-[#344054] mb-1">Value Estimate</label>
-              <input type="number" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} className="form-input text-sm" />
+              <input type="number" inputMode="decimal" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} className="form-input text-sm" />
             </div>
           )}
           {isClosed && lead.ref_id && (
@@ -121,26 +120,25 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
           )}
           <div>
             <label className="block text-xs font-bold text-[#344054] mb-1">Demand</label>
-            <textarea value={demand} onChange={(e) => setDemand(e.target.value)} disabled={isClosed} rows={2} maxLength={2000} className="form-input text-sm disabled:bg-[#F8FAFC]" />
+            <textarea value={demand} onChange={(e) => setDemand(e.target.value)} disabled={isClosed} rows={3} maxLength={2000} className="form-input text-sm resize-none disabled:bg-[#F8FAFC]" />
             {isClosed && <p className="text-[11px] text-[#667085] mt-1">Locked — this lead is {STATUS_LABEL[lead.status]}.</p>}
           </div>
           <div>
             <label className="block text-xs font-bold text-[#344054] mb-1">Remarks</label>
-            <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} maxLength={5000} className="form-input text-sm" />
+            <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={3} maxLength={5000} className="form-input text-sm resize-none" />
           </div>
           {isEdit && lead.status === 'won' && (
             <p className="text-[11px] text-[#B54708] bg-[#FFFAEB] border border-[#FEDF89] rounded-lg px-3 py-2">This lead is Won — every change is recorded in its history with the old and new value, and the value must stay above ₹0.</p>
           )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-60">
-              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Lead'}
-            </button>
-          </div>
-        </form>
-      </div>
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="submit" disabled={saving} className={btnPrimary}>
+          {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Lead'}
+        </button>
+      </ModalFooter>
       {warning}
-    </div>
+    </SalesModal>
   );
 };
 
@@ -175,7 +173,7 @@ const SalesPicker = ({ roster, value, onChange, exclude }) => {
     <div className="space-y-2">
       <div className="relative">
         <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2" />
-        <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search sales team by name, email or location…" className="w-full pl-9 pr-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]" />
+        <input autoFocus={window.matchMedia?.('(min-width: 768px)').matches} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search sales team by name, email or location…" className="w-full pl-9 pr-3 py-2 border border-[#E4E7EC] rounded-lg text-sm outline-none focus:border-[#004898]" />
       </div>
       {people.length === 0 && (
         <p className="text-xs text-[#98A2B3] text-center py-4">{search ? `No salesperson matches “${search}”.` : 'No other active salespeople.'}</p>
@@ -232,36 +230,25 @@ const AssignSalesModal = ({ leads, roster, onClose, onSaved, showToast }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col">
-        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-extrabold text-base text-[#172033]">Assign Salesperson</h3>
-            <p className="text-xs text-[#667085] truncate">
-              {single ? single.company : `${leads.length} leads selected`}
-            </p>
-            {!single && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {leads.slice(0, 6).map((l) => <span key={l.id} className="rounded-full bg-white border border-[#E4E7EC] px-2 py-0.5 text-[10px] font-semibold text-[#344054]">{l.company}</span>)}
-                {leads.length > 6 && <span className="text-[10px] font-semibold text-[#667085] px-1">+{leads.length - 6} more</span>}
-              </div>
-            )}
+    <SalesModal onClose={onClose} size="lg" tall>
+      <ModalHeader title="Assign Salesperson" subtitle={single ? single.company : `${leads.length} leads selected`} onClose={onClose}>
+        {!single && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {leads.slice(0, 6).map((l) => <span key={l.id} className="rounded-full bg-[#F8FAFC] border border-[#E4E7EC] px-2 py-0.5 text-[10px] font-semibold text-[#344054]">{l.company}</span>)}
+            {leads.length > 6 && <span className="text-[10px] font-semibold text-[#667085] px-1">+{leads.length - 6} more</span>}
           </div>
-          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-
-        <div className="p-5 overflow-y-auto flex-1">
-          <SalesPicker roster={roster} value={salesId} onChange={setSalesId} />
-        </div>
-
-        <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-          <button type="button" onClick={submit} disabled={!salesId || saving} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50">
-            {saving ? 'Assigning…' : chosen ? `Assign ${single ? '' : `${leads.length} `}to ${chosen.full_name.split(' ')[0]}` : 'Choose a salesperson'}
-          </button>
-        </div>
-      </div>
-    </div>
+        )}
+      </ModalHeader>
+      <ModalBody>
+        <SalesPicker roster={roster} value={salesId} onChange={setSalesId} />
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="button" onClick={submit} disabled={!salesId || saving} className={btnPrimary}>
+          {saving ? 'Assigning…' : chosen ? `Assign ${single ? '' : `${leads.length} `}to ${chosen.full_name.split(' ')[0]}` : 'Choose a salesperson'}
+        </button>
+      </ModalFooter>
+    </SalesModal>
   );
 };
 
@@ -304,22 +291,15 @@ const ExpiredLeadModal = ({ lead, roster, salesName, onClose, onDone, showToast 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col">
-        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-extrabold text-base text-[#172033]">Review Expired Lead</h3>
-            <p className="text-sm font-bold text-[#172033] truncate">{lead.company}</p>
-            <div className="mt-1 flex items-center gap-3 flex-wrap text-xs text-[#667085]">
-              <span>{owner}</span>
-              <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
-              <LeadTimerBattery lead={lead} />
-            </div>
-          </div>
-          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg"><X className="w-5 h-5" /></button>
+    <SalesModal onClose={onClose} size="lg">
+      <ModalHeader title="Review Expired Lead" subtitle={<span className="font-bold text-[#172033]">{lead.company}</span>} onClose={onClose}>
+        <div className="mt-1 flex items-center gap-3 flex-wrap text-xs text-[#667085]">
+          <span>{owner}</span>
+          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
+          <LeadTimerBattery lead={lead} />
         </div>
-
-        <div className="p-5 space-y-2 overflow-y-auto flex-1">
+      </ModalHeader>
+      <ModalBody className="space-y-2">
           {options.map((o) => (
             <label key={o.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${choice === o.id ? 'border-[#004898] bg-[#EFF5FC]' : 'border-[#E4E7EC] hover:border-[#B3D1F2]'}`}>
               <input type="radio" name="expiry-choice" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-1 accent-[#004898]" />
@@ -334,19 +314,17 @@ const ExpiredLeadModal = ({ lead, roster, salesName, onClose, onDone, showToast 
               <SalesPicker roster={roster} value={salesId} onChange={setSalesId} exclude={lead.assigned_to} />
             </div>
           )}
-        </div>
-
-        <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-          <button type="button" onClick={submit} disabled={saving || (choice === 'reassign' && !salesId)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50">
-            {saving ? 'Saving…'
-              : choice === 'restart' ? `Give back to ${owner.split(' ')[0]}`
-              : choice === 'reassign' ? (target ? `Give to ${target.full_name.split(' ')[0]}` : 'Choose a salesperson')
-              : 'Ignore'}
-          </button>
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="button" onClick={submit} disabled={saving || (choice === 'reassign' && !salesId)} className={btnPrimary}>
+          {saving ? 'Saving…'
+            : choice === 'restart' ? `Give back to ${owner.split(' ')[0]}`
+            : choice === 'reassign' ? (target ? `Give to ${target.full_name.split(' ')[0]}` : 'Choose a salesperson')
+            : 'Ignore'}
+        </button>
+      </ModalFooter>
+    </SalesModal>
   );
 };
 
@@ -377,19 +355,13 @@ const WonRequestModal = ({ lead, salesName, onClose, onDone, showToast }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col">
-        <div className="p-5 border-b border-[#E4E7EC] bg-[#F8FAFC] flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-extrabold text-base text-[#172033]">Review Won Request</h3>
-            <p className="text-sm font-bold text-[#172033] truncate">{lead.company}</p>
-            <p className="text-xs text-[#667085]">
-              {owner} · {STATUS_LABEL[lead.status]} · {money(lead.value_estimate)} · requested {new Date(lead.won_requested_at).toLocaleString()}
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-5 space-y-3 overflow-y-auto flex-1">
+    <SalesModal onClose={onClose} size="lg">
+      <ModalHeader title="Review Won Request" subtitle={<span className="font-bold text-[#172033]">{lead.company}</span>} onClose={onClose}>
+        <p className="text-xs text-[#667085] mt-0.5">
+          {owner} · {STATUS_LABEL[lead.status]} · {money(lead.value_estimate)} · requested {new Date(lead.won_requested_at).toLocaleString()}
+        </p>
+      </ModalHeader>
+      <ModalBody className="space-y-3">
           <p className="text-xs text-[#344054] bg-[#FFFAEB] border border-[#FEDF89] rounded-lg px-3 py-2">
             {lead.duplicate_count > 0
               ? `${lead.duplicate_count} other lead${lead.duplicate_count === 1 ? '' : 's'} exist for this customer (same company and phone).`
@@ -408,17 +380,16 @@ const WonRequestModal = ({ lead, salesName, onClose, onDone, showToast }) => {
             </label>
           ))}
           {choice === 'reject' && (
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000} placeholder="Why is it rejected? (shown in the lead's history) *" className="form-input text-sm" />
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={1000} placeholder="Why is it rejected? (shown in the lead's history) *" className="form-input text-sm resize-none" />
           )}
-        </div>
-        <div className="p-4 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-          <button type="button" onClick={submit} disabled={saving || (choice === 'reject' && !reason.trim())} className={`px-4 py-2 text-sm font-semibold rounded-lg text-white disabled:opacity-50 ${choice === 'approve' ? 'bg-[#027A48] hover:bg-[#05603A]' : 'bg-[#D92D20] hover:bg-[#B42318]'}`}>
-            {saving ? 'Saving…' : choice === 'approve' ? 'Approve Won' : 'Reject Request'}
-          </button>
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+      <ModalFooter>
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="button" onClick={submit} disabled={saving || (choice === 'reject' && !reason.trim())} className={`px-4 py-2.5 sm:py-2 text-sm font-semibold rounded-lg text-white disabled:opacity-50 transition-colors ${choice === 'approve' ? 'bg-[#027A48] hover:bg-[#05603A]' : 'bg-[#D92D20] hover:bg-[#B42318]'}`}>
+          {saving ? 'Saving…' : choice === 'approve' ? 'Approve Won' : 'Reject Request'}
+        </button>
+      </ModalFooter>
+    </SalesModal>
   );
 };
 
@@ -427,12 +398,13 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showT
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // `loading` only covers the first fetch; a refresh after a save keeps the
+  // current content on screen instead of flashing "Loading…".
   const load = useCallback(async () => {
-    setLoading(true);
     try {
-      const found = await fetchLead(leadId);
+      const [found, events] = await Promise.all([fetchLead(leadId), fetchLeadHistory(leadId)]);
       setLead(found || null);
-      setHistory(await fetchLeadHistory(leadId));
+      setHistory(events);
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -445,25 +417,22 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showT
   const salesName = (id) => roster.find((s) => s.id === id)?.full_name || '—';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <div className="min-w-0">
-            <h3 className="text-lg font-bold text-[#172033] truncate">{lead?.company || 'Lead'}</h3>
-            {lead && (
-              <div className="mt-1 flex items-center gap-3 flex-wrap">
-                <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
-                {lead.assigned_to && <LeadTimerBattery lead={lead} />}
-                {followUpInfo(lead) && <span className={`text-[11px] font-bold ${followUpInfo(lead).due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUpInfo(lead).label}</span>}
-              </div>
-            )}
+    <SalesModal onClose={onClose} size="2xl" closeOnBackdrop tall>
+      <ModalHeader title={lead?.company || 'Lead'} onClose={onClose}>
+        {lead && (
+          <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+            <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
+            {lead.assigned_to && <LeadTimerBattery lead={lead} />}
+            {followUpInfo(lead) && <span className={`text-[11px] font-bold ${followUpInfo(lead).due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUpInfo(lead).label}</span>}
           </div>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
+        )}
+      </ModalHeader>
         {loading || !lead ? (
-          <div className="p-8 text-center text-[#667085] text-sm">Loading…</div>
+          <ModalBody className="space-y-3">
+            {[0, 1, 2].map((i) => <div key={i} className="h-12 rounded-lg bg-[#F2F4F7] animate-pulse" />)}
+          </ModalBody>
         ) : (
-          <div className="p-5 overflow-y-auto space-y-5">
+          <ModalBody className="space-y-5">
             {lead.archived_at && (
               <p className="text-xs text-[#344054] bg-[#F2F4F7] border border-[#E4E7EC] rounded-lg px-3 py-2 flex gap-2">
                 <Archive className="w-4 h-4 shrink-0" /> Archived {new Date(lead.archived_at).toLocaleDateString()} — read-only.
@@ -485,14 +454,14 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showT
                 <strong>{STATUS_LABEL[lead.status]}:</strong> {lostReasonLabel(lead)}
               </p>
             )}
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><span className="text-[#667085]">Phone</span><div className="font-semibold text-[#172033]">{lead.phone}</div></div>
-              <div><span className="text-[#667085]">Contact</span><div className="font-semibold text-[#172033]">{lead.person_to_contact || '—'}</div></div>
-              <div><span className="text-[#667085]">Email</span><div className="font-semibold text-[#172033] break-all">{lead.email || '—'}</div></div>
-              <div><span className="text-[#667085]">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
-              <div><span className="text-[#667085]">Assigned To</span><div className="font-semibold text-[#172033]">{lead.assigned_to ? salesName(lead.assigned_to) : 'Unassigned'}</div></div>
-              <div><span className="text-[#667085]">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
-              <div className="col-span-2"><span className="text-[#667085]">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
+            <div className="grid grid-cols-2 gap-3 text-sm rounded-xl bg-[#F8FAFC] border border-[#E4E7EC] p-3">
+              <div><span className="text-[#667085] text-xs">Phone</span><div className="font-semibold text-[#172033]"><a href={`tel:${lead.phone}`} className="hover:text-[#004898]">{lead.phone}</a></div></div>
+              <div><span className="text-[#667085] text-xs">Contact</span><div className="font-semibold text-[#172033]">{lead.person_to_contact || '—'}</div></div>
+              <div><span className="text-[#667085] text-xs">Email</span><div className="font-semibold text-[#172033] break-all">{lead.email || '—'}</div></div>
+              <div><span className="text-[#667085] text-xs">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
+              <div><span className="text-[#667085] text-xs">Assigned To</span><div className="font-semibold text-[#172033]">{lead.assigned_to ? salesName(lead.assigned_to) : 'Unassigned'}</div></div>
+              <div><span className="text-[#667085] text-xs">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
+              <div className="col-span-2"><span className="text-[#667085] text-xs">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
             </div>
 
             {lead.status !== 'won' && !lead.archived_at && !isWonPending(lead) && (
@@ -509,10 +478,9 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showT
               <h4 className="text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">History</h4>
               <LeadHistoryList history={history} salesName={salesName} showActor />
             </div>
-          </div>
+          </ModalBody>
         )}
-      </div>
-    </div>
+    </SalesModal>
   );
 };
 
@@ -600,15 +568,11 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl max-h-[90vh] rounded-xl bg-white shadow-xl border border-[#E4E7EC] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-[#E4E7EC] shrink-0">
-          <h3 className="text-lg font-bold text-[#172033]">Import Leads from Excel</h3>
-          <button onClick={onClose} className="text-[#667085] hover:text-[#172033]"><X className="w-5 h-5" /></button>
-        </div>
+    <SalesModal onClose={onClose} size="2xl">
+      <ModalHeader title="Import Leads from Excel" onClose={onClose} />
 
         {step === 'upload' && (
-          <div className="p-8 text-center space-y-4">
+          <ModalBody className="text-center space-y-4 py-8">
             <FileSpreadsheet className="w-12 h-12 text-[#B3D1F2] mx-auto" />
             <p className="text-sm text-[#667085]">
               Upload an .xlsx file with columns <strong>Company</strong> and <strong>Phone</strong> (required), plus optional
@@ -629,17 +593,17 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
             >
               <Upload className="w-4 h-4" /> {busy ? 'Reading file…' : 'Choose File'}
             </button>
-          </div>
+          </ModalBody>
         )}
 
         {step === 'preview' && preview && (
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="p-5 flex gap-4 text-sm border-b border-[#E4E7EC] shrink-0">
+          <>
+            <div className="px-4 sm:px-5 py-3 flex flex-wrap gap-x-4 gap-y-1 text-sm border-b border-[#E4E7EC] shrink-0">
               <span className="text-[#027A48] font-semibold flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> {preview.valid.length} ready to import</span>
               <span className="text-[#B42318] font-semibold flex items-center gap-1"><XCircle className="w-4 h-4" /> {preview.failed.length} failed</span>
               <span className="text-[#B54708] font-semibold flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> {preview.duplicates.length} possible duplicate</span>
             </div>
-            <div className="overflow-y-auto flex-1 p-5">
+            <ModalBody>
               <table className="w-full text-xs text-left border-collapse">
                 <thead className="text-[#667085] uppercase font-bold text-[10px] border-b border-[#E4E7EC]">
                   <tr><th className="py-2 pr-2">Row</th><th className="py-2 pr-2">Company</th><th className="py-2 pr-2">Phone</th><th className="py-2">Status</th></tr>
@@ -672,22 +636,23 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
               {preview.failed.length > 0 && (
                 <p className="text-xs text-[#667085] mt-3">Failed rows will be skipped — fix and re-upload them separately.</p>
               )}
-            </div>
-            <div className="p-5 border-t border-[#E4E7EC] flex justify-end gap-2 shrink-0">
-              <button onClick={() => setStep('upload')} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Back</button>
+            </ModalBody>
+            <ModalFooter>
+              <button type="button" onClick={() => setStep('upload')} className={btnSecondary}>Back</button>
               <button
+                type="button"
                 onClick={doConfirm}
                 disabled={busy || !(preview.valid.length + (includeDuplicates ? preview.duplicates.length : 0))}
-                className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#004898] text-white hover:bg-[#00346E] disabled:opacity-50"
+                className={btnPrimary}
               >
                 {busy ? 'Importing…' : `Confirm Import (${preview.valid.length + (includeDuplicates ? preview.duplicates.length : 0)})`}
               </button>
-            </div>
-          </div>
+            </ModalFooter>
+          </>
         )}
 
         {step === 'done' && result && (
-          <div className="p-8 text-center space-y-3">
+          <ModalBody className="text-center space-y-3 py-8">
             <CheckCircle2 className="w-12 h-12 text-[#12B76A] mx-auto" />
             <p className="text-sm font-semibold text-[#172033]">{result.imported} lead(s) imported successfully.</p>
             {result.imported > 0 && <p className="text-xs text-[#667085]">They are Unassigned — turn on “Unassigned only”, select them and use Assign Salesperson.</p>}
@@ -695,10 +660,9 @@ const ImportModal = ({ onClose, onImported, showToast }) => {
               <p className="text-xs text-[#667085]">{result.failed.length} failed{includeDuplicates ? '' : `, ${result.duplicates.length} possible duplicate(s) skipped`} — not imported.</p>
             )}
             <button onClick={onClose} className="px-5 py-2.5 rounded-lg bg-[#004898] text-white text-sm font-semibold hover:bg-[#00346E]">Done</button>
-          </div>
+          </ModalBody>
         )}
-      </div>
-    </div>
+    </SalesModal>
   );
 };
 
@@ -725,7 +689,8 @@ export const AdminLeadsTab = () => {
   const [detailId, setDetailId] = useState(null);
   const [statusLead, setStatusLead] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null); // [lead, ...] or null
+  const [deleting, setDeleting] = useState(false);
   const [summary, setSummary] = useState(null);
   const requestSeq = useRef(0);
   const leads = list.rows;
@@ -799,20 +764,25 @@ export const AdminLeadsTab = () => {
     return person.is_active ? person.full_name : `${person.full_name} (inactive)`;
   };
 
-  // Only New/Unassigned active leads can be assigned, so only they can be selected.
-  const selectable = archivedOnly ? [] : leads.filter(isAssignable);
+  // Any non-archived lead can be selected (for bulk delete); bulk Assign
+  // only acts on the selected leads that are New/Unassigned.
+  const selectable = leads.filter((l) => !l.archived_at);
   const selectedLeads = [...selected.values()];
+  const assignableSelected = selectedLeads.filter(isAssignable);
   const allSelected = selectable.length > 0 && selectable.every((l) => selected.has(l.id));
   const someSelected = selectable.some((l) => selected.has(l.id));
-  const alreadyOwned = selectedLeads.filter((l) => l.assigned_to).length;
+  const alreadyOwned = assignableSelected.filter((l) => l.assigned_to).length;
 
-  // Drop selections on this page that stopped being assignable after a refresh.
+  // Refresh the stored copy of each selected lead on this page (so the
+  // assignable check stays current) and drop any that became archived.
   useEffect(() => {
     setSelected((prev) => {
       let changed = false;
       const next = new Map(prev);
       for (const lead of leads) {
-        if (next.has(lead.id) && !isAssignable(lead)) { next.delete(lead.id); changed = true; }
+        if (!next.has(lead.id)) continue;
+        if (lead.archived_at) next.delete(lead.id); else next.set(lead.id, lead);
+        changed = true;
       }
       return changed ? next : prev;
     });
@@ -823,7 +793,7 @@ export const AdminLeadsTab = () => {
     if (next.has(lead.id)) next.delete(lead.id); else next.set(lead.id, lead);
     return next;
   });
-  // The header checkbox selects / clears the assignable rows on this page.
+  // The header checkbox selects / clears every selectable row on this page.
   const toggleAll = () => setSelected((prev) => {
     const next = new Map(prev);
     if (allSelected) selectable.forEach((l) => next.delete(l.id));
@@ -831,15 +801,33 @@ export const AdminLeadsTab = () => {
     return next;
   });
 
+  const wonToDelete = pendingDelete ? pendingDelete.filter((l) => l.status === 'won').length : 0;
   const confirmDelete = async () => {
-    if (!pendingDelete) return;
+    if (!pendingDelete?.length || deleting) return;
+    setDeleting(true);
     try {
-      const result = await deleteLead(pendingDelete.id);
-      showToast(result.message || 'Lead removed', 'success');
+      if (pendingDelete.length === 1) {
+        const result = await deleteLead(pendingDelete[0].id);
+        showToast(result.message || 'Lead removed', 'success');
+      } else {
+        const r = await deleteLeadsBulk(pendingDelete.map((l) => l.id));
+        const parts = [];
+        if (r.deleted) parts.push(`${r.deleted} deleted`);
+        if (r.archived) parts.push(`${r.archived} archived (had history)`);
+        if (r.skipped) parts.push(`${r.skipped} skipped (already removed or just changed)`);
+        showToast(parts.join(', ') || 'Nothing to delete', r.skipped ? 'info' : 'success');
+      }
+      setSelected((prev) => {
+        const next = new Map(prev);
+        pendingDelete.forEach((l) => next.delete(l.id));
+        return next;
+      });
       setPendingDelete(null);
       load();
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -849,14 +837,21 @@ export const AdminLeadsTab = () => {
     setArchivedOnly((v) => (which === 'archived' ? !v : false));
   };
 
-  const chip = (active) => `px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${active ? 'border-[#004898] bg-[#EFF5FC] text-[#004898]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`;
+  const chip = (active) => `shrink-0 whitespace-nowrap px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${active ? 'border-[#004898] bg-[#EFF5FC] text-[#004898]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`;
   const selectCls = 'text-xs font-semibold text-[#172033] border border-[#E4E7EC] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#004898]';
   const iconCls = 'p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed';
+
+  const emptyMessage = query ? 'No leads match your search.'
+    : wonRequestsOnly ? 'No Won requests waiting.'
+    : archivedOnly ? 'No archived leads.'
+    : expiredOnly ? 'No expired leads waiting for a decision.'
+    : overdueOnly ? 'No overdue leads — nice.'
+    : 'No leads match the selected filters.';
 
   if (loading) return <TableSkeleton rows={4} />;
 
   return (
-    <div className="space-y-4">
+    <div className="sales-module space-y-4">
       {/* Company-wide totals — independent of the filters/search below. */}
       <LeadStatGrid>
         <LeadStatCard
@@ -880,26 +875,30 @@ export const AdminLeadsTab = () => {
 
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold">
+          <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold flex-1 sm:flex-none">
             <Plus className="w-4 h-4" /> Add Lead
           </button>
-          <button onClick={() => setImportOpen(true)} className="px-3 py-2 text-xs font-bold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] inline-flex items-center gap-1.5">
+          <button onClick={() => setImportOpen(true)} className="flex-1 sm:flex-none justify-center px-3 py-2.5 sm:py-2 text-xs font-bold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] inline-flex items-center gap-1.5">
             <Upload className="w-3.5 h-3.5" /> Import Excel
           </button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 min-w-0">
           <div className="relative w-full sm:w-60">
             <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company, phone, contact or Ref ID…" style={{ paddingLeft: '36px' }} className="form-input text-xs" />
           </div>
-          <select value={unassignedOnly ? '' : salesFilter} onChange={(e) => { setUnassignedOnly(false); setSalesFilter(e.target.value); }} className={selectCls} aria-label="Salesperson">
-            <option value="">All Salespeople</option>
-            {roster.map((s) => <option key={s.id} value={s.id}>{s.full_name}{s.is_active ? '' : ' (inactive)'}</option>)}
-          </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectCls} aria-label="Status">
-            <option value="">All Statuses</option>
-            {ALL_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
-          </select>
+          <div className="grid grid-cols-2 sm:flex gap-2">
+            <select value={unassignedOnly ? '' : salesFilter} onChange={(e) => { setUnassignedOnly(false); setSalesFilter(e.target.value); }} className={`${selectCls} min-w-0`} aria-label="Salesperson">
+              <option value="">All Salespeople</option>
+              {roster.map((s) => <option key={s.id} value={s.id}>{s.full_name}{s.is_active ? '' : ' (inactive)'}</option>)}
+            </select>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={`${selectCls} min-w-0`} aria-label="Status">
+              <option value="">All Statuses</option>
+              {ALL_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
+            </select>
+          </div>
+          {/* Phones: one swipeable row of filter chips instead of a wrapped wall. */}
+          <div className="sales-scroll-x -mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-2 overflow-x-auto sm:overflow-visible sm:flex-wrap">
           <button onClick={() => { setSalesFilter(''); setUnassignedOnly((v) => !v); }} aria-pressed={unassignedOnly} className={chip(unassignedOnly)}>
             <UserX className="w-3.5 h-3.5" /> Unassigned
           </button>
@@ -917,10 +916,110 @@ export const AdminLeadsTab = () => {
           <button onClick={() => toggleQueue('archived')} aria-pressed={archivedOnly} className={chip(archivedOnly)} title="Archived leads (read-only)">
             <Archive className="w-3.5 h-3.5" /> Archived
           </button>
+          </div>
         </div>
       </div>
 
-      <div className="card overflow-hidden border border-[#E4E7EC] shadow-xs">
+      {/* Phones: one card per lead. */}
+      <div className="md:hidden space-y-2.5">
+        {leads.length > 0 && selectable.length > 0 && (
+          <label className="flex items-center gap-2 px-1 text-xs font-semibold text-[#475467]">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+              onChange={toggleAll}
+              className="w-4 h-4 accent-[#004898]"
+            />
+            Select all leads on this page
+          </label>
+        )}
+        {leads.length === 0 ? (
+          <div className="card p-8 text-center text-sm text-[#667085]">{emptyMessage}</div>
+        ) : leads.map((l) => {
+          const isSelected = selected.has(l.id);
+          const isWon = l.status === 'won';
+          const archived = !!l.archived_at;
+          const pending = isWonPending(l);
+          const blockReason = archived ? 'Archived leads are read-only' : assignBlockReason(l);
+          const followUp = followUpInfo(l);
+          const closeReason = CLOSED_STATUSES.includes(l.status) ? lostReasonLabel(l) : null;
+          return (
+            <div key={l.id} className={`rounded-2xl border bg-white shadow-xs transition-colors ${isSelected ? 'border-[#004898] bg-[#F5F9FE]' : 'border-[#E4E7EC]'}`}>
+              <div className="p-3.5 flex items-start gap-3">
+                {!archived && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${l.company}`}
+                    checked={isSelected}
+                    onChange={() => toggle(l)}
+                    className="mt-1 w-4 h-4 accent-[#004898] shrink-0"
+                  />
+                )}
+                <button onClick={() => setDetailId(l.id)} className="min-w-0 flex-1 text-left">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-extrabold text-[14px] text-[#172033] truncate">{l.company}</span>
+                    {l.duplicate_count > 0 && <Copy className="w-3.5 h-3.5 text-[#667085] shrink-0" aria-label="Duplicate" />}
+                  </div>
+                  <div className="text-[12px] text-[#667085] truncate">
+                    {[l.person_to_contact, l.phone].filter(Boolean).join(' · ')}
+                  </div>
+                  {followUp && <div className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#98A2B3]'}`}>{followUp.label}</div>}
+                </button>
+                <span className="text-sm font-extrabold text-[#172033] shrink-0">{money(l.value_estimate)}</span>
+              </div>
+
+              <div className="px-3.5 pb-3 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[l.status]}`}>{STATUS_LABEL[l.status]}</span>
+                  {archived && <span className="text-[11px] font-semibold text-[#667085]">Archived</span>}
+                  {!archived && l.assigned_to && ACTIVE_STATUSES.includes(l.status) && <LeadTimerBattery lead={l} />}
+                </div>
+                <span className="text-[12px] font-semibold text-[#475467] truncate max-w-[50%]">
+                  {l.assigned_to ? salesName(l.assigned_to) : <span className="rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[11px] font-bold text-[#B42318]">Unassigned</span>}
+                </span>
+              </div>
+
+              {closeReason && <p className="px-3.5 pb-3 -mt-1 text-[11px] text-[#667085]">{closeReason}</p>}
+
+              {!archived && (pending || l.expired) && (
+                <div className="px-3.5 pb-3 flex flex-wrap gap-2">
+                  {pending && (
+                    <button onClick={() => setWonRequestLead(l)} className="inline-flex items-center gap-1 rounded-lg bg-[#F4F3FF] border border-[#D9D6FE] px-2.5 py-1.5 text-[11px] font-bold text-[#5925DC]">
+                      <Hourglass className="w-3.5 h-3.5" /> Won request · Review
+                    </button>
+                  )}
+                  {l.expired && (
+                    <button onClick={() => setExpiredLead(l)} className="inline-flex items-center gap-1 rounded-lg bg-[#FEF3F2] border border-[#FECDCA] px-2.5 py-1.5 text-[11px] font-bold text-[#B42318]">
+                      <TimerReset className="w-3.5 h-3.5" /> Expired · Review
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="px-3.5 py-2.5 border-t border-[#F2F4F7] flex items-center gap-2">
+                {!archived && (
+                  <button
+                    onClick={() => setStatusLead(l)}
+                    disabled={isWon || pending}
+                    className="flex-1 justify-center px-2.5 py-2 rounded-lg bg-[#004898] text-white text-[12px] font-bold inline-flex items-center gap-1.5 disabled:opacity-40"
+                  ><ArrowRightCircle className="w-4 h-4" /> Change Status</button>
+                )}
+                <button onClick={() => setDetailId(l.id)} aria-label="Details" className={`${iconCls} p-2 ${archived ? 'flex-1 inline-flex justify-center' : ''}`}><HistoryIcon className="w-4 h-4" /></button>
+                {!archived && (
+                  <>
+                    <button onClick={() => setAssignTargets([l])} disabled={!!blockReason} aria-label="Assign salesperson" className={`${iconCls} p-2`}><UserPlus className="w-4 h-4" /></button>
+                    <button onClick={() => setFormModal({ lead: l })} aria-label="Edit" className={`${iconCls} p-2`}><Pencil className="w-4 h-4" /></button>
+                    <button onClick={() => setPendingDelete([l])} aria-label="Delete" className={`${iconCls} p-2 text-[#D92D20]`}><Trash2 className="w-4 h-4" /></button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden md:block card overflow-hidden border border-[#E4E7EC] shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left border-collapse bg-white">
             <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px] tracking-wider border-b border-[#E4E7EC]">
@@ -928,8 +1027,8 @@ export const AdminLeadsTab = () => {
                 <th className="pl-4 pr-2 py-4 w-8">
                   <input
                     type="checkbox"
-                    aria-label="Select assignable leads on this page"
-                    title="Select the New / Unassigned leads on this page"
+                    aria-label="Select all leads on this page"
+                    title="Select all leads on this page"
                     checked={allSelected}
                     ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
                     onChange={toggleAll}
@@ -947,14 +1046,7 @@ export const AdminLeadsTab = () => {
             </thead>
             <tbody className="divide-y divide-[#F2F4F7]">
               {leads.length === 0 ? (
-                <tr><td colSpan="7" className="p-8 text-center text-[#667085]">
-                  {query ? 'No leads match your search.'
-                    : wonRequestsOnly ? 'No Won requests waiting.'
-                    : archivedOnly ? 'No archived leads.'
-                    : expiredOnly ? 'No expired leads waiting for a decision.'
-                    : overdueOnly ? 'No overdue leads — nice.'
-                    : 'No leads match the selected filters.'}
-                </td></tr>
+                <tr><td colSpan="7" className="p-8 text-center text-[#667085]">{emptyMessage}</td></tr>
               ) : leads.map((l) => {
                 const isSelected = selected.has(l.id);
                 const isWon = l.status === 'won';
@@ -971,8 +1063,8 @@ export const AdminLeadsTab = () => {
                         aria-label={`Select ${l.company}`}
                         checked={isSelected}
                         onChange={() => toggle(l)}
-                        disabled={!!blockReason}
-                        title={blockReason || undefined}
+                        disabled={archived}
+                        title={archived ? 'Archived leads are read-only' : undefined}
                         className="w-4 h-4 accent-[#004898] cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 align-middle"
                       />
                     </td>
@@ -1024,9 +1116,8 @@ export const AdminLeadsTab = () => {
                             <button onClick={() => setAssignTargets([l])} disabled={!!blockReason} title={blockReason || 'Assign salesperson'} className={iconCls}><UserPlus className="w-4 h-4" /></button>
                             <button onClick={() => setFormModal({ lead: l })} title={isWon ? 'Edit (changes are recorded in history)' : 'Edit'} className={iconCls}><Pencil className="w-4 h-4" /></button>
                             <button
-                              onClick={() => setPendingDelete(l)}
-                              disabled={isWon}
-                              title={isWon ? 'A Won lead is a permanent record and can’t be deleted or archived' : 'Delete'}
+                              onClick={() => setPendingDelete([l])}
+                              title="Delete"
                               className={`${iconCls} hover:bg-[#FEF3F2] text-[#D92D20] hover:border-[#FDA29B]`}
                             ><Trash2 className="w-4 h-4" /></button>
                           </>
@@ -1050,10 +1141,19 @@ export const AdminLeadsTab = () => {
             <span className="flex items-center justify-center w-7 h-7 rounded-full bg-[#004898] text-xs font-extrabold shrink-0">{selectedLeads.length}</span>
             <span className="text-sm font-semibold flex-1 min-w-0 truncate">
               lead{selectedLeads.length === 1 ? '' : 's'} selected{pageCount(list.total) > 1 ? ' (across pages)' : ''}
+              {assignableSelected.length < selectedLeads.length && <span className="block text-[11px] font-normal text-white/70">{assignableSelected.length ? `Assign applies to the ${assignableSelected.length} New / Unassigned` : 'None can be assigned (only New / Unassigned)'}</span>}
               {alreadyOwned > 0 && <span className="block text-[11px] font-normal text-white/70">{alreadyOwned} already assigned — will move to the new salesperson</span>}
             </span>
-            <button onClick={() => setAssignTargets(selectedLeads)} className="px-3 py-2 rounded-lg bg-white text-[#004898] text-xs font-extrabold hover:bg-[#EFF5FC] inline-flex items-center gap-1.5 whitespace-nowrap">
-              <UserPlus className="w-4 h-4" /> Assign Salesperson
+            <button
+              onClick={() => setAssignTargets(assignableSelected)}
+              disabled={!assignableSelected.length}
+              title={assignableSelected.length ? undefined : 'Only New or Unassigned leads can be assigned'}
+              className="px-3 py-2 rounded-lg bg-white text-[#004898] text-xs font-extrabold hover:bg-[#EFF5FC] inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <UserPlus className="w-4 h-4" /> Assign<span className="hidden sm:inline"> Salesperson</span>
+            </button>
+            <button onClick={() => setPendingDelete(selectedLeads)} className="px-3 py-2 rounded-lg bg-[#D92D20] text-white text-xs font-extrabold hover:bg-[#B42318] inline-flex items-center gap-1.5 whitespace-nowrap">
+              <Trash2 className="w-4 h-4" /> Delete
             </button>
             <button onClick={() => setSelected(new Map())} title="Clear selection" className="p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10"><X className="w-4 h-4" /></button>
           </div>
@@ -1108,24 +1208,38 @@ export const AdminLeadsTab = () => {
         <ImportModal onClose={() => setImportOpen(false)} onImported={load} showToast={showToast} />
       )}
       {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-            <div className="flex items-start gap-3 p-5">
+        <SalesModal onClose={() => { if (!deleting) setPendingDelete(null); }}>
+            <ModalBody>
+            <div className="flex items-start gap-3">
               <div className="shrink-0 w-10 h-10 rounded-full bg-[#FEF3F2] flex items-center justify-center"><AlertTriangle className="w-5 h-5 text-[#D92D20]" /></div>
-              <div>
-                <h3 className="text-lg font-bold text-[#172033]">Delete Lead</h3>
+              <div className="min-w-0">
+                <h3 className="text-lg font-bold text-[#172033]">{pendingDelete.length === 1 ? 'Delete Lead' : `Delete ${pendingDelete.length} Leads`}</h3>
                 <p className="mt-1 text-sm text-[#667085]">
-                  Delete <span className="font-semibold text-[#172033]">{pendingDelete.company}</span>? A lead that was never assigned and has no activity is removed permanently;
+                  {pendingDelete.length === 1
+                    ? <>Delete <span className="font-semibold text-[#172033]">{pendingDelete[0].company}</span>?</>
+                    : <>Delete these <span className="font-semibold text-[#172033]">{pendingDelete.length} leads</span>?</>}
+                  {' '}A lead that was never assigned and has no activity is removed permanently and can’t be recovered;
                   any other lead is archived instead, so its history is kept (see the Archived filter).
                 </p>
+                {pendingDelete.length > 1 && (
+                  <p className="mt-2 text-xs text-[#475467] truncate" title={pendingDelete.map((l) => l.company).join(', ')}>
+                    {pendingDelete.slice(0, 5).map((l) => l.company).join(', ')}{pendingDelete.length > 5 ? ` +${pendingDelete.length - 5} more` : ''}
+                  </p>
+                )}
+                {wonToDelete > 0 && (
+                  <p className="mt-2 rounded-lg bg-[#FFFAEB] border border-[#FEDF89] px-3 py-2 text-xs font-semibold text-[#B54708]">
+                    {pendingDelete.length === 1 ? 'This is a Won lead.' : `${wonToDelete} of these ${wonToDelete === 1 ? 'is a Won lead' : 'are Won leads'}.`}
+                    {' '}Won leads are archived, which removes them from Won counts and sales analytics.
+                  </p>
+                )}
               </div>
             </div>
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-xl">
-              <button onClick={() => setPendingDelete(null)} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]">Cancel</button>
-              <button onClick={confirmDelete} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#D92D20] text-white hover:bg-[#B42318]">Delete</button>
-            </div>
-          </div>
-        </div>
+            </ModalBody>
+            <ModalFooter>
+              <button onClick={() => setPendingDelete(null)} disabled={deleting} className={btnSecondary}>Cancel</button>
+              <button onClick={confirmDelete} disabled={deleting} className={btnDanger}>{deleting ? 'Deleting…' : 'Delete'}</button>
+            </ModalFooter>
+        </SalesModal>
       )}
     </div>
   );

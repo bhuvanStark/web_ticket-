@@ -227,6 +227,18 @@ router.post('/:id/won-request', requireAdmin, requirePermission('sales'), valida
   }
 });
 
+// Bulk delete from the Admin Leads tab's multi-select: { lead_ids: [uuid, ...] }.
+// Per lead: hard delete if it has no history, otherwise archive.
+router.post('/delete-bulk', requireAdmin, requirePermission('sales'), async (req, res) => {
+  try {
+    const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();
+    const data = await leadService.deleteOrArchiveLeads(req.body?.lead_ids, { type: 'admin', id: req.user.userId, name: admin?.full_name });
+    res.json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.delete('/:id', requireAdmin, requirePermission('sales'), validateUUID, async (req, res) => {
   try {
     const { data: admin } = await supabase.from('admins').select('full_name').eq('id', req.user.userId).maybeSingle();

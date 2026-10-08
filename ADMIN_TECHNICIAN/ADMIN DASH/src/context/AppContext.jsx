@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 
 import unifiedClient from '../api/unifiedClient';
 
@@ -610,11 +610,14 @@ export const AppProvider = ({ children }) => {
   const verifyTechnicianPassword = (technicianId, password) =>
     unifiedClient.verifyTechnicianPassword(technicianId, password);
 
-  // Helper Toast function
-  const showToast = (message, type = 'success') => {
+  // Helper Toast function. Stable identity: this provider re-renders on every
+  // 3s poll tick, and pages list showToast in their useCallback/useEffect
+  // deps — a new function each render re-ran their fetches (and reset open
+  // popups to "Loading…") every 3 seconds.
+  const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type, id: Date.now() });
     setTimeout(() => setToast(null), 4000);
-  };
+  }, []);
 
   // Remove a customer. Locations, team members and preferences cascade away,
   // but the API refuses (409) while the customer still has service requests.
