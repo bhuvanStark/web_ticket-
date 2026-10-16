@@ -269,13 +269,14 @@ class UnifiedAPIClient {
     });
   }
 
-  // Customer signs off the field service report. We send only the typed signer
-  // name — the drawn signature image is never persisted.
-  async completeServiceRequest(id, { customerSignerName, rating = null, feedbackNotes = null } = {}) {
+  // Customer signs off the field service report: the typed signer name, plus
+  // optionally the drawn signature as { path, width, height } (vector path).
+  async completeServiceRequest(id, { customerSignerName, customerSignature = null, rating = null, feedbackNotes = null } = {}) {
     return this.fetch(`/service-requests/${id}/complete`, {
       method: 'PATCH',
       body: JSON.stringify({
         customer_signer_name: customerSignerName || null,
+        customer_signature: customerSignature || null,
         rating,
         feedback_notes: feedbackNotes
       })
@@ -284,6 +285,11 @@ class UnifiedAPIClient {
 
   async getServiceReport(id) {
     return this.fetch(`/service-requests/${id}/report`);
+  }
+
+  // Drawn report signatures: [{ party, path_data, width, height, signer_name, signed_at }]
+  async getReportSignatures(id) {
+    return this.fetch(`/service-requests/${id}/report/signatures`);
   }
 
   // ============================================

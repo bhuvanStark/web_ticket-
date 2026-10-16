@@ -261,7 +261,7 @@ export const TechJobDetailsModal = () => {
                 </div>
               </div>
 
-              {/* Sign-off status (booleans only; no signature images stored) */}
+              {/* Sign-off status (drawn signatures appear in the PDF) */}
               <div className="bg-white rounded-2xl border border-[#E4E7EC] shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-[#E4E7EC] bg-gradient-to-r from-[#F0FDF4] to-white flex items-center justify-between">
                   <div className="flex items-center gap-2">

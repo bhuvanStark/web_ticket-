@@ -3,6 +3,11 @@
 // its doc comment in utils/indiaTime.js for why that distinction matters.
 import { isValidDateKey } from '../utils/indiaTime.js';
 
+// service_requests.service_type holds the support MODE. These are the only
+// values the portals send and the rest of the app understands
+// (pushNotificationService, techReportService, migration 017).
+export const SERVICE_TYPES = ['onsite_service', 'remote_support'];
+
 // Login validation - used by both admin and technician
 export const validateLogin = (req, res, next) => {
   const { email, password } = req.body;
@@ -233,6 +238,7 @@ export const validateServiceRequest = (req, res, next) => {
   if (!issue_description || issue_description.trim().length === 0) errors.push('issue_description is required');
   if (!issue_category) errors.push('issue_category is required');
   if (!service_type) errors.push('service_type is required');
+  else if (!SERVICE_TYPES.includes(service_type)) errors.push(`service_type must be one of: ${SERVICE_TYPES.join(', ')}`);
 
   if (issue_title && issue_title.trim().length > 255) errors.push('issue_title must not exceed 255 characters');
   if (issue_description && issue_description.trim().length > 2000) errors.push('issue_description must not exceed 2000 characters');

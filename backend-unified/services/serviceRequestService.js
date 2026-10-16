@@ -1,4 +1,5 @@
 import { supabase } from '../config/supabaseClient.js';
+import { saveReportSignatures } from './signatureService.js';
 
 // Human-readable ticket number: TT-YYMMDD-NNN, where NNN is a per-day counter.
 // Example: TT-260828-001
@@ -312,6 +313,20 @@ export const submitServiceReport = async (requestId, report) => {
       saved = data;
     }
 
+    // Drawn signatures (migration 039). Best-effort: a failure here is logged
+    // and never fails the report itself. The customer drawing is only kept
+    // when the customer was present.
+    try {
+      await saveReportSignatures(saved.id, [
+        { party: 'technician', signature: report.tech_signature, signerName: report.tech_signer_name, signedAt: nowIso },
+        ...(customerPresent
+          ? [{ party: 'customer', signature: report.customer_signature, signerName: customerName, signedAt: nowIso }]
+          : [])
+      ]);
+    } catch (signatureError) {
+      console.warn('Service report saved, but storing the drawn signatures failed:', signatureError.message);
+    }
+
     const outcome = report.outcome === 'pending' ? 'pending' : 'completed';
     const signNote = customerPresent
       ? 'signed on site.'
@@ -333,8 +348,9 @@ export const submitServiceReport = async (requestId, report) => {
 
 // Complete service request — the customer's sign-off. Records that the customer
 // signed (boolean + typed name + time) on the report row, and resolves the
-// ticket. The drawn signature image is never stored.
-export const completeServiceRequest = async (requestId, rating, feedback, customerSignerName) => {
+// ticket. An optional drawn signature ({ path, width, height }) is stored as a
+// vector path; an existing customer drawing is kept (first signature wins).
+export const completeServiceRequest = async (requestId, rating, feedback, customerSignerName, customerSignature = null) => {
   try {
     const normalizedRating = rating == null || rating === ''
       ? null
@@ -374,6 +390,17 @@ export const completeServiceRequest = async (requestId, rating, feedback, custom
           updated_at: nowIso
         })
         .eq('id', reportRow.id);
+
+      // Best-effort, like submitServiceReport: never fails the sign-off.
+      if (customerSignature) {
+        try {
+          await saveReportSignatures(reportRow.id, [
+            { party: 'customer', signature: customerSignature, signerName: customerSignerName, signedAt: nowIso }
+          ]);
+        } catch (signatureError) {
+          console.warn('Sign-off saved, but storing the drawn signature failed:', signatureError.message);
+        }
+      }
     }
 
     await addServiceUpdate(

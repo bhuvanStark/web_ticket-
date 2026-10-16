@@ -1199,6 +1199,8 @@ export const AppProvider = ({ children }) => {
         customerSignerDetails: customerDetails,
         customerSignerName: reportData.customerSignerName || customerDetails,
         customerPresent,
+        techSignature: reportData.techSignature || null,
+        customerSignature: customerPresent ? (reportData.customerSignature || null) : null,
         outcome
       });
     } catch (err) {

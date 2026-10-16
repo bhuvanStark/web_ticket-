@@ -342,7 +342,7 @@ export const TechJobsPage = () => {
                 </p>
               </div>
 
-              {/* Report sign-off status (booleans only — no signature images) */}
+              {/* Report sign-off status (drawn signatures appear in the PDF) */}
               {activeJob.serviceReport && (
                 <div className="pt-2">
                   <div className="flex items-center justify-between mb-4 flex-wrap gap-2">

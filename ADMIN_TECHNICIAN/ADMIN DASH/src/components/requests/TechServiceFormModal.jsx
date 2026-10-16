@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import { strokesToPath } from '../../utils/signaturePath';
 import { X, CheckCircle, PenTool, RotateCcw, Clock } from 'lucide-react';
 
 // Equipment list for AV tickets. The System field is a fixed dropdown here,
@@ -46,6 +47,21 @@ export const TechServiceFormModal = () => {
   const [customerDetails, setCustomerDetails] = useState('');
   const [customerNotPresent, setCustomerNotPresent] = useState(false);
 
+  // The strokes behind each drawing, in canvas coordinates — sent with the
+  // report and stored as vector paths (see utils/signaturePath.js).
+  const techStrokesRef = useRef([]);
+  const custStrokesRef = useRef([]);
+
+  // This modal stays mounted between opens, so start every opening with blank
+  // signatures — a drawing must never carry over to another ticket's report.
+  useEffect(() => {
+    if (!isServiceFormOpen) return;
+    techStrokesRef.current = [];
+    custStrokesRef.current = [];
+    setHasSigned(false);
+    setCustHasSigned(false);
+  }, [isServiceFormOpen, selectedTicket?.id]);
+
   const isEpabx = (selectedTicket?.supportCategory || '').toLowerCase() === 'epabx'
     || selectedTicket?.serviceType === 'EPABX';
 
@@ -68,7 +84,12 @@ export const TechServiceFormModal = () => {
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
+    // Scale CSS pixels to the canvas's internal 500x110 space, so the stroke
+    // lands under the pointer at any on-screen width.
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height)
+    };
   };
 
   const startDrawing = (e) => {
@@ -77,6 +98,7 @@ export const TechServiceFormModal = () => {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const { x, y } = pointFromEvent(canvas, e);
+    techStrokesRef.current.push([{ x, y }]);
     ctx.beginPath();
     ctx.moveTo(x, y);
   };
@@ -87,6 +109,7 @@ export const TechServiceFormModal = () => {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const { x, y } = pointFromEvent(canvas, e);
+    techStrokesRef.current[techStrokesRef.current.length - 1]?.push({ x, y });
     ctx.lineTo(x, y);
     ctx.strokeStyle = '#004898';
     ctx.lineWidth = 2.5;
@@ -101,6 +124,7 @@ export const TechServiceFormModal = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    techStrokesRef.current = [];
     setHasSigned(false);
   };
 
@@ -110,6 +134,7 @@ export const TechServiceFormModal = () => {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const { x, y } = pointFromEvent(canvas, e);
+    custStrokesRef.current.push([{ x, y }]);
     ctx.beginPath();
     ctx.moveTo(x, y);
   };
@@ -120,6 +145,7 @@ export const TechServiceFormModal = () => {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const { x, y } = pointFromEvent(canvas, e);
+    custStrokesRef.current[custStrokesRef.current.length - 1]?.push({ x, y });
     ctx.lineTo(x, y);
     ctx.strokeStyle = '#004898';
     ctx.lineWidth = 2.5;
@@ -131,6 +157,7 @@ export const TechServiceFormModal = () => {
   const stopDrawingCust = () => setIsDrawingCust(false);
 
   const clearCustCanvas = () => {
+    custStrokesRef.current = [];
     const canvas = custCanvasRef.current;
     if (!canvas) return;
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
@@ -164,8 +191,14 @@ export const TechServiceFormModal = () => {
       return;
     }
 
-    // Drawn signatures are not stored — only that each party signed, plus the
-    // customer's typed name + phone.
+    // Drawn signatures go up as vector paths in the canvas's 500x110 space;
+    // no customer drawing when the customer was not present.
+    const toSignature = (strokes, canvas) => {
+      const width = canvas?.width || 500;
+      const height = canvas?.height || 110;
+      const path = strokesToPath(strokes, width, height);
+      return path ? { path, width, height } : null;
+    };
     const saved = await submitServiceReport(selectedTicket.id, {
       system: isEpabx ? system.trim() : (system === 'Other' ? customSystem.trim() : system),
       natureOfComplaint,
@@ -175,6 +208,8 @@ export const TechServiceFormModal = () => {
       customerSignerDetails: customerDetails.trim(),
       customerSignerName: customerDetails.trim(),
       customerPresent: !customerNotPresent,
+      techSignature: toSignature(techStrokesRef.current, canvasRef.current),
+      customerSignature: customerNotPresent ? null : toSignature(custStrokesRef.current, custCanvasRef.current),
       outcome
     });
     if (saved) setIsServiceFormOpen(false);
@@ -320,7 +355,7 @@ export const TechServiceFormModal = () => {
             </div>
             <p className="text-[11px] text-[#475467]">
               Technician: <strong className="text-[#172033]">{currentUser?.name || 'Technician'}</strong> ·
-              the signature image is not stored, only that you signed.
+              your signature is saved with the report.
             </p>
           </div>
 
@@ -392,7 +427,7 @@ export const TechServiceFormModal = () => {
             <p className="text-[11px] text-[#475467]">
               {customerNotPresent
                 ? 'Customer not present — the report will complete without a customer signature.'
-                : 'The signature image is not stored, only that the customer signed on site.'}
+                : "The customer's signature is saved with the report."}
             </p>
           </div>
 

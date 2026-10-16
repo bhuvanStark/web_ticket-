@@ -55,7 +55,8 @@ export function transformDbTicketToFrontend(row) {
   const rawStatus = row.status || 'unassigned';
 
   // The field service report (one row, embedded as an array by the query
-  // builder). Signatures are never stored — only whether each party signed.
+  // builder): whether each party signed. Drawn signatures are fetched
+  // separately (getReportSignatures) only when the PDF is generated.
   const reportRow = Array.isArray(row.service_reports) ? row.service_reports[0] : (row.service_reports || null);
   const serviceReport = reportRow ? {
     system: reportRow.system || '',
@@ -63,6 +64,7 @@ export function transformDbTicketToFrontend(row) {
     workDone: reportRow.work_done || '',
     partsMaterial: reportRow.parts_material || '',
     techSigned: !!reportRow.tech_signed,
+    techSignedAt: reportRow.tech_signed_at || null,
     techSignerName: reportRow.tech_signer_name || '',
     customerSigned: !!reportRow.customer_signed,
     customerSignerName: reportRow.customer_signer_name || '',
@@ -90,6 +92,7 @@ export function transformDbTicketToFrontend(row) {
     id: row.ticket_number || row.id,
     ticketNumber: row.ticket_number || row.id,
     dbId: row.id,
+    completedAt: row.actual_completion_date || null,
     customerName: row.customers?.name || row.customers?.company_name || '',
     customer: row.customers?.name || row.customers?.company_name || '',
     // Company account the ticket belongs to, kept separate from the person's name.

@@ -9,6 +9,7 @@
     "dev": "nodemon server.js",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed.js",
+    "signatures:purge": "node scripts/purge-signatures.js",
     "test": "node --test --test-isolation=none tests/**/*.test.js",
     "test:integration": "npm run db:migrate && node --test --test-isolation=none --test-force-exit integration-tests/**/*.test.js"
   },

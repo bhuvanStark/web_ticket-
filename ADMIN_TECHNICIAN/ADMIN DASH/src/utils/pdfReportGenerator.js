@@ -1,15 +1,31 @@
 import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
+import { signatureSvg } from './signaturePath';
+import { fetchReportSignaturesInApi } from '../services/adminApiService';
 
 // Renders the field service report as a printable page. All content comes from
-// the real ticket + service_reports data — no fabricated content, and no
-// signature images (only whether each party signed).
+// the real ticket + service_reports data — no fabricated content. Drawn
+// signatures (vector paths) are fetched separately and drawn inline.
 export function generateServiceReportPDF(ticket) {
+  // Open the window synchronously, inside the click, so popup blockers allow
+  // it; the report is written once the signatures have loaded.
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
     alert('Please allow popups to view & download the PDF report.');
     return;
   }
+  printWindow.document.write('<p style="font-family: system-ui, sans-serif; padding: 40px; color: #64748B;">Loading report…</p>');
 
+  const r = ticket?.serviceReport || {};
+  const needsSignatures = ticket?.dbId && (r.techSigned || r.customerSigned);
+  (needsSignatures ? fetchReportSignaturesInApi(ticket.dbId) : Promise.resolve([]))
+    .catch((err) => {
+      console.warn('Could not load report signatures:', err.message);
+      return null; // null = unknown, render the plain "Signed" labels
+    })
+    .then((signatures) => writeServiceReport(printWindow, ticket, signatures));
+}
+
+function writeServiceReport(printWindow, ticket, signatures) {
   const r = ticket?.serviceReport || {};
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -36,6 +52,21 @@ export function generateServiceReportPDF(ticket) {
 
   const row = (k, v) => `<tr><th>${k}</th><td>${esc(v || '—')}</td></tr>`;
 
+  // Per party: drawing on file -> inline SVG; signed but no drawing (a report
+  // from before drawings were stored) -> "signature not on file"; customer
+  // never signed on a filed report -> "Not present".
+  const signStatus = (party, signed) => {
+    if (!signed) {
+      const notPresent = party === 'customer' && r.techSigned;
+      return `<div style="margin-top:8px;" class="no">${notPresent ? 'Not present' : 'Not signed'}</div>`;
+    }
+    if (!signatures) return '<div style="margin-top:8px;" class="ok">Signed</div>';
+    const svg = signatureSvg(signatures.find((s) => s.party === party));
+    return svg
+      ? `<div class="sign-drawing">${svg}</div><div style="margin-top:6px;" class="ok">Signed</div>`
+      : '<div style="margin-top:8px;" class="ok">Signed (signature not on file)</div>';
+  };
+
   const htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -55,6 +86,7 @@ export function generateServiceReportPDF(ticket) {
         .sign-card { flex: 1; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; }
         .sign-label { font-size: 11px; color: #64748B; font-weight: 700; text-transform: uppercase; }
         .sign-name { font-size: 14px; font-weight: 800; margin-top: 4px; }
+        .sign-drawing { margin-top: 10px; border-bottom: 1px solid #CBD5E1; padding-bottom: 4px; }
         .ok { color: #047857; font-weight: 700; }
         .no { color: #B42318; font-weight: 700; }
         .print-bar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
@@ -99,12 +131,12 @@ export function generateServiceReportPDF(ticket) {
         <div class="sign-card">
           <div class="sign-label">Technician</div>
           <div class="sign-name">${esc(r.techSignerName || '—')}</div>
-          <div style="margin-top:8px;" class="${r.techSigned ? 'ok' : 'no'}">${r.techSigned ? 'Signed' : 'Not signed'}</div>
+          ${signStatus('technician', r.techSigned)}
         </div>
         <div class="sign-card">
           <div class="sign-label">Customer</div>
           <div class="sign-name">${esc(r.customerSignerName || '—')}</div>
-          <div style="margin-top:8px;" class="${r.customerSigned ? 'ok' : 'no'}">${r.customerSigned ? 'Signed' : 'Not signed'}</div>
+          ${signStatus('customer', r.customerSigned)}
         </div>
       </div>
 
@@ -119,6 +151,7 @@ export function generateServiceReportPDF(ticket) {
     </html>
   `;
 
+  printWindow.document.open();
   printWindow.document.write(htmlContent);
   printWindow.document.close();
 }

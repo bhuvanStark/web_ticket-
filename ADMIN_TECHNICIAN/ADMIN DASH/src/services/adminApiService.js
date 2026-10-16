@@ -110,12 +110,14 @@ export function transformDbTicketToAdmin(row) {
     }
   );
 
-  const requestReference = row.id ? row.id.slice(0, 8).toUpperCase() : 'UNKNOWN';
+  // The real ticket number (TT-YYMMDD-NNN, generated server-side). Rows
+  // without one fall back to a short reference from the uuid.
+  const shortReference = row.id ? row.id.slice(0, 8).toUpperCase() : 'UNKNOWN';
 
   return {
-    id: `#${requestReference}`,
+    id: row.ticket_number || `#${shortReference}`,
     dbId: row.id,
-    ticketNumber: requestReference,
+    ticketNumber: row.ticket_number || shortReference,
     title: row.issue_title || 'Untitled service request',
     // Admin free-text tickets carry customer_org / facility_location / room_name
     // directly on the row; older tickets resolve via the customer/location/room
@@ -323,6 +325,9 @@ export async function submitServiceReportInApi(ticketDbId, report) {
       customer_signer_details: report.customerSignerDetails || null,
       customer_signer_name: report.customerSignerName || report.customerSignerDetails || null,
       customer_present: report.customerPresent !== false,
+      // Drawn signatures as { path, width, height } vector paths, or null.
+      tech_signature: report.techSignature || null,
+      customer_signature: report.customerPresent !== false ? (report.customerSignature || null) : null,
       // 'completed' (default) or 'pending' — the report itself is saved
       // identically either way; only the ticket status differs.
       outcome: report.outcome === 'pending' ? 'pending' : 'completed'
@@ -330,6 +335,15 @@ export async function submitServiceReportInApi(ticketDbId, report) {
   });
   if (!res.ok) throw new Error('Failed to submit service report');
   return readApiData(res, 'submit service report');
+}
+
+// Drawn signatures for a ticket's report:
+// [{ party, path_data, width, height, signer_name, signed_at }].
+export async function fetchReportSignaturesInApi(ticketDbId) {
+  const res = await authFetch(`${API_BASE_URL}/service-requests/${ticketDbId}/report/signatures`, {
+    headers: authHeaders()
+  });
+  return readApiData(res, 'load report signatures');
 }
 
 // Admin moves a Pending ticket to Reassigned. Only this ticket changes; no new

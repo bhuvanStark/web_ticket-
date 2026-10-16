@@ -9,11 +9,31 @@ import {
 } from '../middleware/validation.js';
 import * as serviceRequestService from '../services/serviceRequestService.js';
 import * as notificationService from '../services/notificationService.js';
+import { getReportSignatures } from '../services/signatureService.js';
 import { notifyTechnicianOfAssignment } from '../services/pushNotificationService.js';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+// A customer session may only act on its own ticket. Checked before anything
+// is read or written; on failure this sends the same 404 as GET /:id (so
+// another company's ticket ids are never confirmed to exist) and returns
+// false. Non-customer roles are not restricted here.
+async function ensureCustomerOwnsRequest(req, res, requestId) {
+  if (req.user?.role !== 'customer') return true;
+  const { data: request, error } = await supabase
+    .from('service_requests')
+    .select('id, customer_id')
+    .eq('id', requestId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!request || request.customer_id !== req.userId) {
+    res.status(404).json({ success: false, error: 'Service request not found' });
+    return false;
+  }
+  return true;
+}
 
 // GET all service requests (for admin) or filtered by customer
 router.get('/', async (req, res) => {
@@ -463,18 +483,30 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 // UPDATE service request with signature and feedback
-router.patch('/:id/complete', async (req, res) => {
+router.patch('/:id/complete', validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
-    const { rating, feedback_notes, customer_signer_name } = req.body;
+    const { rating, feedback_notes, customer_signer_name, customer_signature } = req.body;
 
-    // The customer's sign-off. We record only that they signed and their typed
-    // name — never the drawn signature image.
+    // Ownership first: a customer may only sign off its own ticket — nothing
+    // (status, signer, rating) is touched otherwise.
+    if (!(await ensureCustomerOwnsRequest(req, res, id))) return;
+
+    // The drawn signature ({ path, width, height }, optional) is stored only
+    // for the ticket's own customer (verified above) or a technician/admin.
+    const signature = customer_signature && typeof customer_signature === 'object'
+      && ['customer', 'technician', 'admin'].includes(req.user?.role)
+      ? customer_signature
+      : null;
+
+    // The customer's sign-off: that they signed, their typed name, and (when
+    // sent) the drawn signature as a vector path.
     const data = await serviceRequestService.completeServiceRequest(
       id,
       rating,
       feedback_notes,
-      customer_signer_name
+      customer_signer_name,
+      signature
     );
 
     // Notify the customer their request is now resolved.
@@ -496,6 +528,8 @@ router.patch('/:id/complete', async (req, res) => {
 // GET the field service report for a request (or null if none yet)
 router.get('/:id/report', validateUUID, async (req, res) => {
   try {
+    if (!(await ensureCustomerOwnsRequest(req, res, req.params.id))) return;
+
     const { data, error } = await supabase
       .from('service_reports')
       .select('*')
@@ -510,12 +544,33 @@ router.get('/:id/report', validateUUID, async (req, res) => {
   }
 });
 
+// GET the drawn signatures for a request's report:
+// [{ party, path_data, width, height, signer_name, signed_at }]. Kept off
+// GET /:id/report and the list endpoints on purpose. A customer session may
+// only read its own ticket's signatures (same check as GET /:id).
+router.get('/:id/report/signatures', validateUUID, async (req, res) => {
+  try {
+    if (!(await ensureCustomerOwnsRequest(req, res, req.params.id))) return;
+
+    const data = await getReportSignatures(req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching report signatures:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Technician submits the field service report. Creates or updates the single
 // report row, marks it tech-signed, captures the customer sign-off on the
 // technician's device, and moves the ticket to its chosen outcome —
 // 'completed' (default) or 'pending'. The report row is identical either way.
 router.post('/:id/report', validateUUID, async (req, res) => {
   try {
+    // Only the technician (or an admin) files the report.
+    if (!['technician', 'admin'].includes(req.user?.role)) {
+      return res.status(403).json({ success: false, error: 'Only a technician or admin can submit a service report' });
+    }
+
     const { id } = req.params;
     const {
       system,
@@ -526,7 +581,9 @@ router.post('/:id/report', validateUUID, async (req, res) => {
       customer_signer_details,
       customer_signer_name,
       customer_present,
-      outcome
+      outcome,
+      tech_signature,
+      customer_signature
     } = req.body;
 
     if (!work_done || work_done.trim().length === 0) {
@@ -545,7 +602,11 @@ router.post('/:id/report', validateUUID, async (req, res) => {
       customer_signer_details: customer_signer_details.trim(),
       customer_signer_name: (customer_signer_name || customer_signer_details).trim(),
       customer_present: customer_present !== false,
-      outcome: outcome === 'pending' ? 'pending' : 'completed'
+      outcome: outcome === 'pending' ? 'pending' : 'completed',
+      // Optional { path, width, height }; malformed ones are dropped in
+      // signatureService.normalizeSignature.
+      tech_signature: tech_signature || null,
+      customer_signature: customer_signature || null
     });
 
     res.status(201).json({ success: true, data, message: 'Service report submitted' });

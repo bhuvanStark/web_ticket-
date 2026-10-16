@@ -1,19 +1,35 @@
 import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
+import { signatureSvg } from './signaturePath';
+import unifiedClient from '../api/unifiedClient';
 
 export function generatePDF(ticket) {
   return generateServiceReportPDF({ ticket });
 }
 
 // Renders the signed field service report as a printable page. Everything comes
-// from the real ticket + service_reports data — no fabricated content, and no
-// signature images (only whether each party signed).
+// from the real ticket + service_reports data — no fabricated content. Drawn
+// signatures (vector paths) are fetched separately and drawn inline.
 export function generateServiceReportPDF({ ticket, customerName } = {}) {
+  // Open the window synchronously, inside the click, so popup blockers allow
+  // it; the report is written once the signatures have loaded.
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
     alert('Please allow popups to view & download the PDF report.');
     return;
   }
+  printWindow.document.write('<p style="font-family: system-ui, sans-serif; padding: 40px; color: #64748B;">Loading report…</p>');
 
+  const r = ticket?.serviceReport || {};
+  const needsSignatures = ticket?.dbId && (r.techSigned || r.customerSigned);
+  (needsSignatures ? unifiedClient.getReportSignatures(ticket.dbId).then((res) => res?.data || []) : Promise.resolve([]))
+    .catch((err) => {
+      console.warn('Could not load report signatures:', err.message);
+      return null; // null = unknown, render the plain "Signed" labels
+    })
+    .then((signatures) => writeServiceReport(printWindow, { ticket, customerName }, signatures));
+}
+
+function writeServiceReport(printWindow, { ticket, customerName }, signatures) {
   const r = ticket?.serviceReport || {};
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -24,9 +40,30 @@ export function generateServiceReportPDF({ ticket, customerName } = {}) {
   const supportLine = (ticket?.supportCategory === 'epabx') ? 'EPABX Support' : 'AV Support';
   const serviceMode = (ticket?.serviceMode === 'Remote' || ticket?.serviceType === 'Remote Support') ? 'Remote' : 'On-site';
   const issue = esc(ticket?.issue || ticket?.title || '—');
-  const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  // Never stamp the report with "now" — the job's actual completion time
+  // (same rule as the admin PDF), falling back to the technician's sign-off
+  // time; '—' for a job that isn't completed.
+  const completionSource = ticket?.completedAt || r.techSignedAt;
+  const dateStr = ticket?.isCompleted && completionSource
+    ? new Date(completionSource).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '—';
 
   const row = (k, v) => `<tr><th>${k}</th><td>${esc(v || '—')}</td></tr>`;
+
+  // Per party: drawing on file -> inline SVG; signed but no drawing (a report
+  // from before drawings were stored) -> "signature not on file"; customer
+  // never signed on a filed report -> "Not present".
+  const signStatus = (party, signed) => {
+    if (!signed) {
+      const notPresent = party === 'customer' && r.techSigned;
+      return `<div style="margin-top:8px;" class="no">${notPresent ? 'Not present' : 'Not signed'}</div>`;
+    }
+    if (!signatures) return '<div style="margin-top:8px;" class="ok">Signed</div>';
+    const svg = signatureSvg(signatures.find((s) => s.party === party));
+    return svg
+      ? `<div class="sign-drawing">${svg}</div><div style="margin-top:6px;" class="ok">Signed</div>`
+      : '<div style="margin-top:8px;" class="ok">Signed (signature not on file)</div>';
+  };
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -47,6 +84,7 @@ export function generateServiceReportPDF({ ticket, customerName } = {}) {
         .sign-card { flex: 1; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; }
         .sign-label { font-size: 11px; color: #64748B; font-weight: 700; text-transform: uppercase; }
         .sign-name { font-size: 14px; font-weight: 800; margin-top: 4px; }
+        .sign-drawing { margin-top: 10px; border-bottom: 1px solid #CBD5E1; padding-bottom: 4px; }
         .ok { color: #047857; font-weight: 700; }
         .no { color: #B42318; font-weight: 700; }
         .print-bar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
@@ -88,12 +126,12 @@ export function generateServiceReportPDF({ ticket, customerName } = {}) {
         <div class="sign-card">
           <div class="sign-label">Technician</div>
           <div class="sign-name">${esc(r.techSignerName || '—')}</div>
-          <div style="margin-top:8px;" class="${r.techSigned ? 'ok' : 'no'}">${r.techSigned ? 'Signed' : 'Not signed'}</div>
+          ${signStatus('technician', r.techSigned)}
         </div>
         <div class="sign-card">
           <div class="sign-label">Customer</div>
           <div class="sign-name">${esc(r.customerSignerName || '—')}</div>
-          <div style="margin-top:8px;" class="${r.customerSigned ? 'ok' : 'no'}">${r.customerSigned ? 'Signed' : 'Not signed'}</div>
+          ${signStatus('customer', r.customerSigned)}
         </div>
       </div>
 
@@ -108,6 +146,7 @@ export function generateServiceReportPDF({ ticket, customerName } = {}) {
     </html>
   `;
 
+  printWindow.document.open();
   printWindow.document.write(htmlContent);
   printWindow.document.close();
 }
