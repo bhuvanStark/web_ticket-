@@ -15,6 +15,8 @@ import {
   filterAdminNavItems
 } from '../../config/adminNavItems';
 import { AdminMoreSheet } from './AdminMoreSheet';
+import { CountBadge } from '../common/CountBadge';
+import { useTechWorkload } from '../../hooks/useTechWorkload';
 
 const NAV_ITEMS_BY_ROLE = {
   sales: salesNavItems,
@@ -24,6 +26,7 @@ const NAV_ITEMS_BY_ROLE = {
 export const BottomNav = () => {
   const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser, isViewingAsSales } = useApp();
   const isMobile = useIsMobile();
+  const { total: techOpenJobs } = useTechWorkload();
 
   // Admin Mobile Navigation fix — More sheet's open/closed state lives here
   // so it unmounts (and resets to closed) for free whenever this component
@@ -111,7 +114,12 @@ export const BottomNav = () => {
               : 'text-[#667085] hover:text-[#172033]'
           }`}
         >
-          <item.icon className="w-5 h-5" />
+          <span className="relative">
+            <item.icon className="w-5 h-5" />
+            {role === 'tech' && item.id === 'my-jobs' && (
+              <CountBadge count={techOpenJobs} className="absolute -top-2 -right-3" />
+            )}
+          </span>
           <span className="text-xs font-medium truncate">{item.mobileLabel}</span>
         </button>
       ))}

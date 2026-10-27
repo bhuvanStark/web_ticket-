@@ -132,8 +132,8 @@ function buildOtpFlow({ table, ownerColumn, jwtRole, publicKey, selectFields }) 
       // password-based /admin/login flow. Re-reads fresh here rather than
       // trusting `account` above, which was fetched before OTP verification
       // and never selected token_version/is_super_admin in the first place.
-      // Technician/Back-Office are deliberately left unchanged — out of
-      // scope for this fix.
+      // Technician/Back-Office got the same check with staff removal
+      // (migration 040): a removed employee can never finish signing in.
       let extraClaims = {};
       if (jwtRole === 'admin') {
         const { data: liveAdmin } = await supabase
@@ -143,13 +143,13 @@ function buildOtpFlow({ table, ownerColumn, jwtRole, publicKey, selectFields }) 
         }
         extraClaims = { isSuperAdmin: liveAdmin.is_super_admin === true, tokenVersion: liveAdmin.token_version };
         account.is_super_admin = liveAdmin.is_super_admin;
-      } else if (jwtRole === 'sales') {
-        const { data: liveSales } = await supabase
-          .from('sales').select('is_active, token_version').eq('id', account.id).maybeSingle();
-        if (!liveSales || !liveSales.is_active) {
+      } else if (['sales', 'technician', 'back_office'].includes(jwtRole)) {
+        const { data: liveStaff } = await supabase
+          .from(table).select('is_active, token_version').eq('id', account.id).maybeSingle();
+        if (!liveStaff || !liveStaff.is_active) {
           return res.status(401).json({ success: false, error: 'This account is inactive.' });
         }
-        extraClaims = { tokenVersion: liveSales.token_version };
+        extraClaims = { tokenVersion: liveStaff.token_version };
       }
 
       const accessToken = generateToken(account.id, jwtRole, extraClaims);

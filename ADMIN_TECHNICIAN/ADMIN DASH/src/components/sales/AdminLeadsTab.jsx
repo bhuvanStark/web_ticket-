@@ -11,7 +11,7 @@ import { useApp } from '../../context/AppContext';
 import {
   Search, Plus, Pencil, Trash2, UserPlus, History as HistoryIcon, X, Check, MapPin,
   Upload, AlertTriangle, CheckCircle2, XCircle, FileSpreadsheet, UserX, Briefcase, Trophy, ArrowRightCircle,
-  AlarmClock, Copy, TimerReset, Hourglass, Archive
+  AlarmClock, Copy, TimerReset, Hourglass, Archive, Layers, Eye
 } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { fetchSalesInApi } from '../../services/salesApiService';
@@ -21,6 +21,8 @@ import {
   validateImport, confirmImport, subscribeToLeadEvents, fetchLeadsSummary, fetchLeadsAnalytics
 } from '../../services/leadsApiService';
 import { LeadStatCard, LeadStatGrid } from './LeadStatCards';
+import { LeadRowMenu } from './LeadRowMenu';
+import { ViewTabs, SearchField, ToggleChip, FilterDivider, ListPanel } from './LeadFilterBar';
 import { LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistoryList } from './LeadQuickActions';
 import { useDuplicateAwareSave } from './useDuplicateAwareSave';
 import { LeadTimerBattery } from './LeadTimerBattery';
@@ -831,15 +833,36 @@ export const AdminLeadsTab = () => {
     }
   };
 
-  // Mutually exclusive "queue" views: Won requests and the archive.
-  const toggleQueue = (which) => {
-    setWonRequestsOnly((v) => (which === 'won' ? !v : false));
-    setArchivedOnly((v) => (which === 'archived' ? !v : false));
+  // The view tabs (All / Unassigned / Won Requests / Archived) are mutually
+  // exclusive; the filter row underneath narrows whichever view is open.
+  const view = archivedOnly ? 'archived' : wonRequestsOnly ? 'won' : unassignedOnly ? 'unassigned' : 'all';
+  const setView = (next) => {
+    if (next === 'unassigned') setSalesFilter('');
+    setUnassignedOnly(next === 'unassigned');
+    setWonRequestsOnly(next === 'won');
+    setArchivedOnly(next === 'archived');
+  };
+  const hasFilters = !!(search || statusFilter || (salesFilter && !unassignedOnly) || overdueOnly || expiredOnly);
+  const clearFilters = () => {
+    setSearch('');
+    setStatusFilter('');
+    setSalesFilter('');
+    setOverdueOnly(false);
+    setExpiredOnly(false);
   };
 
-  const chip = (active) => `shrink-0 whitespace-nowrap px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${active ? 'border-[#004898] bg-[#EFF5FC] text-[#004898]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`;
-  const selectCls = 'text-xs font-semibold text-[#172033] border border-[#E4E7EC] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#004898]';
-  const iconCls = 'p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#172033] border border-[#E4E7EC] disabled:opacity-40 disabled:cursor-not-allowed';
+  const selectCls = 'text-xs font-semibold text-[#172033] border border-[#E4E7EC] rounded-lg px-3 py-2 bg-white outline-none focus:border-[#004898] cursor-pointer';
+  const statusBtnCls = 'px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#E4E7EC] hover:border-[#B3D1F2] text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap';
+
+  // Secondary row actions, tucked into the ⋯ menu. Archived rows are
+  // read-only and only get a View button, so this is never built for them.
+  const rowMenu = (l, blockReason) => [
+    { label: 'Details & history', icon: HistoryIcon, onClick: () => setDetailId(l.id) },
+    { label: 'Assign salesperson', icon: UserPlus, onClick: () => setAssignTargets([l]), disabled: !!blockReason, reason: blockReason },
+    { label: l.status === 'won' ? 'Edit (recorded in history)' : 'Edit lead', icon: Pencil, onClick: () => setFormModal({ lead: l }) },
+    { label: 'Delete lead', icon: Trash2, onClick: () => setPendingDelete([l]), danger: true, divider: true }
+  ];
+  const statusTitle = (isWon, pending) => (isWon ? 'A Won lead is final' : pending ? 'Approve or reject the Won request first' : 'Change status');
 
   const emptyMessage = query ? 'No leads match your search.'
     : wonRequestsOnly ? 'No Won requests waiting.'
@@ -852,6 +875,18 @@ export const AdminLeadsTab = () => {
 
   return (
     <div className="sales-module space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <p className="text-sm text-[#667085]">Assign, track and close every lead in the pipeline.</p>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => setImportOpen(true)} className="flex-1 sm:flex-none justify-center px-3.5 py-2.5 text-xs font-bold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] inline-flex items-center gap-1.5">
+            <Upload className="w-4 h-4" /> Import Excel
+          </button>
+          <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold flex-1 sm:flex-none">
+            <Plus className="w-4 h-4" /> Add Lead
+          </button>
+        </div>
+      </div>
+
       {/* Company-wide totals — independent of the filters/search below. */}
       <LeadStatGrid>
         <LeadStatCard
@@ -859,36 +894,37 @@ export const AdminLeadsTab = () => {
           icon={UserX}
           tone={summary?.unassigned?.count ? 'red' : 'blue'}
           stat={summary?.unassigned}
+          active={unassignedOnly}
           hint={unassignedOnly ? 'Showing unassigned only — click to show all' : 'Click to show only these'}
-          onClick={() => { setSalesFilter(''); setUnassignedOnly((v) => !v); }}
+          onClick={() => setView(unassignedOnly ? 'all' : 'unassigned')}
         />
         <LeadStatCard label="Open Leads" icon={Briefcase} tone="amber" stat={summary?.taken} hint="Assigned and still in the pipeline" />
         <LeadStatCard label="Won Leads" icon={Trophy} tone="green" stat={summary?.won} />
       </LeadStatGrid>
 
       {summary?.wonRequests > 0 && !wonRequestsOnly && (
-        <button onClick={() => toggleQueue('won')} className="w-full text-left text-xs text-[#5925DC] bg-[#F4F3FF] border border-[#D9D6FE] rounded-lg px-3 py-2 flex items-center gap-2 hover:bg-[#EBE9FE]">
+        <button onClick={() => setView('won')} className="w-full text-left text-xs text-[#5925DC] bg-[#F4F3FF] border border-[#D9D6FE] rounded-lg px-3 py-2 flex items-center gap-2 hover:bg-[#EBE9FE]">
           <Hourglass className="w-4 h-4 shrink-0" />
           <span><strong>{summary.wonRequests} Won request{summary.wonRequests === 1 ? '' : 's'}</strong> waiting for your approval — click to review.</span>
         </button>
       )}
 
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <button onClick={() => setFormModal({})} className="btn btn-primary text-xs font-bold flex-1 sm:flex-none">
-            <Plus className="w-4 h-4" /> Add Lead
-          </button>
-          <button onClick={() => setImportOpen(true)} className="flex-1 sm:flex-none justify-center px-3 py-2.5 sm:py-2 text-xs font-bold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] inline-flex items-center gap-1.5">
-            <Upload className="w-3.5 h-3.5" /> Import Excel
-          </button>
-        </div>
-        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 min-w-0">
-          <div className="relative w-full sm:w-60">
-            <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company, phone, contact or Ref ID…" style={{ paddingLeft: '36px' }} className="form-input text-xs" />
-          </div>
+      <ListPanel className="overflow-hidden">
+        <ViewTabs
+          value={view}
+          onChange={setView}
+          tabs={[
+            { id: 'all', label: 'All Leads', icon: Layers },
+            { id: 'unassigned', label: 'Unassigned', icon: UserX, count: summary?.unassigned?.count ?? 0, countTone: 'bg-[#FEE4E2] text-[#B42318]' },
+            { id: 'won', label: 'Won Requests', icon: Hourglass, count: summary?.wonRequests ?? 0, countTone: 'bg-[#5925DC] text-white' },
+            { id: 'archived', label: 'Archived', icon: Archive }
+          ]}
+        />
+
+        <div className="p-3 sm:p-4 flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-2.5 bg-[#FCFCFD]">
+          <SearchField value={search} onChange={setSearch} className="w-full lg:w-72 xl:w-80" />
           <div className="grid grid-cols-2 sm:flex gap-2">
-            <select value={unassignedOnly ? '' : salesFilter} onChange={(e) => { setUnassignedOnly(false); setSalesFilter(e.target.value); }} className={`${selectCls} min-w-0`} aria-label="Salesperson">
+            <select value={unassignedOnly ? '' : salesFilter} onChange={(e) => { if (unassignedOnly) setView('all'); setSalesFilter(e.target.value); }} className={`${selectCls} min-w-0`} aria-label="Salesperson">
               <option value="">All Salespeople</option>
               {roster.map((s) => <option key={s.id} value={s.id}>{s.full_name}{s.is_active ? '' : ' (inactive)'}</option>)}
             </select>
@@ -897,31 +933,38 @@ export const AdminLeadsTab = () => {
               {ALL_STATUSES.map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
             </select>
           </div>
-          {/* Phones: one swipeable row of filter chips instead of a wrapped wall. */}
-          <div className="sales-scroll-x -mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-2 overflow-x-auto sm:overflow-visible sm:flex-wrap">
-          <button onClick={() => { setSalesFilter(''); setUnassignedOnly((v) => !v); }} aria-pressed={unassignedOnly} className={chip(unassignedOnly)}>
-            <UserX className="w-3.5 h-3.5" /> Unassigned
-          </button>
-          <button onClick={() => setOverdueOnly((v) => !v)} aria-pressed={overdueOnly} className={chip(overdueOnly)}>
-            <AlarmClock className="w-3.5 h-3.5" /> Overdue
-          </button>
-          <button onClick={() => setExpiredOnly((v) => !v)} aria-pressed={expiredOnly} className={chip(expiredOnly)} title="Expired stages waiting for your decision">
-            <TimerReset className="w-3.5 h-3.5" /> Expired
-            <span className={`rounded-full px-1.5 text-[10px] ${summary?.expired ? 'bg-[#B42318] text-white' : 'bg-[#F2F4F7] text-[#667085]'}`}>{summary?.expired ?? 0}</span>
-          </button>
-          <button onClick={() => toggleQueue('won')} aria-pressed={wonRequestsOnly} className={chip(wonRequestsOnly)} title="Sales Won requests waiting for your approval">
-            <Hourglass className="w-3.5 h-3.5" /> Won Requests
-            <span className={`rounded-full px-1.5 text-[10px] ${summary?.wonRequests ? 'bg-[#5925DC] text-white' : 'bg-[#F2F4F7] text-[#667085]'}`}>{summary?.wonRequests ?? 0}</span>
-          </button>
-          <button onClick={() => toggleQueue('archived')} aria-pressed={archivedOnly} className={chip(archivedOnly)} title="Archived leads (read-only)">
-            <Archive className="w-3.5 h-3.5" /> Archived
-          </button>
+          <FilterDivider />
+          <div className="sales-scroll-x flex items-center gap-2 overflow-x-auto">
+            <ToggleChip
+              active={overdueOnly}
+              onClick={() => setOverdueOnly((v) => !v)}
+              icon={AlarmClock}
+              label="Overdue"
+              activeTone="border-[#B54708] bg-[#FFFAEB] text-[#B54708]"
+            />
+            <ToggleChip
+              active={expiredOnly}
+              onClick={() => setExpiredOnly((v) => !v)}
+              icon={TimerReset}
+              label="Expired"
+              count={summary?.expired ?? 0}
+              countTone="bg-[#B42318] text-white"
+              activeTone="border-[#B42318] bg-[#FEF3F2] text-[#B42318]"
+              title="Expired stages waiting for your decision"
+            />
+          </div>
+          <div className="lg:ml-auto flex items-center justify-between gap-3 text-xs">
+            <span className="text-[#667085]"><strong className="text-[#172033]">{list.total}</strong> lead{list.total === 1 ? '' : 's'}</span>
+            {hasFilters && (
+              <button onClick={clearFilters} className="inline-flex items-center gap-1 font-bold text-[#004898] hover:underline">
+                <X className="w-3.5 h-3.5" /> Clear filters
+              </button>
+            )}
           </div>
         </div>
-      </div>
 
       {/* Phones: one card per lead. */}
-      <div className="md:hidden space-y-2.5">
+      <div className="md:hidden space-y-2.5 p-3 border-t border-[#E4E7EC] bg-[#F8FAFC]">
         {leads.length > 0 && selectable.length > 0 && (
           <label className="flex items-center gap-2 px-1 text-xs font-semibold text-[#475467]">
             <input
@@ -935,7 +978,7 @@ export const AdminLeadsTab = () => {
           </label>
         )}
         {leads.length === 0 ? (
-          <div className="card p-8 text-center text-sm text-[#667085]">{emptyMessage}</div>
+          <div className="rounded-2xl border border-dashed border-[#D0D5DD] bg-white p-8 text-center text-sm text-[#667085]">{emptyMessage}</div>
         ) : leads.map((l) => {
           const isSelected = selected.has(l.id);
           const isWon = l.status === 'won';
@@ -998,19 +1041,18 @@ export const AdminLeadsTab = () => {
               )}
 
               <div className="px-3.5 py-2.5 border-t border-[#F2F4F7] flex items-center gap-2">
-                {!archived && (
-                  <button
-                    onClick={() => setStatusLead(l)}
-                    disabled={isWon || pending}
-                    className="flex-1 justify-center px-2.5 py-2 rounded-lg bg-[#004898] text-white text-[12px] font-bold inline-flex items-center gap-1.5 disabled:opacity-40"
-                  ><ArrowRightCircle className="w-4 h-4" /> Change Status</button>
-                )}
-                <button onClick={() => setDetailId(l.id)} aria-label="Details" className={`${iconCls} p-2 ${archived ? 'flex-1 inline-flex justify-center' : ''}`}><HistoryIcon className="w-4 h-4" /></button>
-                {!archived && (
+                {archived ? (
+                  <button onClick={() => setDetailId(l.id)} className="flex-1 justify-center px-2.5 py-2 rounded-lg border border-[#E4E7EC] bg-white text-[#344054] text-[12px] font-bold inline-flex items-center gap-1.5">
+                    <Eye className="w-4 h-4" /> View details
+                  </button>
+                ) : (
                   <>
-                    <button onClick={() => setAssignTargets([l])} disabled={!!blockReason} aria-label="Assign salesperson" className={`${iconCls} p-2`}><UserPlus className="w-4 h-4" /></button>
-                    <button onClick={() => setFormModal({ lead: l })} aria-label="Edit" className={`${iconCls} p-2`}><Pencil className="w-4 h-4" /></button>
-                    <button onClick={() => setPendingDelete([l])} aria-label="Delete" className={`${iconCls} p-2 text-[#D92D20]`}><Trash2 className="w-4 h-4" /></button>
+                    <button
+                      onClick={() => setStatusLead(l)}
+                      disabled={isWon || pending}
+                      className="flex-1 justify-center px-2.5 py-2 rounded-lg bg-[#004898] text-white text-[12px] font-bold inline-flex items-center gap-1.5 disabled:opacity-40"
+                    ><ArrowRightCircle className="w-4 h-4" /> Change Status</button>
+                    <LeadRowMenu items={rowMenu(l, blockReason)} label={`More actions for ${l.company}`} />
                   </>
                 )}
               </div>
@@ -1019,8 +1061,7 @@ export const AdminLeadsTab = () => {
         })}
       </div>
 
-      <div className="hidden md:block card overflow-hidden border border-[#E4E7EC] shadow-xs">
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto border-t border-[#E4E7EC]">
           <table className="w-full text-xs text-left border-collapse bg-white">
             <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px] tracking-wider border-b border-[#E4E7EC]">
               <tr>
@@ -1102,24 +1143,16 @@ export const AdminLeadsTab = () => {
                     <td className="px-4 py-4 align-middle text-[#475467] font-medium">{l.assigned_to ? salesName(l.assigned_to) : <span className="inline-flex items-center gap-1 rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[11px] font-bold text-[#B42318]">Unassigned</span>}</td>
                     <td className="px-4 py-4 align-middle">
                       <div className="flex items-center justify-end gap-2">
-                        {!archived && (
-                          <button
-                            onClick={() => setStatusLead(l)}
-                            disabled={isWon || pending}
-                            title={isWon ? 'A Won lead is final' : pending ? 'Approve or reject the Won request first' : 'Change status'}
-                            className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFF5FC] text-[#004898] border border-[#E4E7EC] hover:border-[#B3D1F2] text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                          ><ArrowRightCircle className="w-3.5 h-3.5" /> Change Status</button>
-                        )}
-                        <button onClick={() => setDetailId(l.id)} title="Details, follow-ups, remarks & history" className={iconCls}><HistoryIcon className="w-4 h-4" /></button>
-                        {!archived && (
+                        {archived ? (
+                          <button onClick={() => setDetailId(l.id)} title="Details & history" className={statusBtnCls.replace('text-[#004898]', 'text-[#344054]')}>
+                            <Eye className="w-3.5 h-3.5" /> View
+                          </button>
+                        ) : (
                           <>
-                            <button onClick={() => setAssignTargets([l])} disabled={!!blockReason} title={blockReason || 'Assign salesperson'} className={iconCls}><UserPlus className="w-4 h-4" /></button>
-                            <button onClick={() => setFormModal({ lead: l })} title={isWon ? 'Edit (changes are recorded in history)' : 'Edit'} className={iconCls}><Pencil className="w-4 h-4" /></button>
-                            <button
-                              onClick={() => setPendingDelete([l])}
-                              title="Delete"
-                              className={`${iconCls} hover:bg-[#FEF3F2] text-[#D92D20] hover:border-[#FDA29B]`}
-                            ><Trash2 className="w-4 h-4" /></button>
+                            <button onClick={() => setStatusLead(l)} disabled={isWon || pending} title={statusTitle(isWon, pending)} className={statusBtnCls}>
+                              <ArrowRightCircle className="w-3.5 h-3.5" /> Change Status
+                            </button>
+                            <LeadRowMenu items={rowMenu(l, blockReason)} label={`More actions for ${l.company}`} />
                           </>
                         )}
                       </div>
@@ -1130,7 +1163,7 @@ export const AdminLeadsTab = () => {
             </tbody>
           </table>
         </div>
-      </div>
+      </ListPanel>
 
       <LeadPagination page={page} totalPages={pageCount(list.total)} count={list.total} onChange={setPage} />
 

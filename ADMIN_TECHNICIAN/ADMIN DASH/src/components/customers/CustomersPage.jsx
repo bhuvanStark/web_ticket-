@@ -5,6 +5,10 @@ import { TableSkeleton } from '../common/SkeletonLoader';
 import { NewCustomerModal } from './NewCustomerModal';
 import unifiedClient from '../../api/unifiedClient';
 
+// Customer CSV export is hidden from the UI for now. The handler and backend
+// endpoint are left intact — flip this to true to bring the button back.
+const SHOW_CUSTOMER_EXPORT = false;
+
 export const CustomersPage = () => {
   const { customers, setCustomers, setSelectedCustomerId, deleteCustomer, simulatedLoading, showToast } = useApp();
   const [search, setSearch] = useState('');
@@ -61,14 +65,16 @@ export const CustomersPage = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleExport}
-            disabled={isExporting}
-            className="btn btn-secondary shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            <Download className="w-4 h-4" />
-            <span>{isExporting ? 'Exporting…' : 'Export CSV'}</span>
-          </button>
+          {SHOW_CUSTOMER_EXPORT && (
+            <button
+              onClick={handleExport}
+              disabled={isExporting}
+              className="btn btn-secondary shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" />
+              <span>{isExporting ? 'Exporting…' : 'Export CSV'}</span>
+            </button>
+          )}
 
           <button
             onClick={() => setIsAddModalOpen(true)}

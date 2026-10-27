@@ -17,6 +17,8 @@ import {
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { generateServiceReportPDF } from '../../utils/pdfReportGenerator';
 import { ProjectActivitiesPanel } from './ProjectActivitiesPanel';
+import { CountBadge } from '../common/CountBadge';
+import { useTechWorkload } from '../../hooks/useTechWorkload';
 
 export const TechJobsPage = () => {
   const {
@@ -32,6 +34,7 @@ export const TechJobsPage = () => {
   // onto the ticket stepper below. Everything under 'tickets' is completely
   // unmodified from before this feature existed.
   const [viewMode, setViewMode] = useState('tickets'); // 'tickets' | 'projects'
+  const { openTickets, openActivities } = useTechWorkload();
 
   const isSameId = (a, b) => {
     if (!a || !b) return false;
@@ -98,6 +101,7 @@ export const TechJobsPage = () => {
         >
           <Ticket className="w-3.5 h-3.5" />
           <span>Service Tickets</span>
+          <CountBadge count={openTickets} />
         </button>
         <button
           onClick={() => setViewMode('projects')}
@@ -107,6 +111,7 @@ export const TechJobsPage = () => {
         >
           <Briefcase className="w-3.5 h-3.5" />
           <span>Project Activities</span>
+          <CountBadge count={openActivities} />
         </button>
       </div>
 

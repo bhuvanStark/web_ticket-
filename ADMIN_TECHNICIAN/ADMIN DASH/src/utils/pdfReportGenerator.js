@@ -29,16 +29,16 @@ function writeServiceReport(printWindow, ticket, signatures) {
   const r = ticket?.serviceReport || {};
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  const ticketId = esc(ticket?.id || ticket?.ticketNumber || '—');
-  const customer = esc(ticket?.customer || ticket?.customerName || '—');
-  const location = esc(ticket?.location || ticket?.locationName || '—');
+  const ticketId = ticket?.id || ticket?.ticketNumber || '—';
+  const customer = ticket?.customer || ticket?.customerName || '—';
+  const location = ticket?.location || ticket?.locationName || '—';
   const room = ticket?.room || ticket?.roomName;
   const area = ticket?.area || '';
   const supportLine = (ticket?.supportCategory === 'epabx' || ticket?.serviceType === 'EPABX') ? 'EPABX Support' : 'AV Support';
   const serviceMode = ticket?.serviceMode === 'Remote' ? 'Remote' : 'On-site';
-  const issueType = esc(ticket?.issueType || '—');
-  const contact = esc(ticket?.contact || '');
-  const issue = esc(ticket?.title || ticket?.issue || '—');
+  const issueType = ticket?.issueType || '—';
+  const contact = ticket?.contact || '';
+  const issue = ticket?.title || ticket?.issue || '—';
 
   // Never stamp the report with "now" — always the technician's actual
   // completion time, taken from the stored data. Fall back to the
@@ -71,7 +71,7 @@ function writeServiceReport(printWindow, ticket, signatures) {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Field Service Report - ${ticketId}</title>
+      <title>Field Service Report - ${esc(ticketId)}</title>
       <style>
         body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; color: #0F172A; margin: 0; padding: 40px; background: #FFF; }
         .report-header { border-bottom: 3px solid #004898; padding-bottom: 16px; margin-bottom: 24px; }
@@ -141,7 +141,7 @@ function writeServiceReport(printWindow, ticket, signatures) {
       </div>
 
       <div style="margin-top: 36px; text-align: center; font-size: 11px; color: #94A3B8; border-top: 1px solid #E2E8F0; padding-top: 14px;">
-        TaskTel Support · Ticket ${ticketId}
+        TaskTel Support · Ticket ${esc(ticketId)}
       </div>
 
       <script>

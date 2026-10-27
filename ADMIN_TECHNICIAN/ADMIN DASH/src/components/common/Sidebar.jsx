@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Avatar } from './Avatar';
+import { CountBadge } from './CountBadge';
+import { useTechWorkload } from '../../hooks/useTechWorkload';
 import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems, filterForViewAs } from '../../config/employeeNavItems';
 import {
   LayoutDashboard,
@@ -40,6 +42,9 @@ export const Sidebar = () => {
     setSelectedTicketId, setSelectedCustomerId, setSelectedRoomId, setSelectedTechId,
     setSelectedProjectId, isViewingAsSales
   } = useApp();
+
+  // Technician workload badge on "My Jobs" (open tickets + open activities).
+  const { total: techOpenJobs } = useTechWorkload();
 
   const [showTechSelector, setShowTechSelector] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -224,6 +229,7 @@ export const Sidebar = () => {
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activePage === item.id;
+            const workloadCount = role === 'tech' && item.id === 'my-jobs' ? techOpenJobs : 0;
             return (
               <button
                 key={item.id}
@@ -236,9 +242,13 @@ export const Sidebar = () => {
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-[#004898]' : 'text-[#667085]'}`} />
+                  <span className="relative">
+                    <Icon className={`w-5 h-5 ${isActive ? 'text-[#004898]' : 'text-[#667085]'}`} />
+                    {isSidebarCollapsed && <CountBadge count={workloadCount} className="absolute -top-2 -right-2.5" />}
+                  </span>
                   {!isSidebarCollapsed && <span>{item.label}</span>}
                 </div>
+                {!isSidebarCollapsed && <CountBadge count={workloadCount} />}
                 {!isSidebarCollapsed && item.badge && (
                   <span
                     className={`text-xs px-2 py-0.5 rounded-full font-bold ${

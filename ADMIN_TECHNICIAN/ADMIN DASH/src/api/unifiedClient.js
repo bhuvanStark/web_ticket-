@@ -63,6 +63,11 @@ class AdminAPIClient {
         body: JSON.stringify({ refreshToken: this.refreshToken })
       });
 
+      if (response.status === 401) {
+        // The server refused the session itself (expired, or the account was
+        // removed) — AppContext listens and returns to the login screen.
+        window.dispatchEvent(new Event('tasktel:session-ended'));
+      }
       if (!response.ok) throw new Error('Token refresh failed');
 
       const data = await response.json();
@@ -138,10 +143,6 @@ class AdminAPIClient {
       method: 'POST',
       body: JSON.stringify({ technicianId, password })
     });
-  }
-
-  async deleteTechnician(technicianId) {
-    return this.fetch(`/technicians/${technicianId}`, { method: 'DELETE' });
   }
 
   async deleteCustomer(customerId) {

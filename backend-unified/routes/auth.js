@@ -8,7 +8,8 @@ import {
   verifyRefreshToken,
   hashPassword,
   comparePassword,
-  requireAuth
+  requireAuth,
+  checkStaffSession
 } from '../middleware/auth.js';
 import {
   validateAdminLogin,
@@ -306,8 +307,9 @@ router.get('/session', verifyToken, async (req, res) => {
     // deactivated account's session correctly reports itself as no longer
     // valid here too, not just at the API layer (requireAdmin/
     // requireSales already reject the underlying token regardless).
+    // Staff removal (migration 040) — same for technicians/back_office.
     const selectColumns = table === 'admins' ? `id, email, ${nameColumn}, is_super_admin, is_active`
-      : table === 'sales' ? `id, email, ${nameColumn}, is_active`
+      : ['sales', 'technicians', 'back_office'].includes(table) ? `id, email, ${nameColumn}, is_active`
       : `id, email, ${nameColumn}`;
 
     const { data: account, error } = await supabase
@@ -392,6 +394,14 @@ router.post('/refresh', async (req, res) => {
         return res.status(401).json({ success: false, error: 'Unauthorized', message: 'Your session has been revoked — please log in again' });
       }
       extraClaims.tokenVersion = sales.token_version;
+    } else if (decoded.role === 'technician' || decoded.role === 'back_office') {
+      // Staff removal (migration 040) — a removed employee's refresh token
+      // must not mint a new access token.
+      const revoked = await checkStaffSession(decoded);
+      if (revoked) {
+        return res.status(401).json({ success: false, error: 'Unauthorized', message: revoked });
+      }
+      extraClaims.tokenVersion = decoded.tokenVersion ?? 0;
     }
 
     const newAccessToken = generateToken(decoded.userId, decoded.role, extraClaims);
@@ -675,9 +685,19 @@ router.post('/technician/login', validateTechnicianLogin, async (req, res) => {
       });
     }
 
+    // Staff removal (migration 040) — a removed technician can never sign in.
+    if (technician.is_active === false) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized',
+        message: 'This account is inactive.'
+      });
+    }
+
     // Generate tokens
-    const accessToken = generateToken(technician.id, 'technician');
-    const refreshToken = generateRefreshToken(technician.id, 'technician');
+    const tokenClaims = { tokenVersion: technician.token_version ?? 0 };
+    const accessToken = generateToken(technician.id, 'technician', tokenClaims);
+    const refreshToken = generateRefreshToken(technician.id, 'technician', tokenClaims);
 
     res.json({
       success: true,

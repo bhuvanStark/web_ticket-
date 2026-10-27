@@ -311,17 +311,20 @@ export const ServiceRequestsPage = () => {
       ) : (
         <>
         {/* Mobile (<768px) only: keep the desktop column layout at a readable
-            fixed width and scroll it horizontally instead of squeezing it. */}
-        <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden max-md:overflow-x-auto bg-white">
-          <table className="table w-full table-fixed max-md:min-w-[880px]">
+            fixed width and scroll it horizontally instead of squeezing it.
+            Each column gets a pixel width that fits its content (so the
+            action buttons never spill over Status), with momentum swipe and
+            no scroll chaining into the page. */}
+        <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden max-md:overflow-x-auto max-md:overscroll-x-contain max-md:[-webkit-overflow-scrolling:touch] bg-white">
+          <table className="table w-full table-fixed max-md:min-w-[1070px]">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
-                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[25%]">Ticket Details</th>
-                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[30%]">Client & Location</th>
-                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[10%]">Priority</th>
-                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[15%]">Assigned Tech</th>
-                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[10%]">Status</th>
-                <th className="px-5 py-3.5 text-right font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[10%]">Actions</th>
+                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[25%] max-md:w-[220px]">Ticket Details</th>
+                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[30%] max-md:w-[230px]">Client & Location</th>
+                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[10%] max-md:w-[100px]">Priority</th>
+                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[15%] max-md:w-[200px]">Assigned Tech</th>
+                <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[10%] max-md:w-[150px]">Status</th>
+                <th className="px-5 py-3.5 text-right font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[10%] max-md:w-[170px]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F2F4F7]">
@@ -375,11 +378,11 @@ export const ServiceRequestsPage = () => {
                           setSelectedTicketId(t.id);
                           setIsAssignModalOpen(true);
                         }}
-                        className="flex items-center gap-2 text-xs font-bold text-[#172033] bg-[#F8FAFC] hover:bg-[#EFF5FC] hover:border-[#004898] px-2.5 py-1 rounded-lg border border-[#E4E7EC] transition-all cursor-pointer group"
+                        className="flex items-center gap-2 text-xs font-bold text-[#172033] bg-[#F8FAFC] hover:bg-[#EFF5FC] hover:border-[#004898] px-2.5 py-1 rounded-lg border border-[#E4E7EC] transition-all cursor-pointer group max-md:max-w-full"
                         title="Click to reassign to a different technician for tomorrow"
                       >
                         <Avatar src={t.assignedToAvatar} name={t.assignedTo} className="w-5 h-5" textClassName="text-[9px]" />
-                        <span className="truncate group-hover:text-[#004898]">{t.assignedTo}</span>
+                        <span className="truncate group-hover:text-[#004898] max-md:min-w-0">{t.assignedTo}</span>
                         <UserPlus className="w-3 h-3 text-[#98A2B3] group-hover:text-[#004898] ml-0.5" />
                       </button>
                     ) : (

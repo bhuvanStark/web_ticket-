@@ -27,8 +27,17 @@ export function normalizeSignature(sig) {
 
 // Inserts the given signatures for a report. An existing row for the same
 // party is kept (first signature wins) — resubmitting a report never
-// overwrites a signature already on file.
+// overwrites a signature already on file. One exception: when a different
+// technician resubmits (e.g. the ticket was reassigned after the first
+// technician was removed), the technician drawing is replaced, so it always
+// matches the technician named on the report.
 // entries: [{ party: 'technician' | 'customer', signature, signerName, signedAt }]
+const KEEP_FIRST = 'DO NOTHING';
+const REPLACE_IF_OTHER_TECHNICIAN = `DO UPDATE SET
+         path_data = EXCLUDED.path_data, width = EXCLUDED.width, height = EXCLUDED.height,
+         signer_name = EXCLUDED.signer_name, signed_at = EXCLUDED.signed_at
+       WHERE service_report_signatures.signer_name IS DISTINCT FROM EXCLUDED.signer_name`;
+
 export async function saveReportSignatures(serviceReportId, entries, executor = db) {
   for (const { party, signature, signerName, signedAt } of entries) {
     const sig = normalizeSignature(signature);
@@ -37,7 +46,7 @@ export async function saveReportSignatures(serviceReportId, entries, executor = 
       `INSERT INTO service_report_signatures
          (service_report_id, party, path_data, width, height, signer_name, signed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (service_report_id, party) DO NOTHING`,
+       ON CONFLICT (service_report_id, party) ${party === 'technician' ? REPLACE_IF_OTHER_TECHNICIAN : KEEP_FIRST}`,
       [serviceReportId, party, sig.path, sig.width, sig.height, signerName || null, signedAt]
     );
   }

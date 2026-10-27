@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, MapPin, Eye, Plus, Link2, LogIn, Download, Trash2, AlertTriangle } from 'lucide-react';
+import { Search, MapPin, Eye, Plus, Link2, LogIn, Download, UserX } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { Avatar } from '../common/Avatar';
 import { ShareTechLinkModal } from './ShareTechLinkModal';
+import { RemoveStaffDialog } from '../common/RemoveStaffDialog';
 import unifiedClient from '../../api/unifiedClient';
 
 export const TechniciansPage = () => {
@@ -11,7 +12,7 @@ export const TechniciansPage = () => {
     technicians,
     setSelectedTechId,
     loginAsTechnician,
-    deleteTechnician,
+    dropTechnicianFromRoster,
     setIsTechnicianModalOpen,
     setTechnicianModalMode,
     simulatedLoading,
@@ -25,18 +26,9 @@ export const TechniciansPage = () => {
   const [branchFilter, setBranchFilter] = useState('');
   const [shareTech, setShareTech] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
-  // Deleting is destructive and cannot be undone, so it goes through a
-  // confirmation step rather than firing straight off the row button.
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const confirmDelete = async () => {
-    if (!pendingDelete || isDeleting) return;
-    setIsDeleting(true);
-    await deleteTechnician(pendingDelete.id);
-    setIsDeleting(false);
-    setPendingDelete(null);
-  };
+  // Remove (or, with no work history, Delete) goes through a confirmation
+  // dialog that shows what will happen to their tickets and attendance.
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -216,11 +208,11 @@ export const TechniciansPage = () => {
                           <LogIn className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => setPendingDelete(tech)}
+                          onClick={() => setPendingRemove(tech)}
                           className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
-                          title="Delete Technician"
+                          title="Remove Technician"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <UserX className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -241,43 +233,14 @@ export const TechniciansPage = () => {
           onClose={() => setShareTech(null)}
         />
       )}
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-            <div className="flex items-start gap-3 p-5">
-              <div className="shrink-0 w-10 h-10 rounded-full bg-[#FEF3F2] flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-[#D92D20]" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-[#172033]">Delete technician</h3>
-                <p className="mt-1 text-sm text-[#667085]">
-                  This will permanently remove{' '}
-                  <span className="font-semibold text-[#172033]">
-                    {pendingDelete.full_name || pendingDelete.name}
-                  </span>
-                  . Any tickets assigned to them will move back to the unassigned
-                  queue. This cannot be undone.
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-xl">
-              <button
-                onClick={() => setPendingDelete(null)}
-                disabled={isDeleting}
-                className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] transition-all cursor-pointer disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                disabled={isDeleting}
-                className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#D92D20] text-white hover:bg-[#B42318] transition-all cursor-pointer disabled:opacity-60"
-              >
-                {isDeleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {pendingRemove && (
+        <RemoveStaffDialog
+          role="technician"
+          employee={pendingRemove}
+          showToast={showToast}
+          onClose={() => setPendingRemove(null)}
+          onDone={() => { dropTechnicianFromRoster(pendingRemove.id); setPendingRemove(null); }}
+        />
       )}
     </div>
   );

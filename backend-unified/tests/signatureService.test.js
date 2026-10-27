@@ -35,7 +35,7 @@ test('normalizeSignature rejects markup, bad commands, size and dimensions', () 
   assert.equal(normalizeSignature({ ...ok, width: '500' }), null);
 });
 
-test('saveReportSignatures keeps the first signature and skips invalid ones', async () => {
+test('saveReportSignatures skips invalid ones; technician replaced only by a different technician', async () => {
   const db = fakeDb();
   await saveReportSignatures('report-1', [
     { party: 'technician', signature: { path: 'M1 2L3 4', width: 500, height: 110 }, signerName: 'Tech', signedAt: 't' },
@@ -43,8 +43,17 @@ test('saveReportSignatures keeps the first signature and skips invalid ones', as
     { party: 'customer', signature: null }
   ], db);
   assert.equal(db.calls.length, 1);
-  assert.match(db.calls[0].text, /ON CONFLICT \(service_report_id, party\) DO NOTHING/);
+  assert.match(db.calls[0].text, /ON CONFLICT \(service_report_id, party\) DO UPDATE SET/);
+  assert.match(db.calls[0].text, /WHERE service_report_signatures\.signer_name IS DISTINCT FROM EXCLUDED\.signer_name/);
   assert.deepEqual(db.calls[0].values, ['report-1', 'technician', 'M1 2L3 4', 500, 110, 'Tech', 't']);
+});
+
+test('saveReportSignatures keeps the first customer signature', async () => {
+  const db = fakeDb();
+  await saveReportSignatures('report-1', [
+    { party: 'customer', signature: { path: 'M1 2L3 4', width: 500, height: 110 }, signerName: 'Cust', signedAt: 't' }
+  ], db);
+  assert.match(db.calls[0].text, /ON CONFLICT \(service_report_id, party\) DO NOTHING/);
 });
 
 test('getReportSignatures returns [] when the table does not exist yet', async () => {

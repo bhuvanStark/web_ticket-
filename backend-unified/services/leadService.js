@@ -197,13 +197,15 @@ const expiredSql = (ref) => `(${ref}.assigned_to IS NOT NULL AND ${ref}.status I
   AND (${ref}.expiry_handled_at IS NULL OR ${ref}.expiry_handled_at < ${stageDeadlineSql(ref)}))`;
 
 // Live leads with the same phone. `same_company` marks the true duplicates
-// (same Company + Phone); the rest only share the phone.
+// (same Company + Phone); the rest only share the phone. A Won lead archived
+// because its owner was removed (staff removal) still warns — that customer
+// was really won.
 export async function findDuplicates(company, phone, excludeId = null) {
   const { rows } = await query(
     `SELECT l.id, l.company, l.phone, l.status, l.assigned_to, s.full_name AS assigned_name,
             (${companyKeySql('l')} = lead_company_key($2)) AS same_company
      FROM leads l LEFT JOIN sales s ON s.id = l.assigned_to
-     WHERE l.archived_at IS NULL AND l.phone = $1
+     WHERE (l.archived_at IS NULL OR (l.archive_reason = 'owner_removed' AND l.status = 'won')) AND l.phone = $1
        AND ($3::uuid IS NULL OR l.id <> $3)
      ORDER BY (${companyKeySql('l')} = lead_company_key($2)) DESC, l.created_at ASC LIMIT 20`,
     [normalizePhone(phone), String(company ?? ''), excludeId]
@@ -1045,8 +1047,11 @@ export async function resolveExpiredLead(id, { action, salesId } = {}, actor) {
 // as they are. Their follow-up dates and any pending Won request go too —
 // there is no owner left to credit; the next owner starts a fresh clock
 // when assigned (assignLeadIds).
-export async function reassignLeadsForDeactivatedSales(salesId, actor) {
-  const { rows } = await query(
+// `client` (optional) runs it inside the caller's transaction — staff
+// removal (services/staffRemovalService.js) does that.
+export async function reassignLeadsForDeactivatedSales(salesId, actor, client = null) {
+  const run = client ? client.query.bind(client) : query;
+  const { rows } = await run(
     `WITH prev AS (
        SELECT id, won_requested_at FROM leads
        WHERE assigned_to = $1 AND status NOT IN ('won', 'lost', 'dead') AND archived_at IS NULL
@@ -1060,11 +1065,31 @@ export async function reassignLeadsForDeactivatedSales(salesId, actor) {
     [salesId]
   );
   for (const lead of rows) {
-    await logHistory(null, lead.id, 'deactivation_reassigned', actor, {
+    await logHistory(client, lead.id, 'deactivation_reassigned', actor, {
       previous_owner: salesId, ...(lead.won_requested_at ? { won_request_cleared: true } : {})
     });
   }
   if (rows.length) publish('leads_deactivation_reassigned', { ids: rows.map((r) => r.id), salesId }, [salesId]);
+  return rows;
+}
+
+// Staff removal — a removed salesperson's Won / Lost / Dead leads are
+// archived with the owner kept (their credit stays). archive_reason
+// 'owner_removed' (migration 040) keeps them in the company Won/Lost totals.
+// Runs inside the caller's transaction.
+export async function archiveClosedLeadsForRemovedSales(salesId, actor, client) {
+  const { rows } = await client.query(
+    `UPDATE leads
+        SET archived_at = now(), archive_reason = 'owner_removed',
+            won_requested_at = NULL, won_requested_by = NULL, updated_at = now()
+      WHERE assigned_to = $1 AND status IN ('won', 'lost', 'dead') AND archived_at IS NULL
+      RETURNING id`,
+    [salesId]
+  );
+  for (const lead of rows) {
+    await logHistory(client, lead.id, 'archived', actor, { reason: 'owner_removed' });
+  }
+  for (const lead of rows) publish('lead_archived', { id: lead.id }, [salesId]);
   return rows;
 }
 
@@ -1702,7 +1727,9 @@ export async function getSalesSummary(salesId) {
 // Won/lost leads with the date they reached their current status, limited
 // to the period. The LATERAL MAX always yields one row, so a lead with no
 // matching history row (not produced by any current code path) still
-// counts for "All Time".
+// counts for "All Time". Leads archived because their owner was removed
+// (archive_reason 'owner_removed', staff removal) still count — that work
+// really happened.
 const closedInPeriodSql = (periodStart) => `
   SELECT l.id, l.assigned_to, l.status, l.value_estimate
   FROM leads l
@@ -1710,7 +1737,7 @@ const closedInPeriodSql = (periodStart) => `
     SELECT MAX(h.created_at) AS closed_at FROM lead_history h
     WHERE h.lead_id = l.id AND h.event_type = 'status_changed' AND h.details->>'to' = l.status
   ) c ON true
-  WHERE l.archived_at IS NULL AND l.status IN ('won', 'lost')
+  WHERE (l.archived_at IS NULL OR l.archive_reason = 'owner_removed') AND l.status IN ('won', 'lost')
     AND (${periodStart} IS NULL OR c.closed_at >= ${periodStart})`;
 
 const conversionRate = (won, lost) => (won + lost > 0 ? won / (won + lost) : null);

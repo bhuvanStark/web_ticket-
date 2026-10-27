@@ -5,13 +5,12 @@
 // matching this codebase's existing precedent of per-entity page files.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, ClipboardList, X, CheckCircle } from 'lucide-react';
+import { Search, Plus, Pencil, UserX, ClipboardList, X, CheckCircle } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { EMPLOYEE_LOCATIONS } from '../../utils/employeeLocations';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
-import {
-  fetchBackOfficeInApi, createBackOfficeInApi, updateBackOfficeInApi, deleteBackOfficeInApi, deactivateBackOfficeInApi
-} from '../../services/backOfficeApiService';
+import { fetchBackOfficeInApi, createBackOfficeInApi, updateBackOfficeInApi } from '../../services/backOfficeApiService';
+import { RemoveStaffDialog } from '../common/RemoveStaffDialog';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -146,9 +145,8 @@ export const BackOfficePage = () => {
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('');
   const [modal, setModal] = useState(null);
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deactivatingId, setDeactivatingId] = useState(null);
+  // Remove (or, with no work history, Delete) — see RemoveStaffDialog.
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -169,38 +167,6 @@ export const BackOfficePage = () => {
     (!branchFilter || e.location === branchFilter) &&
     ((e.full_name || '').toLowerCase().includes(search.toLowerCase()) || (e.email || '').toLowerCase().includes(search.toLowerCase()))
   );
-
-  const confirmDelete = async () => {
-    if (!pendingDelete || isDeleting) return;
-    setIsDeleting(true);
-    try {
-      await deleteBackOfficeInApi(pendingDelete.id);
-      showToast?.(`${pendingDelete.full_name} and their attendance history were deleted.`, 'success');
-      setPendingDelete(null);
-      load();
-    } catch (err) {
-      showToast?.(err.message || 'Delete failed', 'error');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  // Safe alternative to Delete: keeps the employee row and all of their
-  // attendance history, just removes them from the active roster.
-  const handleDeactivate = async (employee) => {
-    if (deactivatingId) return;
-    if (!window.confirm(`Deactivate ${employee.full_name}? They will be removed from the active roster, but their record and attendance history are kept.`)) return;
-    setDeactivatingId(employee.id);
-    try {
-      await deactivateBackOfficeInApi(employee.id);
-      showToast?.(`${employee.full_name} deactivated.`, 'success');
-      load();
-    } catch (err) {
-      showToast?.(err.message || 'Deactivate failed', 'error');
-    } finally {
-      setDeactivatingId(null);
-    }
-  };
 
   if (loading) return <TableSkeleton rows={4} />;
 
@@ -275,19 +241,11 @@ export const BackOfficePage = () => {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDeactivate(e)}
-                          disabled={deactivatingId === e.id}
-                          className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#475467] border border-[#E4E7EC] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center disabled:opacity-60"
-                          title="Deactivate (keeps record and attendance history)"
+                          onClick={() => setPendingRemove(e)}
+                          className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
+                          title="Remove employee"
                         >
                           <UserX className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setPendingDelete(e)}
-                          className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
-                          title="Delete permanently"
-                        >
-                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -309,30 +267,14 @@ export const BackOfficePage = () => {
         />
       )}
 
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-[#E4E7EC]">
-            <div className="flex items-start gap-3 p-5">
-              <div className="shrink-0 w-10 h-10 rounded-full bg-[#FEF3F2] flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-[#D92D20]" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-[#172033]">Delete Back-Office employee</h3>
-                <p className="mt-1 text-sm text-[#667085]">
-                  This will permanently remove <span className="font-semibold text-[#172033]">{pendingDelete.full_name}</span> <span className="font-semibold text-[#D92D20]">and permanently delete all of their attendance history</span>. This cannot be undone. To keep their record and history, use Deactivate instead.
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-[#E4E7EC] bg-[#F9FAFB] rounded-b-xl">
-              <button onClick={() => setPendingDelete(null)} disabled={isDeleting} className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC] transition-all cursor-pointer disabled:opacity-60">
-                Cancel
-              </button>
-              <button onClick={confirmDelete} disabled={isDeleting} className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#D92D20] text-white hover:bg-[#B42318] transition-all cursor-pointer disabled:opacity-60">
-                {isDeleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {pendingRemove && (
+        <RemoveStaffDialog
+          role="back_office"
+          employee={pendingRemove}
+          showToast={showToast}
+          onClose={() => setPendingRemove(null)}
+          onDone={() => { setPendingRemove(null); load(); }}
+        />
       )}
     </div>
   );

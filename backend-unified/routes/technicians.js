@@ -1,7 +1,8 @@
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
-import { requireAuth, hashPassword } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requirePermission, hashPassword } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
+import { mountStaffRemovalRoutes } from './staffRemoval.js';
 
 const router = express.Router();
 
@@ -9,6 +10,11 @@ const router = express.Router();
 // change it; it is hashed like any other, never stored in plain text.
 const DEFAULT_TECHNICIAN_PASSWORD = '123456';
 router.use(requireAuth);
+
+// Reads stay open to any signed-in user (dispatch pickers need the list);
+// creating, editing, removing and deleting technicians is Admin-only, same
+// gate as /api/admin/technicians.
+const adminOnly = [requireAdmin, requirePermission('technicians')];
 
 // Public directory fields used by the dispatch UI. Password hashes and other
 // authentication data are deliberately never selected.
@@ -41,7 +47,7 @@ router.get('/:id', validateUUID, async (req, res) => {
 });
 
 // CREATE new technician
-router.post('/', async (req, res) => {
+router.post('/', ...adminOnly, async (req, res) => {
   try {
     const { full_name, email, phone, specialization, role_title, location, password } = req.body;
 
@@ -52,12 +58,14 @@ router.post('/', async (req, res) => {
     // Check if email already exists
     const { data: existing } = await supabase
       .from('technicians')
-      .select('id')
+      .select('id, removed_at')
       .eq('email', email)
       .maybeSingle();
 
     if (existing) {
-      return res.status(400).json({ success: false, error: 'Technician with this email already exists' });
+      // Staff removal: a removed employee keeps their row (and email).
+      const error = existing.removed_at ? "This email belongs to a removed employee and can't be reused yet." : 'Technician with this email already exists';
+      return res.status(400).json({ success: false, error });
     }
 
     // Always store a real bcrypt hash — an empty or plaintext value here makes
@@ -95,7 +103,7 @@ router.post('/', async (req, res) => {
 // and availability are untouched here; those go through their own existing
 // endpoints (technician self-service password reset, and
 // PATCH /api/admin/technicians/:id/status).
-router.patch('/:id', validateUUID, async (req, res) => {
+router.patch('/:id', ...adminOnly, validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
     const { full_name, email, phone, specialization, role_title, location } = req.body;
@@ -147,41 +155,9 @@ router.patch('/:id', validateUUID, async (req, res) => {
   }
 });
 
-// DELETE a technician.
-// service_requests.assigned_technician_id is ON DELETE SET NULL, so existing
-// tickets survive and fall back to unassigned rather than disappearing with
-// the technician.
-router.delete('/:id', validateUUID, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const { data: existing, error: lookupError } = await supabase
-      .from('technicians')
-      .select('id, full_name')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (lookupError) throw lookupError;
-    if (!existing) {
-      return res.status(404).json({ success: false, error: 'Technician not found' });
-    }
-
-    const { error } = await supabase
-      .from('technicians')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      data: { id },
-      message: `Technician ${existing.full_name || ''} deleted successfully`.trim()
-    });
-  } catch (error) {
-    console.error('Error deleting technician:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+// Staff removal (services/staffRemovalService.js): GET /:id/removal-preview,
+// POST /:id/remove (lock out for good, delete attendance, unassign tickets
+// that aren't done), and DELETE /:id (only without work history).
+mountStaffRemovalRoutes(router, 'technician', ...adminOnly);
 
 export default router;

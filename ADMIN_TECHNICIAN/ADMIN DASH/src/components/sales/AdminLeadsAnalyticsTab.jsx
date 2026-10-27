@@ -183,7 +183,7 @@ export const AdminLeadsAnalyticsTab = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="card p-4 sm:p-5 border-l-4 border-l-[#F79009] space-y-3">
+        <div className="relative overflow-hidden rounded-xl border border-[#E4E7EC] bg-white shadow-xs pl-5 pr-4 py-4 sm:pr-5 sm:py-5 space-y-3 before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[#F79009]">
           <div className="flex items-center justify-between text-[#667085]">
             <span className="text-xs font-bold uppercase tracking-wider">Needs Attention</span>
             <div className="p-2 rounded-lg bg-[#FEF0C7] text-[#B54708]"><AlertTriangle className="w-5 h-5" /></div>

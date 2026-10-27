@@ -619,6 +619,24 @@ export const AppProvider = ({ children }) => {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
+  // The server refused this session (refresh token rejected — e.g. the
+  // employee was removed): drop to the login screen instead of leaving a
+  // screen where every request fails. Tokens are already cleared.
+  useEffect(() => {
+    const onSessionEnded = () => {
+      if (!localStorage.getItem('admin_auth')) return;
+      localStorage.removeItem('admin_auth');
+      localStorage.removeItem('admin_role');
+      localStorage.removeItem('admin_user');
+      localStorage.removeItem('base_role');
+      localStorage.removeItem('admin_identity_snapshot');
+      setIsLoggedIn(false);
+      showToast('Your session has ended. Please log in again.', 'info');
+    };
+    window.addEventListener('tasktel:session-ended', onSessionEnded);
+    return () => window.removeEventListener('tasktel:session-ended', onSessionEnded);
+  }, [showToast]);
+
   // Remove a customer. Locations, team members and preferences cascade away,
   // but the API refuses (409) while the customer still has service requests.
   const deleteCustomer = async (customerId) => {
@@ -634,19 +652,13 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  // Remove a technician. Their tickets are not deleted — the FK is
-  // ON DELETE SET NULL, so those tickets return to the unassigned queue.
-  const deleteTechnician = async (technicianId) => {
-    try {
-      await unifiedClient.deleteTechnician(technicianId);
-      setTechnicians((prev) => (prev || []).filter((t) => t.id !== technicianId));
-      setSelectedTechId((prev) => (prev === technicianId ? null : prev));
-      showToast('Technician deleted successfully.', 'success');
-      return true;
-    } catch (error) {
-      showToast(error?.message || 'Could not delete technician.', 'error');
-      return false;
-    }
+  // Drop a removed/deleted technician from the roster. The Remove dialog
+  // (components/common/RemoveStaffDialog.jsx) makes the API call; their open
+  // tickets went back to unassigned on the backend and show up on the next
+  // ticket poll.
+  const dropTechnicianFromRoster = (technicianId) => {
+    setTechnicians((prev) => (prev || []).filter((t) => t.id !== technicianId));
+    setSelectedTechId((prev) => (prev === technicianId ? null : prev));
   };
 
   // Onboard a new technician — used by NewTechnicianModal in 'create' mode.
@@ -1693,7 +1705,7 @@ export const AppProvider = ({ children }) => {
         loginAsTechnician,
         viewAsSales,
         isViewingAsSales,
-        deleteTechnician,
+        dropTechnicianFromRoster,
         createTechnician,
         updateTechnician,
         deleteCustomer,

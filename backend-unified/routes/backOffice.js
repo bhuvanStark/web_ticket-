@@ -8,6 +8,8 @@ import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
+import { mountStaffRemovalRoutes } from './staffRemoval.js';
+import { removeStaff } from '../services/staffRemovalService.js';
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -56,12 +58,14 @@ router.post('/', async (req, res) => {
     // this clean 400 (audit finding #2).
     const { data: existing } = await supabase
       .from('back_office')
-      .select('id')
+      .select('id, removed_at')
       .ilike('email', email)
       .maybeSingle();
 
     if (existing) {
-      return res.status(400).json({ success: false, error: 'A Back-Office employee with this email already exists' });
+      // Staff removal: a removed employee keeps their row (and email).
+      const error = existing.removed_at ? "This email belongs to a removed employee and can't be reused yet." : 'A Back-Office employee with this email already exists';
+      return res.status(400).json({ success: false, error });
     }
 
     const { data, error } = await supabase
@@ -149,73 +153,20 @@ router.patch('/:id', validateUUID, async (req, res) => {
   }
 });
 
-// DEACTIVATE — the safe alternative to DELETE: flips is_active off so the
-// employee drops out of the roster (GET / already filters eq('is_active',
-// true)) while the row itself and every attendance_records row pointing at
-// it are left completely untouched. Deliberately one-directional (no
-// reactivate route) — not asked for, and not adding one keeps this change
-// scoped to what was requested.
+// Staff removal (services/staffRemovalService.js): GET /:id/removal-preview,
+// POST /:id/remove, and DELETE /:id (only without work history). This
+// router already requires an admin for every route.
+mountStaffRemovalRoutes(router, 'back_office');
+
+// DEACTIVATE — kept for older admin clients; now does exactly what Remove
+// does (lock out for good, delete attendance, hand over open work).
 router.patch('/:id/deactivate', validateUUID, async (req, res) => {
   try {
-    const { id } = req.params;
-
-    const { data, error } = await supabase
-      .from('back_office')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select(SELECT_FIELDS)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ success: false, error: 'Back-Office employee not found' });
-      }
-      throw error;
-    }
-
-    res.json({ success: true, data, message: `Back-Office employee ${data.full_name || ''} deactivated successfully`.trim() });
+    const data = await removeStaff('back_office', req.params.id, { type: 'admin', id: req.user.userId, name: null });
+    res.json({ success: true, data, message: `Back-Office employee ${data.name || ''} removed`.trim() });
   } catch (error) {
-    console.error('Error deactivating Back-Office employee:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// DELETE — permanent. attendance_records.back_office_id is now ON DELETE
-// CASCADE (migration 026): deleting a Back-Office employee also deletes
-// every attendance record that belongs to them, so this succeeds whether or
-// not they have attendance history. The frontend's delete confirmation
-// warns explicitly that attendance history is destroyed; anyone who needs
-// to keep that history should use PATCH /:id/deactivate instead.
-router.delete('/:id', validateUUID, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const { data: existingRow, error: lookupError } = await supabase
-      .from('back_office')
-      .select('id, full_name')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (lookupError) throw lookupError;
-    if (!existingRow) {
-      return res.status(404).json({ success: false, error: 'Back-Office employee not found' });
-    }
-
-    const { error } = await supabase
-      .from('back_office')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      data: { id },
-      message: `Back-Office employee ${existingRow.full_name || ''} deleted successfully`.trim()
-    });
-  } catch (error) {
-    console.error('Error deleting Back-Office employee:', error);
-    res.status(500).json({ success: false, error: error.message });
+    if (!error.status) console.error('Error removing Back-Office employee:', error);
+    res.status(error.status || 500).json({ success: false, error: error.message });
   }
 });
 

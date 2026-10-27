@@ -8,13 +8,10 @@
 // verify here.
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
-import { query } from '../config/database.js';
 import { requireAdmin, requirePermission } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
-// TaskPro Sales Module V1 — deactivating/deleting a Sales employee must
-// return their active leads to the common pool (plan §6). Additive: this is
-// the only change this file makes for that feature.
-import { reassignLeadsForDeactivatedSales } from '../services/leadService.js';
+import { mountStaffRemovalRoutes } from './staffRemoval.js';
+import { removeStaff } from '../services/staffRemovalService.js';
 
 const router = express.Router();
 // Admin RBAC V1 — Sales employee management is itself part of the 'sales'
@@ -67,12 +64,14 @@ router.post('/', async (req, res) => {
     // (audit finding #2).
     const { data: existing } = await supabase
       .from('sales')
-      .select('id')
+      .select('id, removed_at')
       .ilike('email', email)
       .maybeSingle();
 
     if (existing) {
-      return res.status(400).json({ success: false, error: 'A Sales employee with this email already exists' });
+      // Staff removal: a removed employee keeps their row (and email).
+      const error = existing.removed_at ? "This email belongs to a removed employee and can't be reused yet." : 'A Sales employee with this email already exists';
+      return res.status(400).json({ success: false, error });
     }
 
     const { data, error } = await supabase
@@ -160,96 +159,20 @@ router.patch('/:id', validateUUID, async (req, res) => {
   }
 });
 
-// DEACTIVATE — the safe alternative to DELETE: flips is_active off so the
-// employee drops out of the roster (GET / already filters eq('is_active',
-// true)) while the row itself and every attendance_records row pointing at
-// it are left completely untouched. Deliberately one-directional (no
-// reactivate route) — not asked for, and not adding one keeps this change
-// scoped to what was requested.
+// Staff removal (services/staffRemovalService.js): GET /:id/removal-preview,
+// POST /:id/remove, and DELETE /:id (only without work history). This
+// router already requires an admin for every route.
+mountStaffRemovalRoutes(router, 'sales');
+
+// DEACTIVATE — kept for older admin clients; now does exactly what Remove
+// does (lock out for good, delete attendance, hand over open work).
 router.patch('/:id/deactivate', validateUUID, async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // Audit fix P0-1 — bump token_version so this Sales employee's existing
-    // access/refresh tokens are rejected on their very next use, instead of
-    // remaining valid (and able to keep accepting leads) until natural
-    // expiry. requireSales checks this on every request. Raw SQL for the
-    // `token_version + 1` expression — the query builder's .update() only
-    // accepts plain bound values, not expressions.
-    const { rows } = await query(
-      `UPDATE sales SET is_active = false, token_version = token_version + 1, updated_at = now()
-       WHERE id = $1
-       RETURNING ${SELECT_FIELDS}`,
-      [id]
-    );
-    const data = rows[0];
-
-    if (!data) {
-      return res.status(404).json({ success: false, error: 'Sales employee not found' });
-    }
-
-    // Plan §6: their active/unclosed leads return to the common pool. Best
-    // effort — a failure here must not undo the deactivation that already
-    // succeeded; it's logged so it can be reconciled by hand if it ever hits.
-    try {
-      await reassignLeadsForDeactivatedSales(id, { type: 'admin', id: req.user.userId, name: null });
-    } catch (leadError) {
-      console.error(`Failed to reassign leads after deactivating sales ${id}:`, leadError.message);
-    }
-
-    res.json({ success: true, data, message: `Sales employee ${data.full_name || ''} deactivated successfully`.trim() });
+    const data = await removeStaff('sales', req.params.id, { type: 'admin', id: req.user.userId, name: null });
+    res.json({ success: true, data, message: `Sales employee ${data.name || ''} removed`.trim() });
   } catch (error) {
-    console.error('Error deactivating Sales employee:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// DELETE — permanent. attendance_records.sales_id is now ON DELETE CASCADE
-// (migration 026): deleting a Sales employee also deletes every attendance
-// record that belongs to them, so this succeeds whether or not they have
-// attendance history. The frontend's delete confirmation warns explicitly
-// that attendance history is destroyed; anyone who needs to keep that
-// history should use PATCH /:id/deactivate instead.
-router.delete('/:id', validateUUID, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const { data: existingRow, error: lookupError } = await supabase
-      .from('sales')
-      .select('id, full_name')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (lookupError) throw lookupError;
-    if (!existingRow) {
-      return res.status(404).json({ success: false, error: 'Sales employee not found' });
-    }
-
-    // leads.assigned_to is ON DELETE SET NULL (migration 028), so this can't
-    // fail on lead history — but do the same reassignment history logging
-    // as deactivate first, or those leads would silently lose their owner
-    // with no lead_history row explaining why.
-    try {
-      await reassignLeadsForDeactivatedSales(id, { type: 'admin', id: req.user.userId, name: null });
-    } catch (leadError) {
-      console.error(`Failed to reassign leads before deleting sales ${id}:`, leadError.message);
-    }
-
-    const { error } = await supabase
-      .from('sales')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      data: { id },
-      message: `Sales employee ${existingRow.full_name || ''} deleted successfully`.trim()
-    });
-  } catch (error) {
-    console.error('Error deleting Sales employee:', error);
-    res.status(500).json({ success: false, error: error.message });
+    if (!error.status) console.error('Error removing Sales employee:', error);
+    res.status(error.status || 500).json({ success: false, error: error.message });
   }
 });
 

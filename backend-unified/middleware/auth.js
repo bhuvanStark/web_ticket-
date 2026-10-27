@@ -39,8 +39,34 @@ export const verifyTokenFn = (token) => {
   }
 };
 
+// Staff removal (migration 040) — Technician, Back-Office and Sales sessions
+// are checked live on every request that accepts them, so a removed
+// employee is locked out on their very next call instead of when the token
+// expires. Returns null when the session is fine, else the 401 message.
+// Technician/Back-Office tokens issued before migration 040 carry no
+// tokenVersion claim: they count as version 0, so nobody has to log in
+// again, while a removal (is_active = false + token_version bump) still
+// rejects them. Sales keeps its existing strict comparison. Other roles
+// (customer, admin) return null — their checks are unchanged.
+const STAFF_SESSION_TABLES = { technician: 'technicians', back_office: 'back_office', sales: 'sales' };
+
+export async function checkStaffSession(decoded) {
+  const table = STAFF_SESSION_TABLES[decoded?.role];
+  if (!table) return null;
+  const { data, error } = await supabase
+    .from(table)
+    .select('is_active, token_version')
+    .eq('id', decoded.userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data || !data.is_active) return 'This account is inactive or no longer exists';
+  const claimed = decoded.role === 'sales' ? decoded.tokenVersion : (decoded.tokenVersion ?? 0);
+  if (data.token_version !== claimed) return 'Your session has been revoked — please log in again';
+  return null;
+}
+
 // Verify token (middleware)
-export const verifyToken = (req, res, next) => {
+export const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -54,6 +80,11 @@ export const verifyToken = (req, res, next) => {
 
     const token = authHeader.substring(7);
     const decoded = verifyTokenFn(token);
+
+    const revoked = await checkStaffSession(decoded);
+    if (revoked) {
+      return res.status(401).json({ success: false, error: 'Unauthorized', message: revoked });
+    }
 
     req.user = decoded;
     req.userId = decoded.userId;
@@ -167,7 +198,7 @@ export const requireAdmin = async (req, res, next) => {
 };
 
 // Middleware to verify technician role
-export const requireTechnician = (req, res, next) => {
+export const requireTechnician = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -188,6 +219,11 @@ export const requireTechnician = (req, res, next) => {
         error: 'Forbidden',
         message: 'Technician access required'
       });
+    }
+
+    const revoked = await checkStaffSession(decoded);
+    if (revoked) {
+      return res.status(401).json({ success: false, error: 'Unauthorized', message: revoked });
     }
 
     req.user = decoded;
@@ -353,8 +389,8 @@ export const requirePermission = (module) => async (req, res, next) => {
 // same live is_active/token_version check requireAdmin now has — a
 // deactivated Sales employee's existing token was previously still able to
 // accept/act on leads (and immediately re-claim ones just reassigned away
-// from them) for up to 7 days. requireTechnician/requireBackOffice below
-// are deliberately left unchanged — out of scope for this fix.
+// from them) for up to 7 days. requireTechnician/requireBackOffice got the
+// same live check later, via checkStaffSession (staff removal, migration 040).
 export const requireSales = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -445,7 +481,7 @@ export const requireAdminOrSales = async (req, res, next) => {
   }
 };
 
-export const requireBackOffice = (req, res, next) => {
+export const requireBackOffice = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -468,6 +504,11 @@ export const requireBackOffice = (req, res, next) => {
       });
     }
 
+    const revoked = await checkStaffSession(decoded);
+    if (revoked) {
+      return res.status(401).json({ success: false, error: 'Unauthorized', message: revoked });
+    }
+
     req.user = decoded;
     next();
   } catch (error) {
@@ -487,7 +528,7 @@ export const requireBackOffice = (req, res, next) => {
 // included — Admin has its own separate, unrestricted attendance surface
 // (routes/adminAttendance.js) and must never gain a generic
 // check-in-as-employee action through this one.
-export const requireEmployee = (req, res, next) => {
+export const requireEmployee = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -508,6 +549,11 @@ export const requireEmployee = (req, res, next) => {
         error: 'Forbidden',
         message: 'Technician, Sales, or Back-Office access required'
       });
+    }
+
+    const revoked = await checkStaffSession(decoded);
+    if (revoked) {
+      return res.status(401).json({ success: false, error: 'Unauthorized', message: revoked });
     }
 
     req.user = decoded;

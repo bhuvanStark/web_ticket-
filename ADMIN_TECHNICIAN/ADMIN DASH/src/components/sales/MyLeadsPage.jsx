@@ -11,7 +11,7 @@
 // own fetch-on-mount, no global state.
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, LogOut, History as HistoryIcon, X, Plus, Pencil, ArrowRightCircle, CalendarClock, Hourglass } from 'lucide-react';
+import { LogOut, History as HistoryIcon, X, Plus, Pencil, ArrowRightCircle, CalendarClock, Hourglass } from 'lucide-react';
 import {
   fetchMine, releaseLead, createMyLead, updateMyLead, fetchMySummary, fetchViewAsSummary,
   fetchLead, fetchLeadHistory, subscribeToLeadEvents, fetchViewAsMine
@@ -21,6 +21,8 @@ import { useDuplicateAwareSave } from './useDuplicateAwareSave';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { PipelineSummaryBar } from './PipelineSummaryBar';
 import { LeadPagination } from './LeadPagination';
+import { LeadRowMenu } from './LeadRowMenu';
+import { SearchField, ToggleChip, FilterDivider, ListPanel } from './LeadFilterBar';
 import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
 import {
   STATUS_LABEL, STATUS_COLOR, CLOSED_STATUSES, PROPOSAL_STAGES, LEADS_PAGE_SIZE,
@@ -330,31 +332,42 @@ export const MyLeadsPage = () => {
         onSelect={setStageFilter}
       />
 
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company, phone, contact or Ref ID…" style={{ paddingLeft: '36px' }} className="form-input text-xs" />
+      <ListPanel className="overflow-hidden">
+        <div className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center gap-2.5 bg-[#FCFCFD] border-b border-[#E4E7EC]">
+          <SearchField value={search} onChange={setSearch} className="w-full md:w-80" />
+          <FilterDivider />
+          <div className="sales-scroll-x flex items-center gap-2 overflow-x-auto">
+            <ToggleChip
+              active={stageFilter === 'due'}
+              onClick={() => setStageFilter((f) => (f === 'due' ? null : 'due'))}
+              icon={CalendarClock}
+              label="Due Today"
+              count={dueToday}
+              countTone="bg-[#B54708] text-white"
+              activeTone="border-[#B54708] bg-[#FFFAEB] text-[#B54708]"
+            />
+            {stageFilter && stageFilter !== 'due' && (
+              <button onClick={() => setStageFilter(null)} className="shrink-0 whitespace-nowrap inline-flex items-center gap-1 rounded-full bg-[#EFF5FC] px-3 py-1.5 text-[11px] font-bold text-[#004898] hover:bg-[#DCEBFA]">
+                {stageFilter === 'closed' ? 'Won / Lost / Dead' : STATUS_LABEL[stageFilter]} <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <div className="md:ml-auto flex items-center justify-between gap-3 text-xs">
+            <span className="text-[#667085]">
+              {list && <><strong className="text-[#172033]">{total}</strong> {stageFilter ? 'matching' : 'open'} lead{total === 1 ? '' : 's'}</>}
+            </span>
+            {(stageFilter || search) && (
+              <button onClick={() => { setStageFilter(null); setSearch(''); }} className="inline-flex items-center gap-1 font-bold text-[#004898] hover:underline">
+                <X className="w-3.5 h-3.5" /> Show open leads
+              </button>
+            )}
+          </div>
         </div>
-        <button
-          onClick={() => setStageFilter((f) => (f === 'due' ? null : 'due'))}
-          aria-pressed={stageFilter === 'due'}
-          className={`px-3 py-2 text-xs font-bold rounded-lg border inline-flex items-center gap-1.5 ${stageFilter === 'due' ? 'border-[#B54708] bg-[#FFFAEB] text-[#B54708]' : 'border-[#E4E7EC] bg-white text-[#344054] hover:bg-[#F8FAFC]'}`}
-        >
-          <CalendarClock className="w-3.5 h-3.5" /> Due Today
-          <span className={`rounded-full px-1.5 text-[10px] ${dueToday ? 'bg-[#B54708] text-white' : 'bg-[#F2F4F7] text-[#667085]'}`}>{dueToday}</span>
-        </button>
-        {stageFilter && (
-          <button onClick={() => setStageFilter(null)} className="inline-flex items-center gap-1 rounded-full bg-[#EFF5FC] px-3 py-1 text-[11px] font-bold text-[#004898] hover:bg-[#DCEBFA]">
-            {stageFilter === 'closed' ? 'Won / Lost / Dead' : stageFilter === 'due' ? 'Due Today' : STATUS_LABEL[stageFilter]} <X className="w-3 h-3" /> Show open leads
-          </button>
-        )}
-      </div>
 
       {!list ? (
         <div className="text-center text-sm text-[#667085] py-12">Loading…</div>
       ) : (
-        <>
-        <div className="card overflow-hidden border border-[#E4E7EC] shadow-xs divide-y divide-[#F2F4F7]">
+        <div className="divide-y divide-[#F2F4F7]">
           {rows.length === 0 ? (
             <div className="p-8 text-center text-sm text-[#667085]">
               {query ? 'No leads match your search.'
@@ -392,30 +405,36 @@ export const MyLeadsPage = () => {
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[l.status]} w-[76px] text-center`}>{STATUS_LABEL[l.status]}</span>
                   <LeadTimerBattery lead={l} />
                 </div>
-                <div className="flex items-center gap-2 shrink-0 md:justify-end md:w-[230px]">
-                  {!isViewingAsSales && (
-                    <button
-                      onClick={() => setStatusLead(l)}
-                      disabled={locked}
-                      title={locked ? lockReason : 'Change status'}
-                      className="flex-1 md:flex-none justify-center px-2.5 py-2 md:py-1.5 rounded-lg bg-[#004898] hover:bg-[#00346E] text-white text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                    ><ArrowRightCircle className="w-3.5 h-3.5" /> Change Status</button>
-                  )}
-                  {!isViewingAsSales && (
-                    <button onClick={() => setFormModal({ lead: l })} disabled={locked} title={locked ? lockReason : 'Edit lead'} className={`${iconBtn} hover:bg-[#F8FAFC] text-[#172033]`}><Pencil className="w-4 h-4" /></button>
-                  )}
-                  <button onClick={() => setDetailLead(l)} title="Details, follow-ups, remarks & history" className={`${iconBtn} hover:bg-[#F8FAFC] text-[#172033]`}><HistoryIcon className="w-4 h-4" /></button>
-                  {!isViewingAsSales && (
-                    <button onClick={() => setReleaseTarget(l)} disabled={locked} title={locked ? lockReason : 'Release back to Admin'} className={`${iconBtn} hover:bg-[#FEF3F2] text-[#D92D20] hover:border-[#FDA29B]`}><LogOut className="w-4 h-4" /></button>
+                <div className="flex items-center gap-2 shrink-0 md:justify-end md:w-[180px]">
+                  {isViewingAsSales ? (
+                    <button onClick={() => setDetailLead(l)} title="Details, follow-ups, remarks & history" className={`${iconBtn} hover:bg-[#F8FAFC] text-[#172033]`}><HistoryIcon className="w-4 h-4" /></button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setStatusLead(l)}
+                        disabled={locked}
+                        title={locked ? lockReason : 'Change status'}
+                        className="flex-1 md:flex-none justify-center px-2.5 py-2 md:py-1.5 rounded-lg bg-[#004898] hover:bg-[#00346E] text-white text-[11px] font-bold inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                      ><ArrowRightCircle className="w-3.5 h-3.5" /> Change Status</button>
+                      <LeadRowMenu
+                        label={`More actions for ${l.company}`}
+                        items={[
+                          { label: 'Details & history', icon: HistoryIcon, onClick: () => setDetailLead(l) },
+                          { label: 'Edit lead', icon: Pencil, onClick: () => setFormModal({ lead: l }), disabled: locked, reason: lockReason },
+                          { label: 'Release to Admin', icon: LogOut, onClick: () => setReleaseTarget(l), disabled: locked, reason: lockReason, danger: true, divider: true }
+                        ]}
+                      />
+                    </>
                   )}
                 </div>
               </div>
             );
           })}
         </div>
-        <LeadPagination page={page} totalPages={pageCount(total)} count={total} onChange={setPage} />
-        </>
       )}
+      </ListPanel>
+
+      {list && <LeadPagination page={page} totalPages={pageCount(total)} count={total} onChange={setPage} />}
 
       {releaseTarget && (
         <ReleaseModal lead={releaseTarget} onClose={() => setReleaseTarget(null)} onDone={() => { setReleaseTarget(null); load(); }} showToast={showToast} />

@@ -9,18 +9,17 @@
 // Branch filter as the Technician page, per the plan.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, Plus, Pencil, Trash2, UserX, AlertTriangle, TrendingUp, CheckCircle, Eye, Phone, MapPin } from 'lucide-react';
+import { Search, Plus, Pencil, UserX, TrendingUp, CheckCircle, Eye, Phone, MapPin } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { EMPLOYEE_LOCATIONS } from '../../utils/employeeLocations';
 import { validateForm, required, email as emailRule, phone as phoneRule, minLength } from '../../utils/validation';
-import {
-  fetchSalesInApi, createSalesInApi, updateSalesInApi, deleteSalesInApi, deactivateSalesInApi
-} from '../../services/salesApiService';
+import { fetchSalesInApi, createSalesInApi, updateSalesInApi } from '../../services/salesApiService';
+import { RemoveStaffDialog } from '../common/RemoveStaffDialog';
 // TaskPro Sales Module V1 — Leads tab, additive alongside the roster tab below.
 import { AdminLeadsTab } from './AdminLeadsTab';
 import { AdminLeadsAnalyticsTab } from './AdminLeadsAnalyticsTab';
 import { AdminDailyReportsTab } from './AdminDailyReportsTab';
-import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
+import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary } from './SalesModal';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -151,9 +150,8 @@ const SalesRosterTab = () => {
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('');
   const [modal, setModal] = useState(null); // { mode: 'create' | 'edit', employee? }
-  const [pendingDelete, setPendingDelete] = useState(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deactivatingId, setDeactivatingId] = useState(null);
+  // Remove (or, with no work history, Delete) — see RemoveStaffDialog.
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -174,38 +172,6 @@ const SalesRosterTab = () => {
     (!branchFilter || e.location === branchFilter) &&
     ((e.full_name || '').toLowerCase().includes(search.toLowerCase()) || (e.email || '').toLowerCase().includes(search.toLowerCase()))
   );
-
-  const confirmDelete = async () => {
-    if (!pendingDelete || isDeleting) return;
-    setIsDeleting(true);
-    try {
-      await deleteSalesInApi(pendingDelete.id);
-      showToast?.(`${pendingDelete.full_name} and their attendance history were deleted.`, 'success');
-      setPendingDelete(null);
-      load();
-    } catch (err) {
-      showToast?.(err.message || 'Delete failed', 'error');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  // Safe alternative to Delete: keeps the employee row and all of their
-  // attendance history, just removes them from the active roster.
-  const handleDeactivate = async (employee) => {
-    if (deactivatingId) return;
-    if (!window.confirm(`Deactivate ${employee.full_name}? They will be removed from the active roster, but their record and attendance history are kept.`)) return;
-    setDeactivatingId(employee.id);
-    try {
-      await deactivateSalesInApi(employee.id);
-      showToast?.(`${employee.full_name} deactivated.`, 'success');
-      load();
-    } catch (err) {
-      showToast?.(err.message || 'Deactivate failed', 'error');
-    } finally {
-      setDeactivatingId(null);
-    }
-  };
 
   if (loading) return <TableSkeleton rows={4} />;
 
@@ -275,11 +241,8 @@ const SalesRosterTab = () => {
               <button onClick={() => setModal({ mode: 'edit', employee: e })} aria-label="Edit" className={`${canViewAs ? '' : 'flex-1 '}p-2 rounded-lg bg-white text-[#172033] border border-[#E4E7EC] inline-flex items-center justify-center`}>
                 <Pencil className="w-4 h-4" />
               </button>
-              <button onClick={() => handleDeactivate(e)} disabled={deactivatingId === e.id} aria-label="Deactivate" className="p-2 rounded-lg bg-white text-[#475467] border border-[#E4E7EC] inline-flex items-center justify-center disabled:opacity-60">
+              <button onClick={() => setPendingRemove(e)} aria-label="Remove" className="p-2 rounded-lg bg-white text-[#D92D20] border border-[#E4E7EC] inline-flex items-center justify-center">
                 <UserX className="w-4 h-4" />
-              </button>
-              <button onClick={() => setPendingDelete(e)} aria-label="Delete permanently" className="p-2 rounded-lg bg-white text-[#D92D20] border border-[#E4E7EC] inline-flex items-center justify-center">
-                <Trash2 className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -328,19 +291,11 @@ const SalesRosterTab = () => {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDeactivate(e)}
-                          disabled={deactivatingId === e.id}
-                          className="p-1.5 rounded-lg bg-white hover:bg-[#F8FAFC] text-[#475467] border border-[#E4E7EC] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center disabled:opacity-60"
-                          title="Deactivate (keeps record and attendance history)"
+                          onClick={() => setPendingRemove(e)}
+                          className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
+                          title="Remove employee"
                         >
                           <UserX className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setPendingDelete(e)}
-                          className="p-1.5 rounded-lg bg-white hover:bg-[#FEF3F2] text-[#D92D20] border border-[#E4E7EC] hover:border-[#FDA29B] transition-all cursor-pointer shadow-2xs inline-flex items-center justify-center"
-                          title="Delete permanently"
-                        >
-                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -362,28 +317,14 @@ const SalesRosterTab = () => {
         />
       )}
 
-      {pendingDelete && (
-        <SalesModal onClose={isDeleting ? undefined : () => setPendingDelete(null)}>
-            <ModalBody>
-            <div className="flex items-start gap-3">
-              <div className="shrink-0 w-10 h-10 rounded-full bg-[#FEF3F2] flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-[#D92D20]" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-[#172033]">Delete Sales employee</h3>
-                <p className="mt-1 text-sm text-[#667085]">
-                  This will permanently remove <span className="font-semibold text-[#172033]">{pendingDelete.full_name}</span> <span className="font-semibold text-[#D92D20]">and permanently delete all of their attendance history</span>. This cannot be undone. To keep their record and history, use Deactivate instead.
-                </p>
-              </div>
-            </div>
-            </ModalBody>
-            <ModalFooter>
-              <button onClick={() => setPendingDelete(null)} disabled={isDeleting} className={btnSecondary}>Cancel</button>
-              <button onClick={confirmDelete} disabled={isDeleting} className={btnDanger}>
-                {isDeleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </ModalFooter>
-        </SalesModal>
+      {pendingRemove && (
+        <RemoveStaffDialog
+          role="sales"
+          employee={pendingRemove}
+          showToast={showToast}
+          onClose={() => setPendingRemove(null)}
+          onDone={() => { setPendingRemove(null); load(); }}
+        />
       )}
     </div>
   );
