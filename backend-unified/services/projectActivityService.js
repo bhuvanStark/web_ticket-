@@ -13,11 +13,13 @@ import { PostgresQueryBuilder } from '../config/databaseClient.js';
 export const listActivitiesForTechnician = async (technicianId) => {
   const { data, error } = await supabase
     .from('project_activities')
-    .select('*, project(id, name, customer, location)')
+    .select('*, project(id, name, customer, location, archived_at)')
     .eq('technician_id', technicianId)
     .order('scheduled_date', { ascending: false });
   if (error) throw new Error(`Failed to list activities: ${error.message}`);
-  return data || [];
+  // Work on a project an admin has archived (deleted with history) is
+  // hidden from the technician too.
+  return (data || []).filter((a) => !a.project?.archived_at);
 };
 
 // scope: 'active' (Assigned/Accepted, shown on the project card),
@@ -27,7 +29,11 @@ export const listActivitiesForProject = async (projectId, { scope = 'all' } = {}
     .from('project_activities')
     .select('*, technician(id, full_name)')
     .eq('project_id', projectId)
-    .order('scheduled_date', { ascending: false });
+    // Newest first; same-day entries by scheduled time (then insert order)
+    // so their order is stable instead of whatever Postgres returns.
+    .order('scheduled_date', { ascending: false })
+    .order('scheduled_time', { ascending: false })
+    .order('created_at', { ascending: false });
 
   if (scope === 'active') query = query.in('status', ['Assigned', 'Accepted']);
   if (scope === 'history') query = query.in('status', ['Completed', 'Cancelled']);

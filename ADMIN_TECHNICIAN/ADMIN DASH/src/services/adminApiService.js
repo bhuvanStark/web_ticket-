@@ -540,6 +540,12 @@ export async function createAdminCustomer(payload) {
   if (!res.ok) throw new Error('Failed to create customer');
   return await res.json();
 }
+// The signed-in admin's own module access: { isSuperAdmin, permissions }.
+export async function fetchMyAdminPermissionsInApi() {
+  const res = await authFetch(`${API_BASE_URL}/admin/me/permissions`, { headers: authHeaders() });
+  return readApiData(res, 'fetch your permissions');
+}
+
 // Admin Roles page — "Add Admin" / "Admin Roster".
 export async function fetchAdminAdmins() {
   try {

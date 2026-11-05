@@ -18,7 +18,7 @@
 // applies.
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { LogIn, LogOut, MapPin, Clock, ShieldAlert, History, CalendarOff } from 'lucide-react';
+import { LogIn, LogOut, MapPin, Clock, ShieldAlert, History, CalendarOff, CalendarMinus, UserCheck } from 'lucide-react';
 import { fetchAttendanceHistoryInApi } from '../../services/attendanceApiService';
 
 const LOCATION_LABELS = {
@@ -158,6 +158,9 @@ export const AttendanceBanner = () => {
   };
 
   const status = myAttendanceToday?.status;
+  // Half-day leave with a check-in for the other half.
+  const halfDayNote = myAttendanceToday?.half_day && (status === 'checked_in' || status === 'checked_out')
+    ? ' · Half-day leave' : '';
 
   return (
     <div className="bg-white rounded-2xl p-5 border border-[#E4E7EC] shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -180,9 +183,30 @@ export const AttendanceBanner = () => {
               </p>
               <p className="text-xs text-[#667085] mt-0.5">An admin has marked today as an emergency holiday for you.</p>
             </>
+          ) : status === 'leave' ? (
+            <>
+              <p className="text-sm font-extrabold text-[#172033] flex items-center gap-1.5">
+                <CalendarMinus className="w-4 h-4 text-[#6941C6]" /> On leave today
+              </p>
+              <p className="text-xs text-[#667085] mt-0.5">Cancel the leave from My Attendance if you need to check in.</p>
+            </>
+          ) : status === 'half_day_leave' ? (
+            <>
+              <p className="text-sm font-extrabold text-[#172033] flex items-center gap-1.5">
+                <CalendarMinus className="w-4 h-4 text-[#6941C6]" /> Half-day leave today
+              </p>
+              <p className="text-xs text-[#667085] mt-0.5">Check in when you start the other half of your day.</p>
+            </>
+          ) : status === 'admin_present' ? (
+            <>
+              <p className="text-sm font-extrabold text-[#172033] flex items-center gap-1.5">
+                <UserCheck className="w-4 h-4 text-[#027A48]" /> Marked present today
+              </p>
+              <p className="text-xs text-[#667085] mt-0.5">An admin has marked you present for today.</p>
+            </>
           ) : status === 'checked_in' ? (
             <>
-              <p className="text-sm font-extrabold text-[#172033]">In at {fmtTime(myAttendanceToday.check_in_time)}</p>
+              <p className="text-sm font-extrabold text-[#172033]">In at {fmtTime(myAttendanceToday.check_in_time)}{halfDayNote}</p>
               <p className="text-xs text-[#667085] mt-0.5 flex items-center gap-1">
                 <MapPin className="w-3 h-3" /> {LOCATION_LABELS[myAttendanceToday.location_status] || 'Location unavailable'}
               </p>
@@ -193,7 +217,7 @@ export const AttendanceBanner = () => {
                 Checked out at {fmtTime(myAttendanceToday.check_out_time)}
               </p>
               <p className="text-xs text-[#667085] mt-0.5">
-                In at {fmtTime(myAttendanceToday.check_in_time)} &middot; {fmtDuration(myAttendanceToday.duration_minutes)} today
+                In at {fmtTime(myAttendanceToday.check_in_time)} &middot; {fmtDuration(myAttendanceToday.duration_minutes)} today{halfDayNote}
               </p>
             </>
           ) : (
@@ -213,7 +237,7 @@ export const AttendanceBanner = () => {
         >
           <LogOut className="w-4 h-4" /> {isWorking ? 'Checking out…' : 'Check Out'}
         </button>
-      ) : !status ? (
+      ) : !status || status === 'half_day_leave' ? (
         <button
           onClick={handleCheckIn}
           disabled={isWorking}

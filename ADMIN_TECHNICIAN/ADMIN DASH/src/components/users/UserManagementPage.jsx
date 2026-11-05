@@ -27,12 +27,15 @@ import {
 // module set a Super Admin can toggle per admin. Keys must match
 // backend-unified/routes/adminRoutes.js's ADMIN_MODULES exactly.
 const MODULE_LABELS = {
+  approvals: 'Approvals & Alerts',
   requests: 'Service Requests',
   projects: 'Projects',
   customers: 'Customers',
   rooms: 'Rooms & Equipment',
   technicians: 'Technicians',
   sales: 'Sales',
+  back_office: 'Back-Office',
+  attendance: 'Attendance',
   installations: 'Onsite Installations',
   inventory: 'Spare Parts Stock',
   demos: 'Demo Management',

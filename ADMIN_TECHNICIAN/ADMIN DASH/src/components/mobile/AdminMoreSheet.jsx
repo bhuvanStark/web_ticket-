@@ -19,7 +19,7 @@ import {
 // ToastContainer's z-50 toast — a toast firing while this sheet is open is
 // still readable underneath rather than being hidden by it.
 export const AdminMoreSheet = ({ isOpen, onClose }) => {
-  const { activePage, setActivePage, enabledModules, rolePermissions, currentUser, handleLogout } = useApp();
+  const { activePage, setActivePage, enabledModules, rolePermissions, currentUser, handleLogout, canAccessAdminPage } = useApp();
 
   if (!isOpen) return null;
 
@@ -27,7 +27,8 @@ export const AdminMoreSheet = ({ isOpen, onClose }) => {
     adminNavItems.filter((item) => !adminPrimaryNavIds.includes(item.id)),
     enabledModules,
     rolePermissions,
-    currentUser
+    currentUser,
+    canAccessAdminPage
   );
 
   const goTo = (id) => {

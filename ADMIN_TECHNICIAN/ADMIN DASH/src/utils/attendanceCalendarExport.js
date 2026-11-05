@@ -2,7 +2,7 @@ import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
 
 // Calendar-style attendance export for multi-day ranges (Week / Month /
 // Custom): one row per employee, one column per day, each cell just the
-// day's status as a colored code, plus Present / Absent / Other totals.
+// day's status as a colored code, plus Present / Absent / Leave / Holiday / Other totals.
 // Takes the same rows the detailed export uses (the range export endpoint's
 // one-row-per-employee-per-day shape, see attendanceService.listForAdminRange)
 // and only reshapes them — no attendance logic lives here. The detailed
@@ -11,30 +11,60 @@ import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // bucket -> cell. Came in (even if not checked out yet) counts as Present;
-// no record that day counts as Absent, same as the page's Absent card.
+// no record that day counts as Absent, same as the page's Absent card —
+// except on the employee's Sunday/holiday, which is H.
 const CELL = {
   checked_out: 'P',
   admin_present: 'P',
   checked_in: 'P',
   absent: 'A',
   unmarked: 'A',
-  emergency_holiday: 'EH'
+  emergency_holiday: 'EH',
+  leave: 'L',
+  half_day_leave: 'HL',
+  holiday: 'H'
 };
+// A half-day leave with a check-in for the other half is still HL.
+const cellFor = (r) => (r.record?.half_day && (r.bucket === 'checked_in' || r.bucket === 'checked_out')
+  ? 'HL'
+  : CELL[r.bucket] || 'EH');
 const TONE = {
   P: { bg: '#DCFCE7', fg: '#166534' },
   A: { bg: '#FEE2E2', fg: '#B91C1C' },
+  H: { bg: '#E2E8F0', fg: '#334155' },
+  L: { bg: '#EDE9FE', fg: '#6D28D9' },
   other: { bg: '#DBEAFE', fg: '#1D4ED8' },
   none: { bg: '#F8FAFC', fg: '#98A2B3' }
 };
-const toneFor = (code) => (code === 'P' || code === 'A' ? TONE[code] : code ? TONE.other : TONE.none);
+const toneFor = (code) => {
+  if (code === 'P' || code === 'A' || code === 'H') return TONE[code];
+  if (code === 'L' || code === 'HL') return TONE.L;
+  return code ? TONE.other : TONE.none;
+};
 const NO_DATA = '–';
 
 const LEGEND = [
   { code: 'P', label: 'Present' },
   { code: 'A', label: 'Absent' },
+  { code: 'H', label: 'Holiday (Sunday / festival)' },
+  { code: 'L', label: 'Leave' },
+  { code: 'HL', label: 'Half-Day Leave' },
   { code: 'EH', label: 'Emergency Holiday' },
   { code: NO_DATA, label: 'No data for that day', none: true }
 ];
+
+// Per-employee totals over `days`. A half-day leave counts as half a leave
+// day; everything that isn't P/A/L/HL/H (e.g. EH) is Other.
+const totalsFor = (cells, days) => {
+  const codes = days.map((d) => cells[d.key]).filter(Boolean);
+  const count = (code) => codes.filter((c) => c === code).length;
+  const present = count('P');
+  const absent = count('A');
+  const holiday = count('H');
+  const leave = count('L') + count('HL') / 2;
+  const other = codes.length - present - absent - holiday - count('L') - count('HL');
+  return { present, absent, leave, holiday, other };
+};
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -56,7 +86,7 @@ const daysBetween = (start, end) => {
   return days;
 };
 
-// rows -> [{ name, cells: { dateKey: code }, present, absent, other }], by name.
+// rows -> [{ name, cells: { dateKey: code }, present, absent, leave, holiday, other }], by name.
 const buildMatrix = (rows, days) => {
   const inRange = new Set(days.map((d) => d.key));
   const people = new Map();
@@ -64,15 +94,10 @@ const buildMatrix = (rows, days) => {
     if (!r.employee || !inRange.has(r.date)) continue;
     const id = `${r.employee.employee_type}:${r.employee.id}`;
     if (!people.has(id)) people.set(id, { name: r.employee.full_name || '—', cells: {} });
-    people.get(id).cells[r.date] = CELL[r.bucket] || 'EH';
+    people.get(id).cells[r.date] = cellFor(r);
   }
   return [...people.values()]
-    .map((p) => {
-      const codes = Object.values(p.cells);
-      const present = codes.filter((c) => c === 'P').length;
-      const absent = codes.filter((c) => c === 'A').length;
-      return { ...p, present, absent, other: codes.length - present - absent };
-    })
+    .map((p) => ({ ...p, ...totalsFor(p.cells, days) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 };
 
@@ -108,16 +133,14 @@ const tableHtml = (people, days, { showTotals = true } = {}) => {
   const head = `<tr>
       <th class="name">Employee</th>
       ${days.map((d) => `<th class="day${d.isSunday ? ' sun' : ''}">${String(d.day).padStart(2, '0')}<br><span>${d.weekday.slice(0, 2)}</span></th>`).join('')}
-      ${showTotals ? '<th class="tot">P</th><th class="tot">A</th><th class="tot">Oth</th>' : ''}
+      ${showTotals ? '<th class="tot">P</th><th class="tot">A</th><th class="tot">L</th><th class="tot">H</th><th class="tot">Oth</th>' : ''}
     </tr>`;
   const body = people.map((p) => {
-    const present = days.filter((d) => p.cells[d.key] === 'P').length;
-    const absent = days.filter((d) => p.cells[d.key] === 'A').length;
-    const other = days.filter((d) => p.cells[d.key] && p.cells[d.key] !== 'P' && p.cells[d.key] !== 'A').length;
+    const t = totalsFor(p.cells, days);
     return `<tr>
       <td class="name">${esc(p.name)}</td>
       ${days.map((d) => { const code = p.cells[d.key]; return `<td class="c" style="${cellStyle(code)}">${code || NO_DATA}</td>`; }).join('')}
-      ${showTotals ? `<td class="tot p">${present}</td><td class="tot a">${absent}</td><td class="tot o">${other}</td>` : ''}
+      ${showTotals ? `<td class="tot p">${t.present}</td><td class="tot a">${t.absent}</td><td class="tot l">${t.leave}</td><td class="tot h">${t.holiday}</td><td class="tot o">${t.other}</td>` : ''}
     </tr>`;
   }).join('');
   return `<table class="grid"><thead>${head}</thead><tbody>${body}</tbody></table>`;
@@ -139,6 +162,7 @@ const GRID_CSS = `
   .grid td.c { font-weight: 700; }
   .grid .tot { width: 26px; font-weight: 800; background: #F8FAFC; }
   .grid td.p { color: #166534; } .grid td.a { color: #B91C1C; } .grid td.o { color: #1D4ED8; }
+  .grid td.l { color: #6D28D9; } .grid td.h { color: #334155; }
   .grid tr { page-break-inside: avoid; }
   .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 10px; color: #475569; margin: 0 0 10px; }
   .lg { display: inline-flex; align-items: center; gap: 5px; }
@@ -228,14 +252,16 @@ function exportDoc(people, days, start, end, filename) {
 // Same HTML-table .xls the detailed export produces; Excel keeps the inline
 // cell colors. One wide sheet for the whole range.
 function exportExcel(people, days, start, end, filename) {
-  const span = days.length + 4;
+  const span = days.length + 6;
   const th = (v, extra = '') => `<th style="background:#F1F5F9;color:#334155;border:1px solid #CBD5E1;font-weight:bold;text-align:center;${extra}">${v}</th>`;
-  const head = `<tr>${th('Employee', 'text-align:left;width:180px;')}${days.map((d) => th(`${String(d.day).padStart(2, '0')} ${d.weekday}`, d.isSunday ? 'background:#E2E8F0;' : '')).join('')}${th('Present')}${th('Absent')}${th('Other')}</tr>`;
+  const head = `<tr>${th('Employee', 'text-align:left;width:180px;')}${days.map((d) => th(`${String(d.day).padStart(2, '0')} ${d.weekday}`, d.isSunday ? 'background:#E2E8F0;' : '')).join('')}${th('Present')}${th('Absent')}${th('Leave')}${th('Holiday')}${th('Other')}</tr>`;
   const body = people.map((p) => `<tr>
       <td style="border:1px solid #CBD5E1;font-weight:bold;">${esc(p.name)}</td>
       ${days.map((d) => { const code = p.cells[d.key]; return `<td style="border:1px solid #CBD5E1;text-align:center;font-weight:bold;${cellStyle(code)}">${code || NO_DATA}</td>`; }).join('')}
       <td style="border:1px solid #CBD5E1;text-align:center;font-weight:bold;color:#166534;">${p.present}</td>
       <td style="border:1px solid #CBD5E1;text-align:center;font-weight:bold;color:#B91C1C;">${p.absent}</td>
+      <td style="border:1px solid #CBD5E1;text-align:center;font-weight:bold;color:#6D28D9;">${p.leave}</td>
+      <td style="border:1px solid #CBD5E1;text-align:center;font-weight:bold;color:#334155;">${p.holiday}</td>
       <td style="border:1px solid #CBD5E1;text-align:center;font-weight:bold;color:#1D4ED8;">${p.other}</td>
     </tr>`).join('');
   const html = `
@@ -255,8 +281,8 @@ function exportExcel(people, days, start, end, filename) {
 function exportCsv(people, days, filename) {
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const lines = [
-    ['Employee', ...days.map((d) => `${d.key} ${d.weekday}`), 'Present', 'Absent', 'Other'].map(q).join(','),
-    ...people.map((p) => [p.name, ...days.map((d) => p.cells[d.key] || ''), p.present, p.absent, p.other].map(q).join(','))
+    ['Employee', ...days.map((d) => `${d.key} ${d.weekday}`), 'Present', 'Absent', 'Leave', 'Holiday', 'Other'].map(q).join(','),
+    ...people.map((p) => [p.name, ...days.map((d) => p.cells[d.key] || ''), p.present, p.absent, p.leave, p.holiday, p.other].map(q).join(','))
   ];
   downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' }), `${filename}.csv`);
 }

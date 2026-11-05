@@ -2,7 +2,7 @@ import { pool } from './database.js';
 
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const TABLES = new Set([
-  'admin_permissions', 'admins', 'attendance_records', 'back_office', 'customer_preferences', 'customers', 'equipment', 'lead_history',
+  'admin_permissions', 'admins', 'attendance_records', 'back_office', 'customer_preferences', 'customers', 'equipment', 'holidays', 'lead_history',
   'leads', 'locations',
   'notifications', 'password_resets', 'project_activities', 'projects', 'rooms', 'sales',
   'service_report_signatures', 'service_reports', 'service_requests', 'service_request_technicians',

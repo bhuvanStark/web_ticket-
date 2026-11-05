@@ -24,7 +24,7 @@ const NAV_ITEMS_BY_ROLE = {
 };
 
 export const BottomNav = () => {
-  const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser, isViewingAsSales } = useApp();
+  const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser, isViewingAsSales, canAccessAdminPage } = useApp();
   const isMobile = useIsMobile();
   const { total: techOpenJobs } = useTechWorkload();
 
@@ -38,7 +38,7 @@ export const BottomNav = () => {
   if (!isMobile) return null;
 
   if (role === 'admin') {
-    const filteredAdminItems = filterAdminNavItems(adminNavItems, enabledModules, rolePermissions, currentUser);
+    const filteredAdminItems = filterAdminNavItems(adminNavItems, enabledModules, rolePermissions, currentUser, canAccessAdminPage);
     const primaryItems = adminPrimaryNavIds
       .map((id) => filteredAdminItems.find((item) => item.id === id))
       .filter(Boolean);

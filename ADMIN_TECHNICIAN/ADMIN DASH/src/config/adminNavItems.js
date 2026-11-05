@@ -64,7 +64,9 @@ export const adminProfileNavItem = { id: 'profile', label: 'My Profile', icon: U
 // (Sidebar.jsx lines ~135-147): first the enabledModules toggle, then the
 // per-sub-role rolePermissions map (only when that role's map actually
 // declares the key — an absent key means "not gated", same as desktop).
-export const filterAdminNavItems = (items, enabledModules, rolePermissions, currentUser) =>
+// `canAccessAdminPage` (from AppContext) then applies the admin's own module
+// permissions, exactly like Sidebar.jsx.
+export const filterAdminNavItems = (items, enabledModules, rolePermissions, currentUser, canAccessAdminPage) =>
   items.filter((item) => {
     if (item.module && !(enabledModules && enabledModules[item.module])) return false;
 
@@ -73,5 +75,6 @@ export const filterAdminNavItems = (items, enabledModules, rolePermissions, curr
       if (userPerms && item.id in userPerms && !userPerms[item.id]) return false;
     }
 
+    if (canAccessAdminPage && !canAccessAdminPage(item.id)) return false;
     return true;
   });

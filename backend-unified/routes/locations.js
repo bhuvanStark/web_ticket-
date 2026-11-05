@@ -1,10 +1,16 @@
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
 import { validateLocation, validateUUID } from '../middleware/validation.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRoles, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+// Every customer's locations are visible to admins/technicians only; a
+// customer session is limited to the scoped list below. Locations are part
+// of customer management, so writes need the admin 'customers' module.
+const staffOnly = requireRoles(['admin', 'technician']);
+const canManageLocations = requirePermission('customers');
 
 // GET all locations (shared across all customers — admin/technician only).
 // A customer session is scoped to its own locations so the AV/EPABX ticket
@@ -29,7 +35,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET location by ID with rooms and equipment
-router.get('/:id', async (req, res) => {
+router.get('/:id', staffOnly, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -56,7 +62,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // CREATE new location
-router.post('/', async (req, res) => {
+router.post('/', canManageLocations, async (req, res) => {
   try {
     const { name, address, city, postal_code, country, customer_id } = req.body;
 
@@ -114,7 +120,7 @@ router.post('/', async (req, res) => {
 });
 
 // UPDATE location
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', canManageLocations, async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = {
@@ -141,7 +147,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 // DELETE location
-router.delete('/:id', validateUUID, async (req, res) => {
+router.delete('/:id', canManageLocations, validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -194,7 +200,7 @@ router.delete('/:id', validateUUID, async (req, res) => {
 });
 
 // GET location with room count and stats
-router.get('/:id/stats', validateUUID, async (req, res) => {
+router.get('/:id/stats', staffOnly, validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -236,7 +242,7 @@ router.get('/:id/stats', validateUUID, async (req, res) => {
 });
 
 // SEARCH locations
-router.get('/search/query', async (req, res) => {
+router.get('/search/query', staffOnly, async (req, res) => {
   try {
     const { q, limit = 10 } = req.query;
 

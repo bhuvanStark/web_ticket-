@@ -35,6 +35,37 @@ async function ensureCustomerOwnsRequest(req, res, requestId) {
   return true;
 }
 
+// Write access to one ticket: an admin always; a customer only for its own
+// ticket; a technician only for a ticket they are assigned to (primary or
+// additional). Anyone else, or a ticket outside their scope, gets the same
+// 404 as a missing ticket. Returns false after responding.
+async function ensureCanActOnRequest(req, res, requestId) {
+  const role = req.user?.role;
+  if (role === 'admin') return true;
+  if (role === 'customer') return ensureCustomerOwnsRequest(req, res, requestId);
+  if (role === 'technician') {
+    const { data: request, error } = await supabase
+      .from('service_requests')
+      .select('id, assigned_technician_id')
+      .eq('id', requestId)
+      .maybeSingle();
+    if (error) throw error;
+    if (request?.assigned_technician_id === req.userId) return true;
+    if (request) {
+      const { data: secondary, error: secondaryError } = await supabase
+        .from('service_request_technicians')
+        .select('id')
+        .eq('service_request_id', requestId)
+        .eq('technician_id', req.userId)
+        .maybeSingle();
+      if (secondaryError) throw secondaryError;
+      if (secondary) return true;
+    }
+  }
+  res.status(404).json({ success: false, error: 'Service request not found' });
+  return false;
+}
+
 // GET all service requests (for admin) or filtered by customer
 router.get('/', async (req, res) => {
   try {
@@ -222,7 +253,9 @@ router.patch('/:id', requireAdmin, requirePermission('requests'), validateUUID, 
 
 // Assign an active technician to a real service request. The admin also picks
 // the service mode here — On-site or Remote — which is stored on service_type.
-router.post('/:id/assign', validateUUID, async (req, res) => {
+// Assigning is an admin action (AssignTechModal); customers and technicians
+// can never (re)assign a ticket.
+router.post('/:id/assign', requireAdmin, validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
     const technicianId = req.body.technician_id || req.body.techDbId;
@@ -447,6 +480,8 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Status is required' });
     }
 
+    if (!(await ensureCanActOnRequest(req, res, id))) return;
+
     // Get current request first
     const { data: currentRequest } = await supabase
       .from('service_requests')
@@ -625,6 +660,8 @@ router.post('/:id/updates', async (req, res) => {
     if (!notes) {
       return res.status(400).json({ success: false, error: 'Notes are required' });
     }
+
+    if (!(await ensureCanActOnRequest(req, res, id))) return;
 
     const { data, error } = await supabase
       .from('service_updates')

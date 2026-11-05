@@ -63,9 +63,10 @@ import { AssignProjectTeamModal } from './components/projects/AssignProjectTeamM
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
 import { ToastContainer } from './components/common/ToastContainer';
+import { EmptyState } from './components/common/EmptyState';
 
 const MainLayout = () => {
-  const { isLoggedIn, isRestoringSession, role, baseRole, activePage } = useApp();
+  const { isLoggedIn, isRestoringSession, role, baseRole, activePage, canAccessAdminPage } = useApp();
   const isMobile = useIsMobile();
 
   // The password-reset link emailed to an admin lands here. Checked before the
@@ -108,6 +109,17 @@ const MainLayout = () => {
 
   const renderActivePage = () => {
     if (role === 'admin') {
+      // The nav already hides these; this also covers a page restored from
+      // the URL/history or a stale saved page after permissions changed.
+      if (!canAccessAdminPage(activePage)) {
+        return (
+          <EmptyState
+            title="No Access"
+            subtitle="You don't have permission to open this page. Ask a Super Admin if you need access."
+            icon="inbox"
+          />
+        );
+      }
       switch (activePage) {
         case 'dashboard':
           return <AdminDashboard />;

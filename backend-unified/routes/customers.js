@@ -1,19 +1,32 @@
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
 import { validateCustomer, validateUUID } from '../middleware/validation.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRoles, requirePermission } from '../middleware/auth.js';
 import { createCustomerWithLocation } from '../services/customerService.js';
 
 const router = express.Router();
 router.use(requireAuth);
 
+// Access model: admins and technicians read every customer; a customer
+// session reads only its own record (other ids look missing); creating,
+// editing and deleting customers needs an admin with the 'customers' module.
+const ownCustomerOnly = (req, res, next) => {
+  if (req.user?.role === 'customer' && req.params.id !== req.userId) {
+    return res.status(404).json({ success: false, error: 'Customer not found' });
+  }
+  next();
+};
+const canManageCustomers = requirePermission('customers');
+
 // GET all customers
 router.get('/', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('customers')
-      .select('*, locations (id, name, state, area)')
-      .order('company_name', { ascending: true });
+      .select('*, locations (id, name, state, area)');
+    if (req.user?.role === 'customer') query = query.eq('id', req.userId);
+
+    const { data, error } = await query.order('company_name', { ascending: true });
 
     if (error) throw error;
 
@@ -25,7 +38,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET customer by ID with service requests
-router.get('/:id', validateUUID, async (req, res) => {
+router.get('/:id', validateUUID, ownCustomerOnly, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -59,7 +72,7 @@ router.get('/:id', validateUUID, async (req, res) => {
 // CREATE new customer — atomically creates the customer, its one fixed
 // service location (Facility Location + Area), and that location's four
 // canonical AV rooms. See services/customerService.js#createCustomerWithLocation.
-router.post('/', validateCustomer, async (req, res) => {
+router.post('/', canManageCustomers, validateCustomer, async (req, res) => {
   try {
     const {
       name, company_name, email, phone, address, city,
@@ -102,7 +115,7 @@ router.post('/', validateCustomer, async (req, res) => {
 });
 
 // UPDATE customer
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', canManageCustomers, async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = {
@@ -129,7 +142,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 // DELETE customer
-router.delete('/:id', validateUUID, async (req, res) => {
+router.delete('/:id', canManageCustomers, validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -198,7 +211,7 @@ router.delete('/:id', validateUUID, async (req, res) => {
 });
 
 // GET customer statistics
-router.get('/:id/stats', validateUUID, async (req, res) => {
+router.get('/:id/stats', validateUUID, ownCustomerOnly, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -250,7 +263,7 @@ router.get('/:id/stats', validateUUID, async (req, res) => {
 });
 
 // GET customer profile
-router.get('/:id/profile', validateUUID, async (req, res) => {
+router.get('/:id/profile', validateUUID, ownCustomerOnly, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -281,7 +294,7 @@ router.get('/:id/profile', validateUUID, async (req, res) => {
 });
 
 // SEARCH customers
-router.get('/search/query', async (req, res) => {
+router.get('/search/query', requireRoles(['admin', 'technician']), async (req, res) => {
   try {
     const { q, limit = 10 } = req.query;
 

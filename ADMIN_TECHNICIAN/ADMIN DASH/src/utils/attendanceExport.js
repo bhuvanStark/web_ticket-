@@ -19,8 +19,21 @@ const STATUS_LABELS = {
   checked_out: 'Present',
   absent: 'Absent',
   emergency_holiday: 'Emergency Holiday',
+  admin_present: 'Present (Marked by admin)',
+  leave: 'Leave',
+  half_day_leave: 'Half-Day Leave',
+  holiday: 'Holiday',
   unmarked: 'No Check-In'
 };
+
+// A half-day leave on a day with a check-in keeps its presence status.
+const statusLabel = (r) => {
+  const label = STATUS_LABELS[r.bucket] || r.bucket;
+  return r.record?.half_day && (r.bucket === 'checked_in' || r.bucket === 'checked_out') ? `${label} · Half-Day Leave` : label;
+};
+
+// Holiday name, or the leave reason.
+const remarks = (r) => (r.bucket === 'holiday' ? r.holiday : r.record?.leave_reason) || '—';
 
 const LOCATION_LABELS = {
   gps_captured: 'Location captured',
@@ -54,10 +67,11 @@ const ROWS = (rows, pageDate) => rows.map((r) => ({
   checkOut: fmtDateTime(r.record?.check_out_time),
   duration: fmtDuration(r.record?.duration_minutes),
   location: LOCATION_LABELS[r.record?.location_status] || 'No location',
-  status: STATUS_LABELS[r.bucket] || r.bucket
+  status: statusLabel(r),
+  remarks: remarks(r)
 }));
 
-const HEADERS = ['Employee', 'Employee Type', 'Branch', 'Date', 'Check-In', 'Check-Out', 'Duration', 'Location', 'Attendance Status'];
+const HEADERS = ['Employee', 'Employee Type', 'Branch', 'Date', 'Check-In', 'Check-Out', 'Duration', 'Location', 'Attendance Status', 'Remarks'];
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -71,7 +85,7 @@ function downloadBlob(blob, filename) {
 }
 
 function rowValues(r) {
-  return [r.employee, r.employeeType, r.branch, r.date, r.checkIn, r.checkOut, r.duration, r.location, r.status];
+  return [r.employee, r.employeeType, r.branch, r.date, r.checkIn, r.checkOut, r.duration, r.location, r.status, r.remarks];
 }
 
 function exportCsv(rows, pageDate, filename) {
@@ -117,7 +131,7 @@ function exportPdf(rows, pageDate) {
     return;
   }
   const data = ROWS(rows, pageDate);
-  const body = data.map((r) => `<tr><td>${esc(r.employee)}</td><td>${esc(r.employeeType)}</td><td>${esc(r.branch)}</td><td>${esc(r.date)}</td><td>${esc(r.checkIn)}</td><td>${esc(r.checkOut)}</td><td>${esc(r.duration)}</td><td>${esc(r.location)}</td><td>${esc(r.status)}</td></tr>`).join('');
+  const body = data.map((r) => `<tr><td>${esc(r.employee)}</td><td>${esc(r.employeeType)}</td><td>${esc(r.branch)}</td><td>${esc(r.date)}</td><td>${esc(r.checkIn)}</td><td>${esc(r.checkOut)}</td><td>${esc(r.duration)}</td><td>${esc(r.location)}</td><td>${esc(r.status)}</td><td>${esc(r.remarks)}</td></tr>`).join('');
   const html = `
     <!DOCTYPE html>
     <html>

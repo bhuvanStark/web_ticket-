@@ -196,3 +196,59 @@ export async function reverseGeocodeInApi(lat, lng) {
   const data = await readApiData(res, 'look up location');
   return data?.label || null;
 }
+
+// -- Holidays & leave ------------------------------------------------------
+// Sundays are holidays by rule and never stored; these endpoints only carry
+// the admin-configured festival/public holidays.
+
+const postJson = async (path, body, operation) => {
+  const res = await authFetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify(body || {})
+  });
+  return readApiData(res, operation);
+};
+
+const dateBounds = ({ from, to } = {}) => {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+};
+
+// Admin: every stored holiday in [from, to] — [{ id, holiday_date, name, branch }].
+export async function fetchHolidaysInApi(bounds) {
+  const res = await authFetch(`${API_BASE_URL}/admin/attendance/holidays${dateBounds(bounds)}`, { headers: authHeaders() });
+  return readApiData(res, 'fetch holidays');
+}
+
+// `branch` empty/omitted = every branch.
+export const createHolidayInApi = ({ date, name, branch }) =>
+  postJson('/admin/attendance/holidays', { date, name, branch: branch || null }, 'add holiday');
+
+export async function deleteHolidayInApi(id) {
+  const res = await authFetch(`${API_BASE_URL}/admin/attendance/holidays/${id}`, { method: 'DELETE', headers: authHeaders() });
+  return readApiData(res, 'remove holiday');
+}
+
+// Admin: leave for any employee on any day (an 'absent' day is converted).
+export const applyLeaveInApi = (employeeType, employeeId, { date, halfDay, reason }) =>
+  postJson(`/admin/attendance/${employeeType}/${employeeId}/leave`, { date, half_day: !!halfDay, reason }, 'apply leave');
+
+export const cancelLeaveInApi = (employeeType, employeeId, date) =>
+  postJson(`/admin/attendance/${employeeType}/${employeeId}/cancel-leave`, { date }, 'cancel leave');
+
+// Employee self-service: holidays for their own branch, and their own leave
+// (today up to 90 days ahead; identity comes from the JWT).
+export async function fetchMyHolidaysInApi(bounds) {
+  const res = await authFetch(`${API_BASE_URL}/attendance/holidays${dateBounds(bounds)}`, { headers: authHeaders() });
+  return readApiData(res, 'fetch holidays');
+}
+
+export const applyMyLeaveInApi = ({ date, halfDay, reason }) =>
+  postJson('/attendance/leave', { date, half_day: !!halfDay, reason }, 'apply leave');
+
+export const cancelMyLeaveInApi = (date) =>
+  postJson('/attendance/leave/cancel', { date }, 'cancel leave');

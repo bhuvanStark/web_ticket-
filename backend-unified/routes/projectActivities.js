@@ -1,7 +1,7 @@
 // Project Category (V1) — actions on individual Daily Project Activities.
 // Additive: does not import or modify anything from serviceRequests.js.
 import express from 'express';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requirePermission } from '../middleware/auth.js';
 import { validateUUID, validateActivityStatusUpdate, validateActivityReassign } from '../middleware/validation.js';
 import * as projectActivityService from '../services/projectActivityService.js';
 
@@ -30,7 +30,7 @@ router.patch('/:id/status', requireAuth, validateUUID, validateActivityStatusUpd
 // PATCH /api/project-activities/:id/reassign — admin only. Cancels the
 // original row and creates a new one for the replacement technician; never
 // deletes the original.
-router.patch('/:id/reassign', requireAdmin, validateUUID, validateActivityReassign, async (req, res) => {
+router.patch('/:id/reassign', requireAdmin, requirePermission('projects'), validateUUID, validateActivityReassign, async (req, res) => {
   try {
     const data = await projectActivityService.reassignActivity(req.params.id, req.body.technician_id);
     res.json({ success: true, data, message: 'Activity reassigned' });

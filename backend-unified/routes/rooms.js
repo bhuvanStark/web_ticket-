@@ -1,10 +1,15 @@
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
 import { validateRoom, validateUUID } from '../middleware/validation.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRoles, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+// Every customer's rooms are visible to admins/technicians only; a customer
+// session is limited to the scoped list below. Deleting needs the admin
+// 'rooms' module.
+const staffOnly = requireRoles(['admin', 'technician']);
 
 // GET all rooms with location details (admin/technician only see every room).
 // A customer session is scoped to rooms under its own locations so the AV
@@ -45,7 +50,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET rooms by location
-router.get('/location/:locationId', async (req, res) => {
+router.get('/location/:locationId', staffOnly, async (req, res) => {
   try {
     const { locationId } = req.params;
 
@@ -68,7 +73,7 @@ router.get('/location/:locationId', async (req, res) => {
 });
 
 // GET single room by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', staffOnly, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -92,7 +97,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET room by QR code
-router.get('/qr/:qrCode', async (req, res) => {
+router.get('/qr/:qrCode', staffOnly, async (req, res) => {
   try {
     const { qrCode } = req.params;
 
@@ -116,7 +121,7 @@ router.get('/qr/:qrCode', async (req, res) => {
 });
 
 // DELETE room
-router.delete('/:id', validateUUID, async (req, res) => {
+router.delete('/:id', requirePermission('rooms'), validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -162,7 +167,7 @@ router.delete('/:id', validateUUID, async (req, res) => {
 });
 
 // GET room with full details and equipment
-router.get('/:id/details', validateUUID, async (req, res) => {
+router.get('/:id/details', staffOnly, validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -198,7 +203,7 @@ router.get('/:id/details', validateUUID, async (req, res) => {
 });
 
 // SEARCH rooms
-router.get('/search/query', async (req, res) => {
+router.get('/search/query', staffOnly, async (req, res) => {
   try {
     const { q, limit = 10, locationId } = req.query;
 

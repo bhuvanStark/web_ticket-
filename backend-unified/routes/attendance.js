@@ -8,7 +8,7 @@
 // of the three roles.
 import express from 'express';
 import { requireEmployee } from '../middleware/auth.js';
-import { validateUUID, validateAttendanceCheckIn } from '../middleware/validation.js';
+import { validateUUID, validateAttendanceCheckIn, validateLeaveApply, validateLeaveCancel, validateDateBoundsQuery } from '../middleware/validation.js';
 import * as attendanceService from '../services/attendanceService.js';
 
 const router = express.Router();
@@ -69,6 +69,52 @@ router.get('/history', async (req, res) => {
     if (error.code === 'FORBIDDEN') return res.status(403).json({ success: false, error: error.message });
     console.error('Error fetching attendance history:', error);
     res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// Shared error mapping for the leave endpoints (employee and admin).
+export const sendLeaveError = (res, error, what) => {
+  if (error.code === 'INVALID' || error.code === 'INVALID_DATE') return res.status(400).json({ success: false, error: error.message });
+  if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+  if (error.code === 'CONFLICT') return res.status(409).json({ success: false, error: error.message });
+  console.error(`Error ${what}:`, error);
+  return res.status(500).json({ success: false, error: 'Error', message: error.message });
+};
+
+// GET /api/attendance/holidays?from=&to= — stored holidays that apply to
+// the employee's branch (Sundays are added by the client).
+router.get('/holidays', validateDateBoundsQuery, async (req, res) => {
+  try {
+    const data = await attendanceService.listHolidaysForEmployee(req.user.role, req.user.userId, {
+      from: req.query.from, to: req.query.to
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing holidays:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// POST /api/attendance/leave { date?, half_day?, reason } — own leave, from
+// today up to 90 days ahead.
+router.post('/leave', validateLeaveApply, async (req, res) => {
+  try {
+    const { date, half_day, reason } = req.body;
+    const data = await attendanceService.applyLeave(req.user.role, req.user.userId,
+      { date, halfDay: half_day === true, reason }, { role: 'employee' });
+    res.status(201).json({ success: true, data, message: 'Leave applied' });
+  } catch (error) {
+    sendLeaveError(res, error, 'applying leave');
+  }
+});
+
+// POST /api/attendance/leave/cancel { date? }
+router.post('/leave/cancel', validateLeaveCancel, async (req, res) => {
+  try {
+    const data = await attendanceService.cancelLeave(req.user.role, req.user.userId, { date: req.body?.date }, { role: 'employee' });
+    res.json({ success: true, data, message: 'Leave cancelled' });
+  } catch (error) {
+    sendLeaveError(res, error, 'cancelling leave');
   }
 });
 

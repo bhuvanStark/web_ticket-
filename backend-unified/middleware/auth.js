@@ -597,6 +597,17 @@ export const rejectRoles = (roles) => (req, res, next) => {
   next();
 };
 
+// Role allowlist for routers already behind requireAuth (which sets
+// req.user): anyone whose role isn't listed gets 403.
+export const requireRoles = (roles) => (req, res, next) => {
+  if (roles.includes(req.user?.role)) return next();
+  return res.status(403).json({
+    success: false,
+    error: 'Forbidden',
+    message: 'Not available for this role'
+  });
+};
+
 // Hash password
 export const hashPassword = async (password) => {
   return bcrypt.hash(password, 10);

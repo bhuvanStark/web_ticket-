@@ -666,7 +666,9 @@ router.post('/verify-technician-password', requireAdmin, async (req, res) => {
 // DASHBOARD CONFIGURATION (single shared row)
 // ============================================
 
-router.get('/settings', requireAdmin, requirePermission('settings'), async (req, res) => {
+// Readable by every admin: the module on/off toggles decide which pages
+// each admin's dashboard shows. Changing them stays Settings-only (PUT).
+router.get('/settings', requireAdmin, async (req, res) => {
   try {
     const { rows } = await query(
       'SELECT enabled_modules, role_permissions, updated_at FROM app_settings WHERE id = 1'
@@ -732,10 +734,35 @@ const DEFAULT_ADMIN_PASSWORD = '123456';
 // the Sales module itself shipping (plan §2) so the toggle exists from day
 // one; no route enforces it yet.
 const ADMIN_MODULES = [
-  'requests', 'projects', 'customers', 'rooms', 'technicians', 'sales',
-  'installations', 'inventory', 'demos', 'calendar', 'history', 'reports',
-  'settings'
+  'approvals', 'requests', 'projects', 'customers', 'rooms', 'technicians', 'sales',
+  'back_office', 'attendance', 'installations', 'inventory', 'demos', 'calendar',
+  'history', 'reports', 'settings'
 ];
+
+// The signed-in admin's own module access, so the dashboard shows only the
+// pages the backend will actually serve them. A Super Admin has everything.
+router.get('/me/permissions', requireAdmin, async (req, res) => {
+  try {
+    if (req.user.isSuperAdmin) {
+      return res.json({
+        success: true,
+        data: { isSuperAdmin: true, permissions: Object.fromEntries(ADMIN_MODULES.map((module) => [module, true])) }
+      });
+    }
+    const { data, error } = await supabase
+      .from('admin_permissions')
+      .select('module, can_access')
+      .eq('admin_id', req.user.userId);
+    if (error) throw error;
+    const byModule = Object.fromEntries((data || []).map((row) => [row.module, row.can_access]));
+    res.json({
+      success: true,
+      data: { isSuperAdmin: false, permissions: Object.fromEntries(ADMIN_MODULES.map((module) => [module, byModule[module] === true])) }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // Admin management (roster list/create/edit/deactivate/delete, promote/
 // demote, per-module permission toggles) is Super-Admin-only end to end —

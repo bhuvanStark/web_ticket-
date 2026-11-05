@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Plus, Search, Layers, CheckCircle2, Briefcase, Building2, MapPin, User, Eye } from 'lucide-react';
+import { Plus, Search, Layers, CheckCircle2, Briefcase, Building2, MapPin, User, Eye, Archive, RotateCcw } from 'lucide-react';
+import { fetchArchivedProjects } from '../../services/projectApiService';
 import { EmptyState } from '../common/EmptyState';
 import { TableSkeleton } from '../common/SkeletonLoader';
 
@@ -13,17 +14,48 @@ export const ProjectsPage = () => {
     isApiLoading,
     setSelectedProjectId,
     setIsNewProjectModalOpen,
-    setProjectModalMode
+    setProjectModalMode,
+    restoreProject
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'completed'
+  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'completed' | 'archived'
   const [search, setSearch] = useState('');
+  // Archived projects aren't part of the polled `projects` list; fetched
+  // only while the Archived tab is open.
+  const [archived, setArchived] = useState([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedError, setArchivedError] = useState(false);
+  const [restoringId, setRestoringId] = useState(null);
+
+  const loadArchived = useCallback(async () => {
+    setArchivedLoading(true);
+    setArchivedError(false);
+    try {
+      const data = await fetchArchivedProjects();
+      setArchived(Array.isArray(data) ? data : []);
+    } catch {
+      setArchivedError(true);
+    } finally {
+      setArchivedLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'archived') loadArchived();
+  }, [activeTab, loadArchived]);
+
+  const handleRestore = async (projectId) => {
+    setRestoringId(projectId);
+    const ok = await restoreProject(projectId);
+    setRestoringId(null);
+    if (ok) setArchived((prev) => prev.filter((p) => p.id !== projectId));
+  };
 
   if (isApiLoading && (projects || []).length === 0) {
     return <TableSkeleton rows={5} />;
   }
 
-  const tabScoped = (projects || []).filter((p) =>
+  const tabScoped = activeTab === 'archived' ? archived : (projects || []).filter((p) =>
     activeTab === 'completed' ? p.status === 'Completed' : p.status !== 'Completed'
   );
 
@@ -76,6 +108,15 @@ export const ProjectsPage = () => {
             <CheckCircle2 className="w-3.5 h-3.5" />
             <span>Completed ({completedCount})</span>
           </button>
+          <button
+            onClick={() => setActiveTab('archived')}
+            className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer max-md:shrink-0 max-md:whitespace-nowrap ${
+              activeTab === 'archived' ? 'bg-[#004898] text-white shadow-xs' : 'bg-[#F6F8FB] text-[#667085] hover:text-[#172033]'
+            }`}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            <span>Archived</span>
+          </button>
         </div>
 
         <div className="relative w-full md:w-72">
@@ -91,7 +132,16 @@ export const ProjectsPage = () => {
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {activeTab === 'archived' ? (
+        <ArchivedProjectsTable
+          rows={filtered}
+          loading={archivedLoading}
+          failed={archivedError}
+          onRetry={loadArchived}
+          onRestore={handleRestore}
+          restoringId={restoringId}
+        />
+      ) : filtered.length === 0 ? (
         <EmptyState
           title={activeTab === 'completed' ? 'No Completed Projects' : 'No Active Projects'}
           subtitle={activeTab === 'completed' ? 'Completed projects will appear here.' : 'Create a project to start tracking daily activities.'}
@@ -179,6 +229,78 @@ export const ProjectsPage = () => {
           </table>
         </div>
       )}
+    </div>
+  );
+};
+
+const fmtDate = (value) => (value
+  ? new Date(value).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  : '—');
+
+// Projects deleted together with their history: kept for 3 days, then
+// purged by the backend. Restore puts one back exactly as it was.
+const ArchivedProjectsTable = ({ rows, loading, failed, onRetry, onRestore, restoringId }) => {
+  if (loading && rows.length === 0) return <TableSkeleton rows={3} />;
+  if (failed) {
+    return (
+      <div className="card p-6 text-center text-xs text-[#B42318]">
+        Could not load archived projects.{' '}
+        <button onClick={onRetry} className="font-bold text-[#004898] hover:underline">Retry</button>
+      </div>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        title="No Archived Projects"
+        subtitle="Projects deleted with their history stay here for 3 days and can be restored."
+        icon="inbox"
+      />
+    );
+  }
+  return (
+    <div className="table-container shadow-sm border border-[#E4E7EC] rounded-2xl overflow-hidden max-md:overflow-x-auto bg-white">
+      <table className="table w-full table-fixed max-md:min-w-[760px]">
+        <thead>
+          <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
+            <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[28%]">Project</th>
+            <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[24%]">Client & Location</th>
+            <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[17%]">Archived</th>
+            <th className="px-5 py-3.5 text-left font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[17%]">Deleted Permanently</th>
+            <th className="px-5 py-3.5 text-right font-extrabold text-[#475467] text-[11px] uppercase tracking-wider w-[14%]">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#F2F4F7]">
+          {rows.map((p) => (
+            <tr key={p.id} className="align-top">
+              <td className="px-5 py-4" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <Briefcase className="w-3.5 h-3.5 text-[#98A2B3] shrink-0" />
+                  <span className="text-xs font-bold text-[#172033]">{p.name}</span>
+                </div>
+                <span className="px-2 py-0.5 rounded bg-[#F2F4F7] text-[#475467] font-mono font-bold text-[10px] border border-[#E4E7EC]">{p.id}</span>
+              </td>
+              <td className="px-5 py-4" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                <div className="font-bold text-[#172033] text-xs mb-1">{p.customer}</div>
+                <div className="text-[10px] text-[#667085]">{p.location}</div>
+              </td>
+              <td className="px-5 py-4 text-xs text-[#475467]">{fmtDate(p.archived_at)}</td>
+              <td className="px-5 py-4 text-xs font-semibold text-[#B42318]">{fmtDate(p.purge_at)}</td>
+              <td className="px-5 py-4 whitespace-nowrap text-right">
+                <button
+                  onClick={() => onRestore(p.id)}
+                  disabled={restoringId === p.id}
+                  className="btn btn-secondary btn-sm font-bold disabled:opacity-60"
+                  title="Restore project and its history"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{restoringId === p.id ? 'Restoring…' : 'Restore'}</span>
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };

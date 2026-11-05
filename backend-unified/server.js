@@ -119,9 +119,10 @@ app.use('/api/service-requests', rejectRoles(['sales', 'back_office']), serviceR
 // directly below it in the admin nav. Additive only.
 app.use('/api/projects', rejectRoles(['sales', 'back_office']), projectsRouter);
 app.use('/api/project-activities', rejectRoles(['sales', 'back_office']), projectActivitiesRouter);
-app.use('/api/rooms', roomsRouter);
-app.use('/api/customers', customersRouter);
-app.use('/api/locations', locationsRouter);
+// Customer master data — never part of the Sales/Back-Office roles.
+app.use('/api/rooms', rejectRoles(['sales', 'back_office']), roomsRouter);
+app.use('/api/customers', rejectRoles(['sales', 'back_office']), customersRouter);
+app.use('/api/locations', rejectRoles(['sales', 'back_office']), locationsRouter);
 app.use('/api/technicians', techniciansRouter);
 app.use('/api/team-members', teamMembersRouter);
 // Attendance Category (V1) — technician self-service. Mounted before the

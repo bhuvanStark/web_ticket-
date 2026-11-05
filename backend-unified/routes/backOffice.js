@@ -6,13 +6,13 @@
 // generic entity router.
 import express from 'express';
 import { supabase } from '../config/supabaseClient.js';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireAdmin, requirePermission } from '../middleware/auth.js';
 import { validateUUID } from '../middleware/validation.js';
 import { mountStaffRemovalRoutes } from './staffRemoval.js';
 import { removeStaff } from '../services/staffRemovalService.js';
 
 const router = express.Router();
-router.use(requireAdmin);
+router.use(requireAdmin, requirePermission('back_office'));
 
 const SELECT_FIELDS = 'id, email, full_name, phone, location, is_active, created_at, updated_at';
 

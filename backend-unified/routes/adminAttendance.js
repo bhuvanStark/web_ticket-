@@ -5,22 +5,27 @@
 // anything from adminRoutes.js, projects.js, or projectActivities.js. The
 // Admin Attendance page never touches ticket or project data at all.
 import express from 'express';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireAdmin, requirePermission } from '../middleware/auth.js';
 import {
   validateUUID,
   validateUUIDParam,
   validateEmployeeType,
   validateAttendanceDateQuery,
   validateAttendanceDateBody,
-  validateAttendanceRangeQuery
+  validateAttendanceRangeQuery,
+  validateLeaveApply,
+  validateLeaveCancel,
+  validateHolidayBody,
+  validateDateBoundsQuery
 } from '../middleware/validation.js';
 import * as attendanceService from '../services/attendanceService.js';
+import { sendLeaveError } from './attendance.js';
 import { reverseGeocode } from '../services/geocodeService.js';
 
 const router = express.Router();
-router.use(requireAdmin);
+router.use(requireAdmin, requirePermission('attendance'));
 
-// GET /api/admin/attendance?date=&employee_id=&card=present|absent|not_yet_checked_out&branch=&employee_type=technician|sales|back_office&search=
+// GET /api/admin/attendance?date=&employee_id=&card=present|absent|not_yet_checked_out|leave&branch=&employee_type=technician|sales|back_office&search=
 router.get('/', validateAttendanceDateQuery, async (req, res) => {
   try {
     const { date, employee_id, card, branch, employee_type, search } = req.query;
@@ -50,6 +55,44 @@ router.get('/export', validateAttendanceRangeQuery, async (req, res) => {
   } catch (error) {
     if (error.code === 'INVALID_RANGE') return res.status(400).json({ success: false, error: error.message });
     console.error('Error exporting attendance range:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// Holidays (Sundays are automatic and never stored). Registered before the
+// dynamic /:employeeType/:employeeId/... routes below.
+// GET /api/admin/attendance/holidays?from=&to=
+router.get('/holidays', validateDateBoundsQuery, async (req, res) => {
+  try {
+    const data = await attendanceService.listHolidays({ from: req.query.from, to: req.query.to });
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing holidays:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// POST /api/admin/attendance/holidays { date, name, branch? }
+router.post('/holidays', validateHolidayBody, async (req, res) => {
+  try {
+    const { date, name, branch } = req.body;
+    const data = await attendanceService.createHoliday({ date, name, branch }, req.user.userId);
+    res.status(201).json({ success: true, data, message: 'Holiday added' });
+  } catch (error) {
+    if (error.code === 'DUPLICATE') return res.status(409).json({ success: false, error: error.message });
+    console.error('Error creating holiday:', error);
+    res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// DELETE /api/admin/attendance/holidays/:id
+router.delete('/holidays/:id', validateUUID, async (req, res) => {
+  try {
+    await attendanceService.deleteHoliday(req.params.id);
+    res.json({ success: true, message: 'Holiday removed' });
+  } catch (error) {
+    if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+    console.error('Error deleting holiday:', error);
     res.status(500).json({ success: false, error: 'Error', message: error.message });
   }
 });
@@ -174,6 +217,30 @@ router.post('/:employeeType/:employeeId/mark-present', validateEmployeeType, val
     if (error.code === 'ALREADY_HAS_ATTENDANCE') return res.status(409).json({ success: false, error: error.message });
     console.error('Error marking present:', error);
     res.status(500).json({ success: false, error: 'Error', message: error.message });
+  }
+});
+
+// POST /api/admin/attendance/:employeeType/:employeeId/leave { date?, half_day?, reason }
+// Any day; an 'absent' day is converted to leave.
+router.post('/:employeeType/:employeeId/leave', validateEmployeeType, validateUUIDParam('employeeId'), validateLeaveApply, async (req, res) => {
+  try {
+    const { date, half_day, reason } = req.body;
+    const data = await attendanceService.applyLeave(req.params.employeeType, req.params.employeeId,
+      { date, halfDay: half_day === true, reason }, { role: 'admin', adminId: req.user.userId });
+    res.status(201).json({ success: true, data, message: 'Leave applied' });
+  } catch (error) {
+    sendLeaveError(res, error, 'applying leave');
+  }
+});
+
+// POST /api/admin/attendance/:employeeType/:employeeId/cancel-leave { date? }
+router.post('/:employeeType/:employeeId/cancel-leave', validateEmployeeType, validateUUIDParam('employeeId'), validateLeaveCancel, async (req, res) => {
+  try {
+    const data = await attendanceService.cancelLeave(req.params.employeeType, req.params.employeeId,
+      { date: req.body?.date }, { role: 'admin' });
+    res.json({ success: true, data, message: 'Leave cancelled' });
+  } catch (error) {
+    sendLeaveError(res, error, 'cancelling leave');
   }
 });
 

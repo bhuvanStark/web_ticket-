@@ -2,7 +2,7 @@
 // never reads `tickets`, `myProjectActivities`, or any other domain state
 // from AppContext — only `showToast` (same pattern every other page uses)
 // and `pollTick`, a counter AppContext bumps once per tick of its existing
-// 3s poll interval. Reading that counter lets this page refresh on the same
+// poll interval. Reading that counter lets this page refresh on the same
 // cadence as tickets/projects without starting a second interval of its
 // own; the actual list/filter state and fetch logic stay entirely local. A
 // failure here can never affect anything else in the app, and nothing else
@@ -11,10 +11,11 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Search, Download, ChevronDown, FileText, FileSpreadsheet, FileJson,
-  Calendar as CalendarIcon, Eye, CheckCircle2, XCircle, Clock3, UserX
+  Calendar as CalendarIcon, Eye, CheckCircle2, XCircle, Clock3, UserX, CalendarMinus, PartyPopper
 } from 'lucide-react';
 import { TableSkeleton } from '../common/SkeletonLoader';
 import { AttendanceDetailsModal } from './AttendanceDetailsModal';
+import { HolidaysModal } from './HolidaysModal';
 import { LocationSummary } from './LocationSummary';
 import { exportAttendance } from '../../utils/attendanceExport';
 import { exportAttendanceCalendar } from '../../utils/attendanceCalendarExport';
@@ -26,7 +27,9 @@ import {
   markPresentInApi,
   markAllAbsentInApi,
   adminCheckOutInApi,
-  bulkCheckOutInApi
+  bulkCheckOutInApi,
+  applyLeaveInApi,
+  cancelLeaveInApi
 } from '../../services/attendanceApiService';
 
 // Export Range selector — pure calendar-date-key arithmetic (Date.UTC
@@ -88,7 +91,19 @@ const STATUS_BADGES = {
   // Admin override (no check-in) — same green as Present, with a
   // "Marked by admin" note rendered under the badge in the Status column.
   admin_present: { label: 'Present', className: 'bg-[#ECFDF3] text-[#027A48]', note: 'Marked by admin' },
+  leave: { label: 'Leave', className: 'bg-[#F4F3FF] text-[#6941C6]' },
+  half_day_leave: { label: 'Half-Day Leave', className: 'bg-[#F4F3FF] text-[#6941C6]', note: 'Not checked in' },
+  // Sunday / configured holiday with no record — never Absent.
+  holiday: { label: 'H · Holiday', className: 'bg-[#F2F4F7] text-[#344054]' },
   unmarked: { label: 'No Check-In', className: 'bg-[#F8FAFC] text-[#667085]' }
+};
+
+// The note under a row's status badge: the holiday name, a half-day leave
+// on a checked-in day, or the badge's own fixed note.
+const statusNote = (r, badge) => {
+  if (r.bucket === 'holiday') return r.holiday;
+  if (r.record?.half_day && (r.bucket === 'checked_in' || r.bucket === 'checked_out')) return 'Half-day leave';
+  return badge.note || null;
 };
 
 // Sales & Back-Office Roles V1 — the Admin Attendance page is now the
@@ -130,7 +145,10 @@ export const AttendancePage = () => {
   // '' = every employee type. Fixed by definition (unlike branches, which
   // come from real data) — see EMPLOYEE_TYPE_OPTIONS above.
   const [employeeType, setEmployeeType] = useState('');
-  const [counts, setCounts] = useState({ present: 0, absent: 0, not_yet_checked_out: 0 });
+  const [counts, setCounts] = useState({ present: 0, absent: 0, not_yet_checked_out: 0, leave: 0, holiday: 0 });
+  // Sunday or an all-branch holiday on the selected day ({ name } | null).
+  const [dayHoliday, setDayHoliday] = useState(null);
+  const [isHolidaysOpen, setIsHolidaysOpen] = useState(false);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -169,7 +187,8 @@ export const AttendancePage = () => {
         employeeType: employeeType || undefined, search: debouncedSearch
       });
       if (requestId !== requestIdRef.current) return; // a newer request has since started; ignore this stale response
-      setCounts(data.counts || { present: 0, absent: 0, not_yet_checked_out: 0 });
+      setCounts(data.counts || { present: 0, absent: 0, not_yet_checked_out: 0, leave: 0, holiday: 0 });
+      setDayHoliday(data.holiday || null);
       setRows(data.rows || []);
       setBranches(data.branches || []);
       // First load only: pin the date input to the server's own India-day
@@ -240,6 +259,26 @@ export const AttendancePage = () => {
       fetchData();
     } catch (err) {
       showToast?.(err.message || 'Mark present failed', 'error');
+    }
+  };
+
+  // Leave applied/cancelled by the admin for the selected day. Errors are
+  // rethrown so the leave popup can show them and stay open.
+  const handleApplyLeave = async (empType, employeeId, { halfDay, reason }) => {
+    await applyLeaveInApi(empType, employeeId, { date, halfDay, reason });
+    showToast?.(halfDay ? 'Half-day leave applied.' : 'Leave applied.', 'success');
+    setDetailsRow(null);
+    fetchData();
+  };
+
+  const handleCancelLeave = async (empType, employeeId) => {
+    try {
+      await cancelLeaveInApi(empType, employeeId, date);
+      showToast?.('Leave cancelled.', 'success');
+      setDetailsRow(null);
+      fetchData();
+    } catch (err) {
+      showToast?.(err.message || 'Cancel leave failed', 'error');
     }
   };
 
@@ -321,6 +360,15 @@ export const AttendancePage = () => {
           </p>
         </div>
 
+        <div className="flex items-center gap-3">
+        <button
+          onClick={() => setIsHolidaysOpen(true)}
+          className="h-11 px-5 bg-white border border-[#E4E7EC] hover:border-[#B3D1F2] hover:bg-[#F8FAFC] text-[#344054] rounded-full flex items-center gap-2 transition-all font-bold text-sm shadow-sm cursor-pointer"
+          title="Festival and public holidays (Sundays are automatic)"
+        >
+          <PartyPopper className="w-4 h-4" />
+          <span>Holidays</span>
+        </button>
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setIsExportOpen(!isExportOpen)}
@@ -352,6 +400,7 @@ export const AttendancePage = () => {
             </div>
           )}
         </div>
+        </div>
       </div>
 
       {loadFailed && (
@@ -360,8 +409,15 @@ export const AttendancePage = () => {
         </div>
       )}
 
+      {dayHoliday && (
+        <div className="bg-[#F2F4F7] border border-[#E4E7EC] text-[#344054] text-xs font-bold rounded-xl px-4 py-3 flex items-center gap-2">
+          <PartyPopper className="w-4 h-4" />
+          {date} is a holiday ({dayHoliday.name}) — employees without attendance show as Holiday, not Absent.
+        </div>
+      )}
+
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
         <button
           onClick={() => toggleCard('present')}
           className={`text-left bg-white rounded-2xl p-6 border shadow-sm relative overflow-hidden group transition-colors cursor-pointer ${cardFilter === 'present' ? 'border-[#12B76A] ring-2 ring-[#ABE5C6]' : 'border-[#E4E7EC] hover:border-[#ABE5C6]'}`}
@@ -405,6 +461,21 @@ export const AttendancePage = () => {
           </div>
           <div className="text-4xl font-black text-[#172033] mb-1">{counts.absent}</div>
           <p className="text-xs font-medium text-[#667085]">Admin-confirmed absences</p>
+        </button>
+
+        <button
+          onClick={() => toggleCard('leave')}
+          className={`text-left bg-white rounded-2xl p-6 border shadow-sm relative overflow-hidden group transition-colors cursor-pointer ${cardFilter === 'leave' ? 'border-[#6941C6] ring-2 ring-[#D9D6FE]' : 'border-[#E4E7EC] hover:border-[#D9D6FE]'}`}
+        >
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+            <CalendarMinus className="w-16 h-16 text-[#6941C6]" />
+          </div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 rounded-xl bg-[#F4F3FF] text-[#6941C6]"><CalendarMinus className="w-5 h-5" /></div>
+            <span className="text-xs font-bold uppercase tracking-wider text-[#667085]">On Leave</span>
+          </div>
+          <div className="text-4xl font-black text-[#172033] mb-1">{counts.leave ?? 0}</div>
+          <p className="text-xs font-medium text-[#667085]">Full and half-day leave</p>
         </button>
       </div>
 
@@ -616,7 +687,7 @@ export const AttendancePage = () => {
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-[11px] font-bold ${badge.className}`}>
                           {badge.label}
                         </span>
-                        {badge.note && <p className="text-[10px] font-semibold text-[#667085] mt-1">{badge.note}</p>}
+                        {statusNote(r, badge) && <p className="text-[10px] font-semibold text-[#667085] mt-1">{statusNote(r, badge)}</p>}
                       </td>
                       <td className="py-4 px-6 text-right">
                         <button
@@ -645,6 +716,17 @@ export const AttendancePage = () => {
           onMarkAbsent={handleMarkAbsent}
           onMarkEmergencyHoliday={handleMarkEmergencyHoliday}
           onMarkPresent={handleMarkPresent}
+          onApplyLeave={handleApplyLeave}
+          onCancelLeave={handleCancelLeave}
+        />
+      )}
+
+      {isHolidaysOpen && (
+        <HolidaysModal
+          branches={branches}
+          anchorDate={date}
+          onClose={() => setIsHolidaysOpen(false)}
+          onChanged={fetchData}
         />
       )}
 

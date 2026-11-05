@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { supabase } from '../config/supabaseClient.js';
-import { hashPassword, requireAdmin, generateToken, generateRefreshToken } from '../middleware/auth.js';
+import { hashPassword, requireAdmin, requirePermission, generateToken, generateRefreshToken } from '../middleware/auth.js';
 import { sendResetApprovalEmail, sendResetLinkEmail, sendLoginOtpEmail } from '../services/emailService.js';
 
 const router = express.Router();
@@ -533,7 +533,7 @@ router.get('/approve/:token', async (req, res) => {
 // ADMIN QUEUE — customer reset requests awaiting approval, shown in the
 // admin dashboard so an admin does not have to work out of their inbox.
 // ============================================
-router.get('/admin/pending', requireAdmin, async (req, res) => {
+router.get('/admin/pending', requireAdmin, requirePermission('approvals'), async (req, res) => {
   try {
     const { data: rows, error } = await supabase
       .from('password_resets')
@@ -577,7 +577,7 @@ router.get('/admin/pending', requireAdmin, async (req, res) => {
 });
 
 // Approve from inside the dashboard (JSON), as opposed to the emailed link.
-router.post('/admin/pending/:id/approve', requireAdmin, async (req, res) => {
+router.post('/admin/pending/:id/approve', requireAdmin, requirePermission('approvals'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -655,7 +655,7 @@ router.post('/admin/pending/:id/approve', requireAdmin, async (req, res) => {
 });
 
 // Reject a request without sending anything.
-router.post('/admin/pending/:id/reject', requireAdmin, async (req, res) => {
+router.post('/admin/pending/:id/reject', requireAdmin, requirePermission('approvals'), async (req, res) => {
   try {
     const { id } = req.params;
 

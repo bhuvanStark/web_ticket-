@@ -37,7 +37,7 @@ import {
 export const Sidebar = () => {
   const {
     role, baseRole, switchRole, activePage, setActivePage, currentUser, handleLogout,
-    isSidebarCollapsed, setIsSidebarCollapsed, enabledModules, rolePermissions,
+    isSidebarCollapsed, setIsSidebarCollapsed, enabledModules, rolePermissions, canAccessAdminPage,
     tickets, customers, rooms, technicians, verifyTechnicianPassword,
     setSelectedTicketId, setSelectedCustomerId, setSelectedRoomId, setSelectedTechId,
     setSelectedProjectId, isViewingAsSales
@@ -148,6 +148,9 @@ export const Sidebar = () => {
         return false;
       }
     }
+
+    // 3. The admin's own module permissions (same rules the backend enforces)
+    if (role === 'admin' && !canAccessAdminPage(item.id)) return false;
     return true;
   });
 

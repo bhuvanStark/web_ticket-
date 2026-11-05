@@ -115,14 +115,16 @@ export const ProjectActivityHistoryView = ({ projectId }) => {
 
       <div className="border border-[#E4E7EC] rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left" style={{ tableLayout: 'fixed' }}>
+          {/* min-w keeps every column readable on phones (the wrapper scrolls
+              sideways) instead of squeezing the Status badge over the Notes. */}
+          <table className="w-full min-w-[720px] text-left" style={{ tableLayout: 'fixed' }}>
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E4E7EC]">
-                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[22%]">Technician</th>
-                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[14%]">Date</th>
-                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[12%]">Scheduled</th>
-                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[16%]">Completed</th>
-                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[12%]">Status</th>
+                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[18%]">Technician</th>
+                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[12%]">Date</th>
+                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[10%]">Scheduled</th>
+                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[14%]">Completed</th>
+                <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085] w-[128px]">Status</th>
                 <th className="py-2 px-3 text-[10px] font-bold uppercase tracking-wider text-[#667085]">Notes</th>
               </tr>
             </thead>
@@ -131,13 +133,13 @@ export const ProjectActivityHistoryView = ({ projectId }) => {
                 <tr><td colSpan="6" className="py-8 text-center text-xs text-[#667085]">No activity history in this range.</td></tr>
               ) : (
                 filtered.map((a) => (
-                  <tr key={a.id}>
+                  <tr key={a.id} className="align-top">
                     <td className="py-2 px-3 text-xs font-bold text-[#172033]" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{a.technician?.full_name || '—'}</td>
                     <td className="py-2 px-3 text-xs text-[#475467]">{a.scheduled_date ? new Date(a.scheduled_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
-                    <td className="py-2 px-3 text-xs text-[#475467]">{a.scheduled_time || '—'}</td>
+                    <td className="py-2 px-3 text-xs text-[#475467]">{a.scheduled_time ? String(a.scheduled_time).slice(0, 5) : '—'}</td>
                     <td className="py-2 px-3 text-xs text-[#475467]">{a.completed_at ? new Date(a.completed_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                    <td className="py-2 px-3"><StatusBadge status={a.status} /></td>
-                    <td className="py-2 px-3 text-xs text-[#667085]" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{a.completion_notes || '—'}</td>
+                    <td className="py-2 px-3 overflow-hidden whitespace-nowrap"><StatusBadge status={a.status} /></td>
+                    <td className="py-2 px-3 text-xs leading-relaxed text-[#475467]" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{a.completion_notes || '—'}</td>
                   </tr>
                 ))
               )}

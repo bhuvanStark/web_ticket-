@@ -161,7 +161,7 @@ export const ProjectDetailsModal = () => {
           {p.description && (
             <div className="bg-white p-4 rounded-xl border border-[#E4E7EC]">
               <h3 className="text-[11px] font-black uppercase tracking-widest text-[#667085] mb-1.5">Description / Scope</h3>
-              <p className="text-sm text-[#344054] leading-relaxed">{p.description}</p>
+              <p className="text-sm text-[#344054] leading-relaxed whitespace-pre-wrap break-words">{p.description}</p>
             </div>
           )}
 

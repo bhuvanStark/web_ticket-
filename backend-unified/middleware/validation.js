@@ -599,6 +599,55 @@ export const validateAttendanceRangeQuery = (req, res, next) => {
   next();
 };
 
+// Leave apply/cancel body: { date?, half_day?, reason } — reason is only
+// checked when `requireReason` (apply); date defaults to today.
+const validateLeave = (requireReason) => (req, res, next) => {
+  const { date, half_day, reason } = req.body || {};
+  const errors = [];
+  if (date !== undefined && date !== null && date !== '' && !isValidDateKey(date)) {
+    errors.push('date must be a valid calendar date in YYYY-MM-DD format');
+  }
+  if (requireReason) {
+    if (half_day !== undefined && typeof half_day !== 'boolean') errors.push('half_day must be a boolean');
+    if (typeof reason !== 'string' || !reason.trim()) errors.push('reason is required');
+    else if (reason.trim().length > 500) errors.push('reason must be at most 500 characters');
+  }
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+export const validateLeaveApply = validateLeave(true);
+export const validateLeaveCancel = validateLeave(false);
+
+// Holiday create body: { date, name, branch? } (branch omitted = all branches).
+export const validateHolidayBody = (req, res, next) => {
+  const { date, name, branch } = req.body || {};
+  const errors = [];
+  if (!date || !isValidDateKey(date)) errors.push('date must be a valid calendar date in YYYY-MM-DD format');
+  if (typeof name !== 'string' || !name.trim()) errors.push('name is required');
+  else if (name.trim().length > 100) errors.push('name must be at most 100 characters');
+  if (branch !== undefined && branch !== null && (typeof branch !== 'string' || branch.trim().length > 100)) {
+    errors.push('branch must be text of at most 100 characters');
+  }
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+
+// Optional ?from=&to= date bounds (holiday listings).
+export const validateDateBoundsQuery = (req, res, next) => {
+  const { from, to } = req.query;
+  const errors = [];
+  if (from && !isValidDateKey(from)) errors.push('from must be a valid calendar date in YYYY-MM-DD format');
+  if (to && !isValidDateKey(to)) errors.push('to must be a valid calendar date in YYYY-MM-DD format');
+  if (errors.length > 0) {
+    return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+  }
+  next();
+};
+
 // Service update validation
 export const validateServiceUpdate = (req, res, next) => {
   const { author_name, notes } = req.body;

@@ -4,7 +4,8 @@
 // while that page is open. Attendance-only fields; no tickets, no projects.
 import React, { useState } from 'react';
 import { LocationSummary } from './LocationSummary';
-import { X, LogOut, ShieldAlert, MapPin, Clock, CalendarOff, UserCheck } from 'lucide-react';
+import { LeaveDialog } from './LeaveDialog';
+import { X, LogOut, ShieldAlert, MapPin, Clock, CalendarOff, UserCheck, CalendarMinus, PartyPopper } from 'lucide-react';
 
 const LOCATION_LABELS = {
   gps_captured: 'Location captured',
@@ -28,11 +29,18 @@ const fmtDuration = (minutes) => {
 // before Attendance was unified across all three roles); `onMarkAbsent` now
 // takes (employeeType, employeeId) since an id alone is ambiguous once
 // there are three identity tables — see attendanceApiService.markAbsentInApi.
-export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent, onMarkEmergencyHoliday, onMarkPresent }) => {
+export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkAbsent, onMarkEmergencyHoliday, onMarkPresent, onApplyLeave, onCancelLeave }) => {
   const [isWorking, setIsWorking] = useState(false);
+  const [isLeaveOpen, setIsLeaveOpen] = useState(false);
   if (!row) return null;
 
   const { employee, record, bucket } = row;
+  const isHalfDayWorked = record?.half_day === true && (bucket === 'checked_in' || bucket === 'checked_out');
+  const hasLeave = bucket === 'leave' || bucket === 'half_day_leave' || isHalfDayWorked;
+  // Full or half day on a day with nothing (or a confirmed absence);
+  // half day only once they've checked in.
+  const canApplyFullDay = bucket === 'unmarked' || bucket === 'absent';
+  const canApplyLeave = canApplyFullDay || ((bucket === 'checked_in' || bucket === 'checked_out') && !isHalfDayWorked);
   const hasCoords = record?.location_lat != null && record?.location_lng != null;
 
   const run = async (action) => {
@@ -60,7 +68,19 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
         </div>
 
         <div className="p-5 flex flex-col gap-3 text-sm">
-          {bucket === 'absent' ? (
+          {bucket === 'leave' || bucket === 'half_day_leave' ? (
+            <div className="flex flex-col gap-1 text-[#6941C6] bg-[#F4F3FF] rounded-lg px-3 py-2 text-xs">
+              <span className="flex items-center gap-2 font-bold">
+                <CalendarMinus className="w-4 h-4" />
+                {bucket === 'leave' ? 'On leave for this day' : 'Half-day leave — not checked in'}
+              </span>
+              {record?.leave_reason && <span className="text-[#344054] whitespace-pre-wrap break-words">Reason: {record.leave_reason}</span>}
+            </div>
+          ) : bucket === 'holiday' ? (
+            <div className="flex items-center gap-2 text-[#344054] bg-[#F2F4F7] rounded-lg px-3 py-2 text-xs font-bold">
+              <PartyPopper className="w-4 h-4" /> Holiday — {row.holiday}. No check-in needed.
+            </div>
+          ) : bucket === 'absent' ? (
             <div className="flex items-center gap-2 text-[#B54708] bg-[#FEF0C7] rounded-lg px-3 py-2 text-xs font-bold">
               <ShieldAlert className="w-4 h-4" /> Confirmed absent for this day
             </div>
@@ -78,6 +98,12 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
             </div>
           ) : (
             <>
+              {isHalfDayWorked && (
+                <div className="flex flex-col gap-1 text-[#6941C6] bg-[#F4F3FF] rounded-lg px-3 py-2 text-xs">
+                  <span className="flex items-center gap-2 font-bold"><CalendarMinus className="w-4 h-4" /> Half-day leave</span>
+                  {record.leave_reason && <span className="text-[#344054] whitespace-pre-wrap break-words">Reason: {record.leave_reason}</span>}
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-[#667085] uppercase tracking-wide">Check-In</span>
                 <span className="font-semibold text-[#172033] flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {fmtTime(record.check_in_time)}</span>
@@ -160,7 +186,7 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
           {/* Admin override of the check-in-only Present rule: offered on any
               day without a real check-in (absent / holiday converted in place).
               Stored as 'admin_present' and labelled "Marked by admin". */}
-          {(bucket === 'unmarked' || bucket === 'absent' || bucket === 'emergency_holiday') && onMarkPresent && (
+          {(bucket === 'unmarked' || bucket === 'absent' || bucket === 'emergency_holiday' || bucket === 'holiday') && onMarkPresent && (
             <button
               onClick={() => run(() => onMarkPresent(employee.employee_type, employee.id))}
               disabled={isWorking}
@@ -169,9 +195,44 @@ export const AttendanceDetailsModal = ({ row, date, onClose, onCheckOut, onMarkA
               <UserCheck className="w-4 h-4" /> {isWorking ? 'Marking…' : 'Mark Present'}
             </button>
           )}
-          {/* checked_out and admin_present: view-only, no actions. */}
+          {canApplyLeave && onApplyLeave && (
+            <button
+              onClick={() => setIsLeaveOpen(true)}
+              disabled={isWorking}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-[#6941C6] text-white hover:bg-[#53389E] transition-all cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+            >
+              <CalendarMinus className="w-4 h-4" /> {canApplyFullDay ? 'Leave' : 'Half-Day Leave'}
+            </button>
+          )}
+          {hasLeave && onCancelLeave && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Cancel ${employee.full_name}'s leave for ${date}?`)) {
+                  run(() => onCancelLeave(employee.employee_type, employee.id));
+                }
+              }}
+              disabled={isWorking}
+              className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#D6BBFB] bg-white text-[#6941C6] hover:bg-[#F9F5FF] transition-all cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+            >
+              <X className="w-4 h-4" /> {isWorking ? 'Cancelling…' : 'Cancel Leave'}
+            </button>
+          )}
+          {/* checked_out and admin_present: view-only apart from leave. */}
         </div>
       </div>
+
+      {isLeaveOpen && (
+        <LeaveDialog
+          title={canApplyFullDay ? 'Leave' : 'Half-Day Leave'}
+          subtitle={`${employee.full_name} · ${date}`}
+          allowFullDay={canApplyFullDay}
+          onClose={() => setIsLeaveOpen(false)}
+          onSubmit={async ({ halfDay, reason }) => {
+            await onApplyLeave(employee.employee_type, employee.id, { halfDay, reason });
+            setIsLeaveOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };

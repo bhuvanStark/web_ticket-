@@ -62,18 +62,35 @@ export async function markProjectCompleteInApi(id) {
   return readApiData(res, 'mark project complete');
 }
 
-export async function deleteProjectInApi(id) {
-  const res = await authFetch(`${API_BASE_URL}/projects/${id}`, {
+// A project with activity history is refused with err.code 'HAS_ACTIVITIES'
+// (and err.activityCount) unless `withHistory` is passed, which archives it
+// for 3 days instead (restorable from the Archived tab).
+export async function deleteProjectInApi(id, { withHistory = false } = {}) {
+  const res = await authFetch(`${API_BASE_URL}/projects/${id}${withHistory ? '?withHistory=true' : ''}`, {
     method: 'DELETE',
     headers: authHeaders()
   });
+  const payload = await res.json().catch(() => null);
   if (!res.ok) {
-    const payload = await res.json().catch(() => null);
     const err = new Error(payload?.error || 'Failed to delete project');
-    err.code = res.status === 409 ? 'HAS_ACTIVITIES' : null;
+    err.code = payload?.code === 'HAS_ACTIVITIES' ? 'HAS_ACTIVITIES' : null;
+    err.activityCount = payload?.activityCount || 0;
     throw err;
   }
-  return true;
+  return payload?.data || { archived: false };
+}
+
+export async function fetchArchivedProjects() {
+  const res = await authFetch(`${API_BASE_URL}/projects/archived`, { headers: authHeaders() });
+  return readApiData(res, 'fetch archived projects');
+}
+
+export async function restoreProjectInApi(id) {
+  const res = await authFetch(`${API_BASE_URL}/projects/${id}/restore`, {
+    method: 'POST',
+    headers: authHeaders()
+  });
+  return readApiData(res, 'restore project');
 }
 
 // -- Project Activities --------------------------------------------------

@@ -18,6 +18,7 @@ import {
   reassignPendingInApi,
   deleteServiceRequestFromApi,
   subscribeToAdminServiceRequests,
+  fetchMyAdminPermissionsInApi,
   createTechnicianInApi,
   updateTechnicianInApi
 } from '../services/adminApiService';
@@ -33,6 +34,7 @@ import {
   updateProjectInApi,
   markProjectCompleteInApi,
   deleteProjectInApi,
+  restoreProjectInApi,
   assignProjectActivitiesInApi,
   updateActivityStatusInApi,
   completeActivityInApi,
@@ -52,6 +54,37 @@ import {
   checkOutInApi
 } from '../services/attendanceApiService';
 import { disableTechnicianPushOnLogout } from '../utils/webPush';
+
+// Admin page id -> the admin_permissions module that guards it on the
+// backend (routes/adminRoutes.js ADMIN_MODULES). Pages not listed need no
+// module permission.
+const ADMIN_PAGE_MODULES = {
+  approvals: 'approvals',
+  requests: 'requests',
+  projects: 'projects',
+  customers: 'customers',
+  locations: 'customers',
+  rooms: 'rooms',
+  technicians: 'technicians',
+  sales: 'sales',
+  'back-office': 'back_office',
+  attendance: 'attendance',
+  installations: 'installations',
+  inventory: 'inventory',
+  demos: 'demos',
+  calendar: 'calendar',
+  history: 'history',
+  reports: 'reports',
+  settings: 'settings'
+};
+// Modules the Settings page can switch off for everyone (enabledModules).
+const TOGGLEABLE_MODULES = ['approvals', 'requests', 'projects', 'customers', 'rooms', 'technicians',
+  'installations', 'inventory', 'demos', 'calendar', 'history', 'reports'];
+
+// Shared background refresh cadence for tickets / projects / attendance.
+// Every save already refreshes its own data immediately, so this only has to
+// pick up other users' changes.
+const POLL_INTERVAL_MS = 30000;
 
 // Reuse the same context object across Vite hot updates. Without this, a provider
 // refresh can briefly leave already-mounted consumers attached to the old context.
@@ -332,7 +365,7 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     const loadApiData = async () => {
       // Sales & Back-Office Roles V1 — this mount-only load has no other
-      // role gate at all, unlike the 3s polling effect further down, which
+      // role gate at all, unlike the polling effect further down, which
       // already correctly skips these two roles. Left ungated, it pulled
       // the full ticket/customer/location/room/technician rosters into a
       // Sales/Back-Office session on every page load/refresh — a real
@@ -471,6 +504,8 @@ export const AppProvider = ({ children }) => {
     };
   }, []);
 
+  const isProjectsPage = activePage === 'projects';
+
   // Poll PostgreSQL for ticket updates — and, on the exact same interval,
   // Project Category (V1) data. This reuses the one existing interval
   // rather than starting a second polling loop, but each fetch below is
@@ -482,7 +517,7 @@ export const AppProvider = ({ children }) => {
     // all (§3/§15.1: "Existing Ticket/Project endpoints must continue
     // rejecting Sales/Back-Office"). The backend already 403s them there
     // (see rejectRoles in server.js), but skipping the call entirely here
-    // avoids a pointless 403 request/console warning every 3s poll tick —
+    // avoids a pointless 403 request/console warning every poll tick —
     // admin and technician are both unaffected, exactly as before.
     const fetchLiveTickets = async () => {
       if (role === 'sales' || role === 'back_office') return;
@@ -552,27 +587,52 @@ export const AppProvider = ({ children }) => {
       }
     };
 
+    // A fetch still waiting on a slow response is never started again, so
+    // requests can't pile up behind each other.
+    const inFlight = new Set();
+    const runOnce = async (key, fetcher) => {
+      if (inFlight.has(key)) return;
+      inFlight.add(key);
+      try {
+        await fetcher();
+      } finally {
+        inFlight.delete(key);
+      }
+    };
+
     const tick = () => {
-      fetchLiveTickets();
-      fetchLiveProjects();
-      fetchLiveMyActivities();
-      fetchLiveMyAttendanceToday();
+      runOnce('tickets', fetchLiveTickets);
+      // Only ProjectsPage reads `projects`, so it is fetched only while that
+      // page is open (entering it restarts this effect and ticks at once).
+      if (isProjectsPage) runOnce('projects', fetchLiveProjects);
+      runOnce('myActivities', fetchLiveMyActivities);
+      runOnce('myAttendanceToday', fetchLiveMyAttendanceToday);
       // AttendancePage.jsx's own effect depends on this to re-run its
       // date/filter-scoped fetch on the same cadence, without a second
       // setInterval anywhere.
       setPollTick((t) => t + 1);
     };
 
+    // Background tabs don't poll; returning to the tab refreshes at once.
+    const tickIfVisible = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+
     tick();
-    const interval = setInterval(tick, 3000);
-    return () => clearInterval(interval);
-  }, [role, baseRole, currentUser?.id]);
+    const interval = setInterval(tickIfVisible, POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', tickIfVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', tickIfVisible);
+    };
+  }, [role, baseRole, currentUser?.id, isProjectsPage]);
 
   // Load the shared dashboard configuration (module toggles + role permissions)
   // from the backend so the Settings page choices survive a refresh. Only admin
-  // sessions can read this endpoint; a technician login skips it.
+  // sessions can read this endpoint. Re-runs on login, so a fresh sign-in
+  // gets the toggles without a page reload.
   useEffect(() => {
-    if (localStorage.getItem('base_role') === 'tech') return;
+    if (!isLoggedIn || baseRole !== 'admin') return;
 
     let cancelled = false;
     (async () => {
@@ -593,7 +653,41 @@ export const AppProvider = ({ children }) => {
     })();
 
     return () => { cancelled = true; };
-  }, []);
+  }, [isLoggedIn, baseRole]);
+
+  // The signed-in admin's own per-module access (admin_permissions; a Super
+  // Admin has every module). null until loaded — pages stay visible until
+  // then, and the backend enforces the same rules on every request anyway.
+  const [adminAccess, setAdminAccess] = useState(null);
+  useEffect(() => {
+    if (!isLoggedIn || baseRole !== 'admin') {
+      setAdminAccess(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const access = await fetchMyAdminPermissionsInApi();
+        if (!cancelled) setAdminAccess(access);
+      } catch (err) {
+        console.warn('Could not load admin permissions:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isLoggedIn, baseRole, currentUser?.id]);
+
+  // Whether the signed-in admin may open an admin page: the Settings module
+  // toggle first, then their own module permission. Pages with no module
+  // (dashboard, profile) are always allowed; Admin Roles is Super-Admin-only.
+  const canAccessAdminPage = useCallback((pageId) => {
+    const module = ADMIN_PAGE_MODULES[pageId];
+    if (TOGGLEABLE_MODULES.includes(module) && enabledModules && enabledModules[module] === false) return false;
+    if (!adminAccess) return true;
+    if (adminAccess.isSuperAdmin) return true;
+    if (pageId === 'staff') return false;
+    if (!module) return true;
+    return adminAccess.permissions?.[module] === true;
+  }, [adminAccess, enabledModules]);
 
   // Persist the current module toggles (and role permissions) to the backend.
   // Called by the Settings page's "Save Configuration Settings" button.
@@ -611,9 +705,9 @@ export const AppProvider = ({ children }) => {
     unifiedClient.verifyTechnicianPassword(technicianId, password);
 
   // Helper Toast function. Stable identity: this provider re-renders on every
-  // 3s poll tick, and pages list showToast in their useCallback/useEffect
+  // poll tick, and pages list showToast in their useCallback/useEffect
   // deps — a new function each render re-ran their fetches (and reset open
-  // popups to "Loading…") every 3 seconds.
+  // popups to "Loading…") on every poll.
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type, id: Date.now() });
     setTimeout(() => setToast(null), 4000);
@@ -1520,7 +1614,7 @@ export const AppProvider = ({ children }) => {
       setProjects(Array.isArray(refreshed) ? refreshed : []);
     } catch {
       // Isolated: the assignment itself already succeeded; a refresh hiccup
-      // here just means the summary catches up on the next 3s poll.
+      // here just means the summary catches up on the next poll.
     }
     showToast(`Assigned ${technicianIds.length} technician(s) for ${date}.`, 'success');
     return true;
@@ -1540,18 +1634,54 @@ export const AppProvider = ({ children }) => {
     }
   };
 
+  // No history: deleted outright. With history the API refuses until the
+  // admin confirms that the history goes too; the project is then archived
+  // for 3 days (restorable from the Archived tab) before being purged.
   const deleteProject = async (projectId) => {
+    let result;
     try {
-      await deleteProjectInApi(projectId);
+      result = await deleteProjectInApi(projectId);
     } catch (err) {
-      showToast(err.code === 'HAS_ACTIVITIES'
-        ? `Cannot delete ${projectId}: it has activity history.`
-        : `Delete failed: ${err.message}`, 'error');
-      return false;
+      if (err.code !== 'HAS_ACTIVITIES') {
+        showToast(`Delete failed: ${err.message}`, 'error');
+        return false;
+      }
+      const records = err.activityCount === 1 ? '1 activity record' : `${err.activityCount} activity records`;
+      const confirmed = window.confirm(
+        `${projectId} has ${records}. Deleting the project also deletes this history.\n\n` +
+        'It will stay in the Archived tab for 3 days, where you can restore it. After that it is deleted permanently.\n\n' +
+        'Delete the project and its history?'
+      );
+      if (!confirmed) return false;
+      try {
+        result = await deleteProjectInApi(projectId, { withHistory: true });
+      } catch (archiveErr) {
+        showToast(`Delete failed: ${archiveErr.message}`, 'error');
+        return false;
+      }
     }
     setProjects(prev => prev.filter(p => p.id !== projectId));
     if (selectedProjectId === projectId) setSelectedProjectId(null);
-    showToast(`Project ${projectId} deleted.`, 'info');
+    showToast(result?.archived
+      ? `Project ${projectId} archived. It will be permanently deleted in 3 days.`
+      : `Project ${projectId} deleted.`, 'info');
+    return true;
+  };
+
+  const restoreProject = async (projectId) => {
+    try {
+      await restoreProjectInApi(projectId);
+    } catch (err) {
+      showToast(`Restore failed: ${err.message}`, 'error');
+      return false;
+    }
+    try {
+      const refreshed = await fetchProjects({});
+      setProjects(Array.isArray(refreshed) ? refreshed : []);
+    } catch {
+      // The next poll picks it up.
+    }
+    showToast(`Project ${projectId} restored.`, 'success');
     return true;
   };
 
@@ -1568,6 +1698,17 @@ export const AppProvider = ({ children }) => {
     showToast(`Activity ${status.toLowerCase()}.`, 'success');
     return true;
   };
+
+  // Re-reads today's own attendance (e.g. after applying or cancelling a
+  // leave on My Attendance) so the dashboard banner updates at once.
+  const refreshMyAttendanceToday = useCallback(async () => {
+    try {
+      const today = await fetchMyAttendanceTodayInApi();
+      setMyAttendanceToday(today || null);
+    } catch (err) {
+      console.warn('Could not refresh today\'s attendance:', err);
+    }
+  }, []);
 
   // Attendance Category (V1) — mirrors updateActivityStatus/completeActivity
   // above: call the API, fold the result into local state, toast, and never
@@ -1716,6 +1857,7 @@ export const AppProvider = ({ children }) => {
         handleLogin,
         handleOtpLogin,
         handleLogout,
+        canAccessAdminPage,
         activePage,
         setActivePage,
         currentUser,
@@ -1799,6 +1941,7 @@ export const AppProvider = ({ children }) => {
         assignProjectTeam,
         markProjectComplete,
         deleteProject,
+        restoreProject,
         updateActivityStatus,
         completeActivity,
         reassignActivity,
@@ -1808,6 +1951,7 @@ export const AppProvider = ({ children }) => {
         // state locally and reads only `pollTick` from here, to refresh on
         // the same cadence as tickets/projects without a second interval.
         myAttendanceToday,
+        refreshMyAttendanceToday,
         checkIn,
         checkOut,
         pollTick,
