@@ -2,6 +2,7 @@
 // does not import from or touch serviceRequestService.js in any way.
 import { supabase } from '../config/supabaseClient.js';
 import { withTransaction } from '../config/database.js';
+import { listMembers, setTeam, logProjectEvent, expireUnacceptedAssignments } from './projectWorkspaceService.js';
 
 // A project deleted together with its history stays archived (hidden,
 // restorable) for this long before it is purged for good.
@@ -16,6 +17,7 @@ export const ARCHIVE_RETENTION_DAYS = 3;
 export const listProjects = async ({ tab, search = '' } = {}) => {
   try {
     await purgeExpiredArchivedProjects();
+    await expireUnacceptedAssignments();
 
     let query = supabase
       .from('projects')
@@ -25,6 +27,7 @@ export const listProjects = async ({ tab, search = '' } = {}) => {
 
     if (tab === 'completed') query = query.eq('status', 'Completed');
     else if (tab === 'active') query = query.in('status', ['Planning', 'Active']);
+    else if (tab === 'pending') query = query.eq('status', 'Pending Approval');
 
     if (search && search.trim()) {
       const term = `%${search.trim()}%`;
@@ -33,41 +36,47 @@ export const listProjects = async ({ tab, search = '' } = {}) => {
 
     const { data: projects, error } = await query;
     if (error) throw error;
-    if (!projects?.length) return [];
-
-    // The query builder has no GROUP BY support, so the "current daily
-    // assignments" summary (§8) is a second targeted query, grouped in JS —
-    // same technique used everywhere else in this codebase for anything the
-    // fluent builder can't express directly.
-    const projectIds = projects.map((p) => p.id);
-    const { data: activeActivities, error: activityError } = await supabase
-      .from('project_activities')
-      .select('*, technician(id, full_name)')
-      .in('project_id', projectIds)
-      .in('status', ['Assigned', 'Accepted'])
-      .order('scheduled_date', { ascending: true });
-    if (activityError) throw activityError;
-
-    const byProject = new Map();
-    for (const activity of activeActivities || []) {
-      if (!byProject.has(activity.project_id)) byProject.set(activity.project_id, []);
-      byProject.get(activity.project_id).push({
-        id: activity.id,
-        technician_id: activity.technician_id,
-        technician_name: activity.technician?.full_name || null,
-        scheduled_date: activity.scheduled_date,
-        scheduled_time: activity.scheduled_time,
-        status: activity.status
-      });
-    }
-
-    return projects.map((project) => ({
-      ...project,
-      active_activities: byProject.get(project.id) || []
-    }));
+    return await enrichProjects(projects || []);
   } catch (error) {
     throw new Error(`Failed to list projects: ${error.message}`);
   }
+};
+
+// Adds the current daily assignments, managers and team to project rows.
+const enrichProjects = async (projects) => {
+  if (!projects.length) return [];
+
+  // The query builder has no GROUP BY support, so the "current daily
+  // assignments" summary (§8) is a second targeted query, grouped in JS —
+  // same technique used everywhere else in this codebase for anything the
+  // fluent builder can't express directly.
+  const projectIds = projects.map((p) => p.id);
+  const { data: activeActivities, error: activityError } = await supabase
+    .from('project_activities')
+    .select('*, technician(id, full_name)')
+    .in('project_id', projectIds)
+    .in('status', ['Assigned', 'Accepted'])
+    .order('scheduled_date', { ascending: true });
+  if (activityError) throw activityError;
+
+  const byProject = new Map();
+  for (const activity of activeActivities || []) {
+    if (!byProject.has(activity.project_id)) byProject.set(activity.project_id, []);
+    byProject.get(activity.project_id).push({
+      id: activity.id,
+      technician_id: activity.technician_id,
+      technician_name: activity.technician?.full_name || null,
+      scheduled_date: activity.scheduled_date,
+      scheduled_time: activity.scheduled_time,
+      status: activity.status
+    });
+  }
+
+  const members = await listMembers(projectIds);
+  return projects.map((project) => withTeam({
+    ...project,
+    active_activities: byProject.get(project.id) || []
+  }, members.get(project.id)));
 };
 
 export const getProjectById = async (id) => {
@@ -84,84 +93,69 @@ export const getProjectById = async (id) => {
   }
 };
 
-export const createProject = async (payload) => {
-  try {
-    const insertPayload = Object.fromEntries(
-      Object.entries({
-        name: payload.name?.trim(),
-        customer: payload.customer?.trim(),
-        location: payload.location?.trim(),
-        start_date: payload.start_date || null,
-        end_date: payload.end_date || null,
-        description: payload.description?.trim() || null,
-        responsible_admin_id: payload.responsible_admin_id || null,
-        status: 'Planning'
-      }).filter(([, value]) => value !== undefined)
+// Managers (technicians who run the project) and the view-only team, plus
+// the counts the list shows.
+const withTeam = (project, members = []) => ({
+  ...project,
+  managers: members.filter((m) => m.role === 'manager'),
+  team: members.filter((m) => m.role === 'viewer'),
+  team_size: members.length
+});
+
+const toDateOrNull = (value) => (value ? String(value).slice(0, 10) : null);
+const textOrNull = (value) => (typeof value === 'string' ? value.trim() || null : value ?? null);
+
+// One project in the same shape as a listProjects row.
+const getProjectSummary = async (id) => {
+  const project = await getProjectById(id);
+  if (!project) return null;
+  const [enriched] = await enrichProjects([project]);
+  return enriched;
+};
+
+// Create + team in one transaction: a bad team selection never leaves a
+// half-created project behind.
+export const createProject = async (payload, actor) => {
+  const id = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO projects (name, customer, location, start_date, end_date, description, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Planning') RETURNING id`,
+      [payload.name.trim(), payload.customer.trim(), payload.location.trim(),
+        toDateOrNull(payload.start_date), toDateOrNull(payload.end_date), textOrNull(payload.description)]
     );
-
-    // No `id` key here — the column DEFAULT (nextval on project_id_seq) fires.
-    const { data, error } = await supabase
-      .from('projects')
-      .insert([insertPayload])
-      .select('*, admin(id, full_name, email)')
-      .single();
-    if (error) throw error;
-    return data;
-  } catch (error) {
-    throw new Error(`Failed to create project: ${error.message}`);
-  }
+    const projectId = rows[0].id;
+    await logProjectEvent(client, projectId, actor, 'created', 'Project created');
+    await setTeam(projectId, { manager_ids: payload.manager_ids, viewer_ids: payload.viewer_ids }, actor, client);
+    return projectId;
+  });
+  return getProjectSummary(id);
 };
 
-export const updateProject = async (id, payload) => {
-  try {
-    const allowed = ['name', 'customer', 'location', 'start_date', 'end_date', 'description', 'responsible_admin_id'];
-    const updateData = {};
-    for (const key of allowed) {
-      if (key in payload) {
-        updateData[key] = typeof payload[key] === 'string' ? payload[key].trim() || null : (payload[key] ?? null);
-      }
+const UPDATABLE = ['name', 'customer', 'location', 'start_date', 'end_date', 'description', 'responsible_admin_id'];
+
+export const updateProject = async (id, payload, actor) => {
+  await withTransaction(async (client) => {
+    const sets = [];
+    const values = [id];
+    for (const key of UPDATABLE) {
+      if (!(key in payload)) continue;
+      const value = key.endsWith('_date') ? toDateOrNull(payload[key]) : textOrNull(payload[key]);
+      values.push(value);
+      sets.push(`${key} = $${values.length}`);
     }
-    if (Object.keys(updateData).length === 0) throw new Error('No updatable fields provided');
-
-    const { data, error } = await supabase
-      .from('projects')
-      .update(updateData)
-      .eq('id', id)
-      .select('*, admin(id, full_name, email)')
-      .single();
-    if (error) throw error;
-    return data;
-  } catch (error) {
-    throw new Error(`Failed to update project: ${error.message}`);
-  }
-};
-
-// Admin explicitly closes the project. Blocked while any daily activity is
-// still Assigned/Accepted (spec §9) — completing a daily activity never
-// auto-completes the project.
-export const markProjectComplete = async (id) => {
-  const { data: unresolved, error: unresolvedError } = await supabase
-    .from('project_activities')
-    .select('id')
-    .eq('project_id', id)
-    .in('status', ['Assigned', 'Accepted']);
-  if (unresolvedError) throw new Error(`Failed to check activities: ${unresolvedError.message}`);
-
-  if (unresolved && unresolved.length > 0) {
-    const err = new Error(`Cannot mark project complete: ${unresolved.length} activity(ies) still active`);
-    err.code = 'UNRESOLVED_ACTIVITIES';
-    err.count = unresolved.length;
-    throw err;
-  }
-
-  const { data, error } = await supabase
-    .from('projects')
-    .update({ status: 'Completed' })
-    .eq('id', id)
-    .select('*, admin(id, full_name, email)')
-    .single();
-  if (error) throw new Error(`Failed to mark project complete: ${error.message}`);
-  return data;
+    const { rows } = await client.query(
+      sets.length
+        ? `UPDATE projects SET ${sets.join(', ')} WHERE id = $1 RETURNING id`
+        : 'SELECT id FROM projects WHERE id = $1 FOR UPDATE',
+      values
+    );
+    if (!rows[0]) throw Object.assign(new Error('Project not found'), { status: 404 });
+    if (sets.length) await logProjectEvent(client, id, actor, 'edited', 'Project details updated');
+    if ('manager_ids' in payload || 'viewer_ids' in payload) {
+      await setTeam(id, { manager_ids: payload.manager_ids, viewer_ids: payload.viewer_ids }, actor, client);
+    }
+  });
+  return getProjectSummary(id);
 };
 
 const projectError = (message, code, extra = {}) => Object.assign(new Error(message), { code, ...extra });

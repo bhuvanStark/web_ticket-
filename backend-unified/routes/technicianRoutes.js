@@ -539,6 +539,7 @@ router.patch('/project-activities/:id/complete', requireAuth, validateUUID, vali
     if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
     if (error.code === 'FORBIDDEN') return res.status(403).json({ success: false, error: error.message });
     if (error.code === 'INVALID_TRANSITION') return res.status(409).json({ success: false, error: error.message });
+    if (error.code === 'VALIDATION') return res.status(400).json({ success: false, error: error.message });
     res.status(500).json({ success: false, error: 'Error', message: error.message });
   }
 });

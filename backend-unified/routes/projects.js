@@ -10,6 +10,7 @@ import {
 } from '../middleware/validation.js';
 import * as projectService from '../services/projectService.js';
 import * as projectActivityService from '../services/projectActivityService.js';
+import * as workspace from '../services/projectWorkspaceService.js';
 
 const router = express.Router();
 router.use(requireAdmin, requirePermission('projects'));
@@ -36,6 +37,26 @@ router.get('/admins', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// GET /api/projects/technicians — Managers/Team picker source (active
+// technicians). Lives here so an admin with only the Projects module can
+// still build a team.
+router.get('/technicians', async (req, res) => {
+  try {
+    const data = await workspace.listAssignableTechnicians();
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing technicians for projects:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Service errors carrying an HTTP status (validation, locked, duplicate).
+const sendError = (res, error, label) => {
+  if (error.status) return res.status(error.status).json({ success: false, error: error.message, code: error.code });
+  console.error(`Error ${label}:`, error);
+  return res.status(500).json({ success: false, error: error.message });
+};
 
 // GET /api/projects/archived — projects deleted with their history, still
 // restorable (see projectService.ARCHIVE_RETENTION_DAYS).
@@ -80,39 +101,28 @@ router.get('/:id', validateProjectId, async (req, res) => {
 // POST /api/projects
 router.post('/', validateProject, async (req, res) => {
   try {
-    const data = await projectService.createProject(req.body);
+    const actor = await workspace.loadActor(req.user);
+    const data = await projectService.createProject(req.body, actor);
     res.status(201).json({ success: true, data, message: 'Project created successfully' });
   } catch (error) {
-    console.error('Error creating project:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendError(res, error, 'creating project');
   }
 });
 
 // PATCH /api/projects/:id
 router.patch('/:id', validateProjectId, rejectArchived, validateProjectUpdate, async (req, res) => {
   try {
-    const data = await projectService.updateProject(req.params.id, req.body);
+    const actor = await workspace.loadActor(req.user);
+    const data = await projectService.updateProject(req.params.id, req.body, actor);
     res.json({ success: true, data, message: 'Project updated successfully' });
   } catch (error) {
-    console.error('Error updating project:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendError(res, error, 'updating project');
   }
 });
 
-// PATCH /api/projects/:id/complete — admin closes the project. Blocked
-// (409) while any daily activity is still Assigned/Accepted.
-router.patch('/:id/complete', validateProjectId, rejectArchived, async (req, res) => {
-  try {
-    const data = await projectService.markProjectComplete(req.params.id);
-    res.json({ success: true, data, message: 'Project marked complete' });
-  } catch (error) {
-    if (error.code === 'UNRESOLVED_ACTIVITIES') {
-      return res.status(409).json({ success: false, error: error.message, count: error.count });
-    }
-    console.error('Error completing project:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+// Completion goes through the approval flow (POST
+// /api/project-workspace/:id/submit, then a Super Admin's review) — there is
+// no direct "mark complete" endpoint any more.
 
 // DELETE /api/projects/:id[?withHistory=true] — no history: deleted now.
 // With history: 409 HAS_ACTIVITIES (+ activityCount) unless withHistory=true,
@@ -159,25 +169,16 @@ router.get('/:id/activities', validateProjectId, async (req, res) => {
   }
 });
 
-// POST /api/projects/:id/activities — bulk-create one activity per selected
-// technician for one date+time. All-or-nothing: if any technician already
-// has an active activity that day, the whole call is rejected (409).
+// POST /api/projects/:id/activities — one activity per selected technician
+// for one date+time, all-or-nothing. Same rules as the workspace endpoint:
+// only the project's team, never while awaiting approval or completed.
 router.post('/:id/activities', validateProjectId, rejectArchived, validateAssignActivities, async (req, res) => {
   try {
-    const { scheduled_date, scheduled_time, technician_ids } = req.body;
-    const data = await projectActivityService.createActivitiesBulk({
-      project_id: req.params.id,
-      scheduled_date,
-      scheduled_time,
-      technician_ids
-    });
-    res.status(201).json({ success: true, data, message: `Assigned ${data.length} technician(s)` });
+    const actor = await workspace.loadActor(req.user);
+    const data = await workspace.assignActivities(req.params.id, req.body, actor);
+    res.status(201).json({ success: true, data, message: `Assigned ${data.assigned} technician(s)` });
   } catch (error) {
-    if (error.code === 'DUPLICATE_ACTIVITY') {
-      return res.status(409).json({ success: false, error: error.message });
-    }
-    console.error('Error assigning project activities:', error);
-    res.status(500).json({ success: false, error: error.message });
+    sendError(res, error, 'assigning project activities');
   }
 });
 

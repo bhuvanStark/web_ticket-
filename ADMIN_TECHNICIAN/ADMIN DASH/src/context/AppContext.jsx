@@ -32,13 +32,10 @@ import {
   fetchTechnicianProjectActivitiesInApi,
   createProjectInApi,
   updateProjectInApi,
-  markProjectCompleteInApi,
   deleteProjectInApi,
   restoreProjectInApi,
-  assignProjectActivitiesInApi,
   updateActivityStatusInApi,
-  completeActivityInApi,
-  reassignActivityInApi
+  completeActivityInApi
 } from '../services/projectApiService';
 
 // Attendance Category (V1) — a separate module from Service Tickets and
@@ -256,7 +253,6 @@ export const AppProvider = ({ children }) => {
   // Project Category (V1) modal state — mirrors the ticket modal pattern above.
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [projectModalMode, setProjectModalMode] = useState('create'); // 'create' | 'edit'
-  const [isAssignProjectTeamModalOpen, setIsAssignProjectTeamModalOpen] = useState(false);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -659,8 +655,9 @@ export const AppProvider = ({ children }) => {
   }, [isLoggedIn, baseRole]);
 
   // The signed-in admin's own per-module access (admin_permissions; a Super
-  // Admin has every module). null until loaded — pages stay visible until
-  // then, and the backend enforces the same rules on every request anyway.
+  // Admin has every module). null until loaded — until then only pages with
+  // no module are open, so an admin never glimpses a module they weren't
+  // granted. A failed load is retried with a growing delay.
   const [adminAccess, setAdminAccess] = useState(null);
   useEffect(() => {
     if (!isLoggedIn || baseRole !== 'admin') {
@@ -668,15 +665,18 @@ export const AppProvider = ({ children }) => {
       return;
     }
     let cancelled = false;
-    (async () => {
+    let timer = null;
+    const load = async (attempt) => {
       try {
         const access = await fetchMyAdminPermissionsInApi();
         if (!cancelled) setAdminAccess(access);
       } catch (err) {
         console.warn('Could not load admin permissions:', err);
+        if (!cancelled) timer = setTimeout(() => load(attempt + 1), Math.min(30000, 2000 * 2 ** attempt));
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    load(0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [isLoggedIn, baseRole, currentUser?.id]);
 
   // Whether the signed-in admin may open an admin page: the Settings module
@@ -685,7 +685,7 @@ export const AppProvider = ({ children }) => {
   const canAccessAdminPage = useCallback((pageId) => {
     const module = ADMIN_PAGE_MODULES[pageId];
     if (TOGGLEABLE_MODULES.includes(module) && enabledModules && enabledModules[module] === false) return false;
-    if (!adminAccess) return true;
+    if (!adminAccess) return !module && pageId !== 'staff';
     if (adminAccess.isSuperAdmin) return true;
     if (pageId === 'staff') return false;
     if (!module) return true;
@@ -1599,43 +1599,17 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  // Date + Time + multiple technicians -> one independent activity per
-  // technician. All-or-nothing: a conflict rejects the whole assignment.
-  const assignProjectTeam = async (projectId, { date, time, technicianIds }) => {
-    try {
-      await assignProjectActivitiesInApi(projectId, { scheduledDate: date, scheduledTime: time, technicianIds });
-    } catch (err) {
-      showToast(`Assignment failed: ${err.message}`, 'error');
-      return false;
-    }
-    // Re-fetch this project's active activities rather than hand-rolling the
-    // merge — createActivitiesBulk's response and the project summary's
-    // active_activities shape are both server-derived; refetching keeps them
-    // in sync with zero risk of drifting apart.
+  // Re-reads the project list after a change made in the project workspace
+  // (assignments, files, approval). Isolated: a failure only means the list
+  // catches up on the next poll.
+  const refreshProjects = useCallback(async () => {
     try {
       const refreshed = await fetchProjects({});
       setProjects(Array.isArray(refreshed) ? refreshed : []);
     } catch {
-      // Isolated: the assignment itself already succeeded; a refresh hiccup
-      // here just means the summary catches up on the next poll.
+      // next poll picks it up
     }
-    showToast(`Assigned ${technicianIds.length} technician(s) for ${date}.`, 'success');
-    return true;
-  };
-
-  const markProjectComplete = async (projectId) => {
-    try {
-      const updated = await markProjectCompleteInApi(projectId);
-      setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, ...updated } : p)));
-      showToast(`Project ${projectId} marked complete.`, 'success');
-      return true;
-    } catch (err) {
-      showToast(err.code === 'UNRESOLVED_ACTIVITIES'
-        ? `Cannot complete ${projectId}: it still has active daily activities.`
-        : `Could not complete project: ${err.message}`, 'error');
-      return false;
-    }
-  };
+  }, []);
 
   // No history: deleted outright. With history the API refuses until the
   // admin confirms that the history goes too; the project is then archived
@@ -1749,7 +1723,7 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  // Light completion: notes + completed_at only (no service-report shape).
+  // Light completion: the day's comment (mandatory) + completed_at.
   const completeActivity = async (activityId, completionNotes = '') => {
     try {
       const updated = await completeActivityInApi(activityId, completionNotes);
@@ -1762,27 +1736,6 @@ export const AppProvider = ({ children }) => {
         : `Could not complete activity: ${err.message}`, 'error');
       return false;
     }
-  };
-
-  // Admin reassigns a daily activity to a different technician. History-safe
-  // on the backend: the original row becomes Cancelled, never deleted.
-  const reassignActivity = async (activityId, newTechnicianId) => {
-    try {
-      await reassignActivityInApi(activityId, newTechnicianId);
-    } catch (err) {
-      showToast(err.code === 'DUPLICATE_ACTIVITY'
-        ? 'That technician already has an activity for this project on this date.'
-        : `Reassignment failed: ${err.message}`, 'error');
-      return false;
-    }
-    try {
-      const refreshed = await fetchProjects({});
-      setProjects(Array.isArray(refreshed) ? refreshed : []);
-    } catch {
-      // Isolated — see assignProjectTeam's comment above.
-    }
-    showToast('Activity reassigned.', 'success');
-    return true;
   };
 
   const selectedTicket = (tickets || []).find(t => isSameTicket(t, selectedTicketId));
@@ -1861,6 +1814,7 @@ export const AppProvider = ({ children }) => {
         handleOtpLogin,
         handleLogout,
         canAccessAdminPage,
+        adminAccessReady: adminAccess !== null,
         activePage,
         setActivePage,
         currentUser,
@@ -1937,17 +1891,13 @@ export const AppProvider = ({ children }) => {
         setIsNewProjectModalOpen,
         projectModalMode,
         setProjectModalMode,
-        isAssignProjectTeamModalOpen,
-        setIsAssignProjectTeamModalOpen,
         createProject,
         updateProject,
-        assignProjectTeam,
-        markProjectComplete,
+        refreshProjects,
         deleteProject,
         restoreProject,
         updateActivityStatus,
         completeActivity,
-        reassignActivity,
 
         // Attendance Category (V1) — additive, separate from tickets and
         // projects. AttendancePage.jsx (admin) manages its own list/filter

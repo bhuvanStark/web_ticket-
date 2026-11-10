@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { X, Briefcase, AlertCircle } from 'lucide-react';
-import { fetchResponsibleAdmins } from '../../services/projectApiService';
+import { fetchProjectTechnicians } from '../../services/projectApiService';
+import { TeamPicker } from './TeamPicker';
 
 // Create/Edit form for a Project. Shell copied from CreateTicketModal.jsx to
 // match the existing ticket-modal visual language exactly.
@@ -23,8 +24,9 @@ export const NewProjectModal = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [description, setDescription] = useState('');
-  const [responsibleAdminId, setResponsibleAdminId] = useState('');
-  const [admins, setAdmins] = useState([]);
+  const [managerIds, setManagerIds] = useState([]);
+  const [viewerIds, setViewerIds] = useState([]);
+  const [technicians, setTechnicians] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -39,7 +41,8 @@ export const NewProjectModal = () => {
       setStartDate((selectedProject.start_date || '').slice(0, 10));
       setEndDate((selectedProject.end_date || '').slice(0, 10));
       setDescription(selectedProject.description || '');
-      setResponsibleAdminId(selectedProject.responsible_admin_id || '');
+      setManagerIds((selectedProject.managers || []).map((m) => m.id));
+      setViewerIds((selectedProject.team || []).map((m) => m.id));
     } else {
       setName('');
       setCustomer('');
@@ -47,25 +50,32 @@ export const NewProjectModal = () => {
       setStartDate('');
       setEndDate('');
       setDescription('');
-      setResponsibleAdminId('');
+      setManagerIds([]);
+      setViewerIds([]);
     }
   }, [isNewProjectModalOpen, isEdit, selectedProject]);
 
-  // Isolated: the admin dropdown is a small convenience list. If it fails to
-  // load, the form still works — the field just falls back to unassigned.
+  // Picker source: active technicians. Current members who have since left
+  // are merged in so editing never silently drops them.
   useEffect(() => {
     if (!isNewProjectModalOpen) return;
     let cancelled = false;
     (async () => {
       try {
-        const data = await fetchResponsibleAdmins();
-        if (!cancelled) setAdmins(Array.isArray(data) ? data : []);
+        const data = await fetchProjectTechnicians();
+        if (!cancelled) setTechnicians(Array.isArray(data) ? data : []);
       } catch {
-        if (!cancelled) setAdmins([]);
+        if (!cancelled) setTechnicians([]);
       }
     })();
     return () => { cancelled = true; };
   }, [isNewProjectModalOpen]);
+
+  const people = (() => {
+    const map = new Map(technicians.map((t) => [t.id, t]));
+    if (isEdit) [...(selectedProject.managers || []), ...(selectedProject.team || [])].forEach((m) => { if (!map.has(m.id)) map.set(m.id, m); });
+    return [...map.values()];
+  })();
 
   if (!isNewProjectModalOpen) return null;
 
@@ -87,7 +97,8 @@ export const NewProjectModal = () => {
       start_date: startDate || null,
       end_date: endDate || null,
       description: description.trim() || null,
-      responsible_admin_id: responsibleAdminId || null
+      manager_ids: managerIds,
+      viewer_ids: viewerIds.filter((id) => !managerIds.includes(id))
     };
 
     const ok = isEdit
@@ -191,20 +202,6 @@ export const NewProjectModal = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-[#172033] mb-1">Responsible Admin</label>
-              <select
-                value={responsibleAdminId}
-                onChange={(e) => setResponsibleAdminId(e.target.value)}
-                className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs font-semibold outline-none focus:border-[#004898]"
-              >
-                <option value="">Unassigned</option>
-                {admins.map((a) => (
-                  <option key={a.id} value={a.id}>{a.full_name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
               <label className="block text-xs font-bold text-[#172033] mb-1">Description / Scope <span className="font-normal text-[#98A2B3]">(optional)</span></label>
               <textarea
                 value={description}
@@ -214,6 +211,27 @@ export const NewProjectModal = () => {
                 className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898] resize-none"
               />
             </div>
+          </div>
+
+          <div className="p-4 rounded-xl border border-[#E4E7EC] space-y-4">
+            <div>
+              <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#004898]">2. Project Team</h4>
+              <p className="text-[11px] text-[#667085] mt-0.5">Managers assign the daily work (to the team or themselves), upload files and send the project for completion. The team can see the whole project but only change their own work.</p>
+            </div>
+            <TeamPicker
+              label="Managers"
+              people={people}
+              value={managerIds}
+              onChange={(ids) => { setManagerIds(ids); setViewerIds((v) => v.filter((id) => !ids.includes(id))); }}
+              placeholder="Search technicians to manage this project…"
+            />
+            <TeamPicker
+              label="Team (view-only)"
+              people={people.filter((p) => !managerIds.includes(p.id))}
+              value={viewerIds}
+              onChange={setViewerIds}
+              placeholder="Search technicians who can be assigned…"
+            />
           </div>
         </form>
 

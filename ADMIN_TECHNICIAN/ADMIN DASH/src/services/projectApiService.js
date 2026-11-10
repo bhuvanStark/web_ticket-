@@ -4,6 +4,7 @@
 // uses) rather than duplicating them. Does not import from or modify
 // anything ticket-related.
 import { authFetch, readApiData, authHeaders, API_BASE_URL } from './adminApiService';
+import unifiedClient from '../api/unifiedClient';
 
 // -- Projects ----------------------------------------------------------
 
@@ -18,11 +19,6 @@ export async function fetchProjects({ tab, search = '' } = {}) {
   const qs = params.toString();
   const res = await authFetch(`${API_BASE_URL}/projects${qs ? `?${qs}` : ''}`, { headers: authHeaders() });
   return readApiData(res, 'fetch projects');
-}
-
-export async function fetchResponsibleAdmins() {
-  const res = await authFetch(`${API_BASE_URL}/projects/admins`, { headers: authHeaders() });
-  return readApiData(res, 'fetch admins');
 }
 
 export async function fetchProjectDetail(id) {
@@ -46,20 +42,6 @@ export async function updateProjectInApi(id, payload) {
     body: JSON.stringify(payload)
   });
   return readApiData(res, 'update project');
-}
-
-export async function markProjectCompleteInApi(id) {
-  const res = await authFetch(`${API_BASE_URL}/projects/${id}/complete`, {
-    method: 'PATCH',
-    headers: authHeaders(true)
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => null);
-    const err = new Error(payload?.error || 'Failed to mark project complete');
-    err.code = res.status === 409 ? 'UNRESOLVED_ACTIVITIES' : null;
-    throw err;
-  }
-  return readApiData(res, 'mark project complete');
 }
 
 // A project with activity history is refused with err.code 'HAS_ACTIVITIES'
@@ -95,32 +77,6 @@ export async function restoreProjectInApi(id) {
 
 // -- Project Activities --------------------------------------------------
 
-export async function fetchProjectActivities(projectId, scope = 'all') {
-  const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/activities?scope=${scope}`, { headers: authHeaders() });
-  return readApiData(res, 'fetch project activities');
-}
-
-// Bulk-assign one activity per selected technician. All-or-nothing: a 409
-// means at least one technician already had an active activity that date.
-export async function assignProjectActivitiesInApi(projectId, { scheduledDate, scheduledTime, technicianIds }) {
-  const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/activities`, {
-    method: 'POST',
-    headers: authHeaders(true),
-    body: JSON.stringify({
-      scheduled_date: scheduledDate,
-      scheduled_time: scheduledTime,
-      technician_ids: technicianIds
-    })
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => null);
-    const err = new Error(payload?.error || 'Failed to assign technicians');
-    err.code = res.status === 409 ? 'DUPLICATE_ACTIVITY' : null;
-    throw err;
-  }
-  return readApiData(res, 'assign project activities');
-}
-
 export async function updateActivityStatusInApi(activityId, status) {
   const res = await authFetch(`${API_BASE_URL}/project-activities/${activityId}/status`, {
     method: 'PATCH',
@@ -128,21 +84,6 @@ export async function updateActivityStatusInApi(activityId, status) {
     body: JSON.stringify({ status })
   });
   return readApiData(res, 'update activity status');
-}
-
-export async function reassignActivityInApi(activityId, newTechnicianId) {
-  const res = await authFetch(`${API_BASE_URL}/project-activities/${activityId}/reassign`, {
-    method: 'PATCH',
-    headers: authHeaders(true),
-    body: JSON.stringify({ technician_id: newTechnicianId })
-  });
-  if (!res.ok) {
-    const payload = await res.json().catch(() => null);
-    const err = new Error(payload?.error || 'Failed to reassign activity');
-    err.code = res.status === 409 ? 'DUPLICATE_ACTIVITY' : null;
-    throw err;
-  }
-  return readApiData(res, 'reassign activity');
 }
 
 // -- Technician-side (own activities) ------------------------------------
@@ -175,4 +116,89 @@ export async function completeActivityInApi(activityId, completionNotes) {
     throw err;
   }
   return readApiData(res, 'complete activity');
+}
+
+// -- Projects workspace (managers, team, files, approval) ----------------
+
+// Managers/Team picker source: active technicians.
+export async function fetchProjectTechnicians() {
+  const res = await authFetch(`${API_BASE_URL}/projects/technicians`, { headers: authHeaders() });
+  return readApiData(res, 'fetch technicians');
+}
+
+// Projects a technician can open. An admin in "view as technician" passes
+// that technician's id.
+export async function fetchMyProjects(technicianId) {
+  const qs = technicianId ? `?technician_id=${encodeURIComponent(technicianId)}` : '';
+  const res = await authFetch(`${API_BASE_URL}/project-workspace${qs}`, { headers: authHeaders() });
+  return readApiData(res, 'fetch projects');
+}
+
+export async function fetchProjectWorkspace(id) {
+  const res = await authFetch(`${API_BASE_URL}/project-workspace/${id}`, { headers: authHeaders() });
+  return readApiData(res, 'load project');
+}
+
+const workspaceCall = async (path, method, body, operation) => {
+  const res = await authFetch(`${API_BASE_URL}/project-workspace/${path}`, {
+    method,
+    headers: authHeaders(body !== undefined),
+    body: body !== undefined ? JSON.stringify(body) : undefined
+  });
+  return readApiData(res, operation);
+};
+
+export const assignProjectWork = (id, { date, time, technicianIds }) =>
+  workspaceCall(`${id}/activities`, 'POST', { scheduled_date: date, scheduled_time: time, technician_ids: technicianIds }, 'assign work');
+
+export const reassignProjectWork = (id, activityId, technicianId) =>
+  workspaceCall(`${id}/activities/${activityId}/reassign`, 'PATCH', { technician_id: technicianId }, 'reassign work');
+
+export const cancelProjectWork = (id, activityId) =>
+  workspaceCall(`${id}/activities/${activityId}/cancel`, 'PATCH', undefined, 'cancel work');
+
+export const deleteProjectFile = (id, fileId) => workspaceCall(`${id}/files/${fileId}`, 'DELETE', undefined, 'delete file');
+
+export const submitProjectCompletion = (id, fileId) =>
+  workspaceCall(`${id}/submit`, 'POST', { file_id: fileId }, 'submit for approval');
+
+export const reviewProjectCompletion = (id, decision, reason) =>
+  workspaceCall(`${id}/review`, 'POST', { decision, reason }, 'review completion');
+
+// Raw upload (body = optional JPEG thumbnail + the file) through XHR so the
+// UI can show progress. Retries once after refreshing an expired token, like
+// authFetch.
+export function uploadProjectFile(id, { category, displayName, file, fileName, thumbnail }, onProgress) {
+  const send = (token) => new Promise((resolve, reject) => {
+    const qs = new URLSearchParams({
+      category, display_name: displayName, file_name: fileName || file.name, thumb_bytes: String(thumbnail?.size || 0)
+    });
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}/project-workspace/${id}/files?${qs}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300 && payload?.success !== false) resolve(payload?.data);
+      else reject(Object.assign(new Error(payload?.error || payload?.message || 'Upload failed'), { status: xhr.status }));
+    };
+    xhr.onerror = () => reject(new Error('Upload failed — check your connection'));
+    xhr.send(thumbnail ? new Blob([thumbnail, file]) : file);
+  });
+  return send(localStorage.getItem('admin_access_token')).catch(async (error) => {
+    if (error.status !== 401) throw error;
+    return send(await unifiedClient.refreshAccessToken());
+  });
+}
+
+// Files are immutable, so the browser's HTTP cache serves repeat views.
+export async function fetchProjectFileBlob(id, fileId, { thumbnail = false } = {}) {
+  const res = await authFetch(`${API_BASE_URL}/project-workspace/${id}/files/${fileId}${thumbnail ? '?thumb=1' : ''}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(payload?.error || 'Could not open the file');
+  }
+  return res.blob();
 }

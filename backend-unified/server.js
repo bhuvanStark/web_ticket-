@@ -20,6 +20,7 @@ import teamMembersRouter from './routes/teamMembers.js';
 import passwordResetRouter from './routes/passwordReset.js';
 import projectsRouter from './routes/projects.js';
 import projectActivitiesRouter from './routes/projectActivities.js';
+import projectWorkspaceRouter from './routes/projectWorkspace.js';
 // Attendance Category (V1) — separate module from Service Tickets and
 // Projects. Additive only; see routes/attendance.js and
 // routes/adminAttendance.js.
@@ -121,6 +122,7 @@ app.use('/api/service-requests', rejectRoles(['sales', 'back_office']), serviceR
 // directly below it in the admin nav. Additive only.
 app.use('/api/projects', rejectRoles(['sales', 'back_office']), projectsRouter);
 app.use('/api/project-activities', rejectRoles(['sales', 'back_office']), projectActivitiesRouter);
+app.use('/api/project-workspace', projectWorkspaceRouter);
 // Customer master data — never part of the Sales/Back-Office roles.
 app.use('/api/rooms', rejectRoles(['sales', 'back_office']), roomsRouter);
 app.use('/api/customers', rejectRoles(['sales', 'back_office']), customersRouter);

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Building2, MapPin, Calendar, Clock, UserCheck, FileCheck, CheckCircle } from 'lucide-react';
+import { Building2, MapPin, Calendar, Clock, UserCheck, FileCheck, CheckCircle, ExternalLink } from 'lucide-react';
 import { StatusBadge } from '../common/Badge';
 
 // Technician's own Daily Project Activities — a self-contained master-detail
@@ -8,7 +8,7 @@ import { StatusBadge } from '../common/Badge';
 // Assigned/Accepted activities are shown here; Completed/Cancelled ones move
 // to Service History (per spec §5's "Activity leaves active technician view").
 export const ProjectActivitiesPanel = () => {
-  const { myProjectActivities, updateActivityStatus, completeActivity } = useApp();
+  const { myProjectActivities, updateActivityStatus, completeActivity, setSelectedProjectId } = useApp();
   const [selectedId, setSelectedId] = useState(null);
   const [notes, setNotes] = useState('');
   const [showCompleteForm, setShowCompleteForm] = useState(false);
@@ -23,7 +23,7 @@ export const ProjectActivitiesPanel = () => {
   };
 
   const handleComplete = async () => {
-    if (!activeActivity || submitting) return;
+    if (!activeActivity || submitting || !notes.trim()) return;
     setSubmitting(true);
     const ok = await completeActivity(activeActivity.id, notes);
     setSubmitting(false);
@@ -80,6 +80,11 @@ export const ProjectActivitiesPanel = () => {
 
             <div className="flex flex-wrap items-center gap-3">
               {activeActivity.status === 'Assigned' && (
+                <p className="w-full text-[11px] font-semibold text-[#B54708]">
+                  Accept within 36 hours of assignment, or it is cancelled automatically.
+                </p>
+              )}
+              {activeActivity.status === 'Assigned' && (
                 <button
                   onClick={handleAccept}
                   className="px-5 py-2.5 bg-[#004898] text-white font-extrabold text-sm hover:bg-[#003673] rounded-xl shadow-sm flex items-center gap-2 transition-colors cursor-pointer"
@@ -100,23 +105,25 @@ export const ProjectActivitiesPanel = () => {
               )}
             </div>
 
-            {/* Light completion: just notes + timestamp — no service-report
-                shape. Scheduled time and actual completion time are kept
-                separate per spec §5. */}
+            {/* Light completion: the day's comment (mandatory) + timestamp —
+                no service-report shape. It becomes the project's daily log,
+                which the next technician reads before going to site. */}
             {activeActivity.status === 'Accepted' && showCompleteForm && (
               <div className="mt-4 p-4 rounded-xl border border-[#E4E7EC] bg-[#F8FAFC] space-y-3">
-                <label className="block text-xs font-bold text-[#172033]">Completion Notes <span className="font-normal text-[#98A2B3]">(optional)</span></label>
+                <label className="block text-xs font-bold text-[#172033]">Today&apos;s comment <span className="text-[#D92D20]">*</span></label>
+                <p className="text-[11px] text-[#667085] -mt-1.5">Write what was done today and what is still pending — the team reads this before the next visit.</p>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                  placeholder="What was done for this activity?"
-                  className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898] resize-none bg-white"
+                  rows={4}
+                  maxLength={2000}
+                  placeholder={'Done: …\nPending: …'}
+                  className="w-full px-3 py-2 border border-[#E4E7EC] rounded-lg text-xs outline-none focus:border-[#004898] resize-y bg-white"
                 />
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleComplete}
-                    disabled={submitting}
+                    disabled={submitting || !notes.trim()}
                     className="px-4 py-2 bg-[#12B76A] text-white font-extrabold text-xs hover:bg-[#0E9384] rounded-lg shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-60"
                   >
                     <CheckCircle className="w-3.5 h-3.5" />
@@ -136,7 +143,17 @@ export const ProjectActivitiesPanel = () => {
                 <span className="font-extrabold text-sm text-[#004898] font-mono px-2 py-0.5 bg-[#EFF5FC] rounded border border-[#B3D1F2]">{activeActivity.project?.id}</span>
                 <h3 className="font-extrabold text-xl text-[#172033] mt-1.5">{activeActivity.project?.name}</h3>
               </div>
-              <StatusBadge status={activeActivity.status} />
+              <div className="flex items-center gap-2">
+                <StatusBadge status={activeActivity.status} />
+                {activeActivity.project?.id && (
+                  <button
+                    onClick={() => setSelectedProjectId(activeActivity.project.id)}
+                    className="px-3 py-1.5 rounded-lg border border-[#B3D1F2] bg-[#EFF5FC] text-[#004898] text-[11px] font-bold inline-flex items-center gap-1.5 hover:bg-[#D1E4F9]"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Open project
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">

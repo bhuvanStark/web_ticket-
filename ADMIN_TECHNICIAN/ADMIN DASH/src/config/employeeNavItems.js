@@ -24,12 +24,15 @@ import {
   Sparkles,
   Clock3,
   TrendingUp,
-  FileText
+  FileText,
+  Briefcase
 } from 'lucide-react';
 
 export const techNavItems = [
   { id: 'my-dashboard', label: 'My Dashboard', mobileLabel: 'Dashboard', icon: LayoutDashboard },
   { id: 'my-jobs', label: 'My Jobs', mobileLabel: 'Jobs', icon: Ticket, module: 'requests' },
+  // Projects workspace: projects the technician manages or is on (view-only).
+  { id: 'my-projects', label: 'Projects', mobileLabel: 'Projects', icon: Briefcase, module: 'projects' },
   { id: 'demos', label: 'Demo Management', mobileLabel: 'Demos', icon: Sparkles, module: 'demos' },
   { id: 'installations', label: 'Onsite Installations', mobileLabel: 'Work', icon: Layers, module: 'installations' },
   { id: 'calendar', label: 'Service Calendar', mobileLabel: 'Calendar', icon: Calendar, module: 'calendar' },

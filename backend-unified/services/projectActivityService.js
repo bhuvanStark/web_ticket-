@@ -1,8 +1,7 @@
 // Project Category (V1) — Daily Project Activity business logic. Additive
 // module: does not import from or touch serviceRequestService.js.
 import { supabase } from '../config/supabaseClient.js';
-import { withTransaction } from '../config/database.js';
-import { PostgresQueryBuilder } from '../config/databaseClient.js';
+import { expireUnacceptedAssignments } from './projectWorkspaceService.js';
 
 // A technician's own activities, every status — identical shape to
 // GET /api/technician/project-activities. Exists so an admin token can read
@@ -11,6 +10,7 @@ import { PostgresQueryBuilder } from '../config/databaseClient.js';
 // routes/adminRoutes.js `/technicians/:id/project-activities`) without ever
 // granting a technician-role-gated route to an admin caller.
 export const listActivitiesForTechnician = async (technicianId) => {
+  await expireUnacceptedAssignments();
   const { data, error } = await supabase
     .from('project_activities')
     .select('*, project(id, name, customer, location, archived_at)')
@@ -43,34 +43,10 @@ export const listActivitiesForProject = async (projectId, { scope = 'all' } = {}
   return data || [];
 };
 
-// Bulk-create one independent activity per technician for one project/date.
-// All-or-nothing: this is a single multi-row INSERT, which Postgres runs as
-// one statement — if the partial unique index rejects any row (a technician
-// already has an active activity that day), the whole statement fails and
-// zero rows are created.
-export const createActivitiesBulk = async ({ project_id, scheduled_date, scheduled_time, technician_ids }) => {
-  const rows = technician_ids.map((technician_id) => ({
-    project_id,
-    technician_id,
-    scheduled_date,
-    scheduled_time,
-    status: 'Assigned'
-  }));
-
-  const { data, error } = await supabase
-    .from('project_activities')
-    .insert(rows)
-    .select('*, technician(id, full_name)');
-
-  if (error) {
-    if (error.code === '23505') {
-      const err = new Error('One or more selected technicians already have an activity for that date on this project');
-      err.code = 'DUPLICATE_ACTIVITY';
-      throw err;
-    }
-    throw new Error(`Failed to assign technicians: ${error.message}`);
-  }
-  return data;
+export const getActivityProjectId = async (id) => {
+  const { data, error } = await supabase.from('project_activities').select('project_id').eq('id', id).maybeSingle();
+  if (error) throw new Error(`Failed to fetch activity: ${error.message}`);
+  return data?.project_id || null;
 };
 
 // Assigned -> Accepted (or Cancelled). Mirrors the ticket system's generic
@@ -118,7 +94,7 @@ export const updateActivityStatus = async (id, status, { actorRole, actorUserId 
   return data;
 };
 
-// Light completion: notes + completed_at, no service-report shape (per spec
+// Light completion: comment + completed_at, no service-report shape (per spec
 // §5 — scheduled time and actual completion time are stored separately).
 // Requires the activity to already be Accepted — the spec's flow is
 // explicitly Assigned -> Accepted -> Completed. Admin is unrestricted (same
@@ -148,12 +124,19 @@ export const completeActivity = async (id, { actorUserId, actorRole, completion_
     err.code = 'INVALID_TRANSITION';
     throw err;
   }
+  // The day's comment (work done / still pending) is mandatory — it is the
+  // project's work history the next technician reads before going to site.
+  if (!completion_notes?.trim()) {
+    const err = new Error('Add a comment: what was done today and what is still pending');
+    err.code = 'VALIDATION';
+    throw err;
+  }
 
   const { data, error } = await supabase
     .from('project_activities')
     .update({
       status: 'Completed',
-      completion_notes: completion_notes?.trim() || null,
+      completion_notes: completion_notes.trim(),
       completed_at: new Date().toISOString()
     })
     .eq('id', id)
@@ -161,53 +144,4 @@ export const completeActivity = async (id, { actorUserId, actorRole, completion_
     .single();
   if (error) throw new Error(`Failed to complete activity: ${error.message}`);
   return data;
-};
-
-// Admin reassigns a daily activity to a different technician. History-safe:
-// the original row is never deleted, only marked Cancelled; a brand-new row
-// is created for the replacement technician. The two writes are wrapped in
-// withTransaction (already present in config/database.js, previously
-// unused) so they succeed or fail together.
-export const reassignActivity = async (id, newTechnicianId) => {
-  return withTransaction(async (client) => {
-    const existingResult = await new PostgresQueryBuilder('project_activities', client)
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-    if (existingResult.error) throw new Error(existingResult.error.message);
-    if (!existingResult.data) {
-      const err = new Error('Activity not found');
-      err.code = 'NOT_FOUND';
-      throw err;
-    }
-    const original = existingResult.data;
-
-    const cancelResult = await new PostgresQueryBuilder('project_activities', client)
-      .update({ status: 'Cancelled' })
-      .eq('id', id)
-      .select('*')
-      .single();
-    if (cancelResult.error) throw new Error(cancelResult.error.message);
-
-    const createResult = await new PostgresQueryBuilder('project_activities', client)
-      .insert([{
-        project_id: original.project_id,
-        technician_id: newTechnicianId,
-        scheduled_date: original.scheduled_date,
-        scheduled_time: original.scheduled_time,
-        status: 'Assigned'
-      }])
-      .select('*')
-      .single();
-    if (createResult.error) {
-      if (createResult.error.code === '23505') {
-        const err = new Error('The replacement technician already has an activity for that date on this project');
-        err.code = 'DUPLICATE_ACTIVITY';
-        throw err;
-      }
-      throw new Error(createResult.error.message);
-    }
-
-    return { cancelled: cancelResult.data, created: createResult.data };
-  });
 };

@@ -193,7 +193,10 @@ test('admin module permissions: projects/attendance/back-office/approvals are en
 // ---------------------------------------------------------------- Projects
 
 async function createProject(name) {
-  const res = await call('POST', '/projects', tokens.superAdmin, { name, customer: 'UiGen Co', location: 'Chennai' });
+  // Daily work can only go to the project's team.
+  const res = await call('POST', '/projects', tokens.superAdmin, {
+    name, customer: 'UiGen Co', location: 'Chennai', viewer_ids: [ids.technician]
+  });
   assert.equal(res.status, 201, JSON.stringify(res.json));
   createdProjects.push(res.json.data.id);
   return res.json.data.id;

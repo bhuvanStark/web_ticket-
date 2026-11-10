@@ -423,7 +423,7 @@ export const validateProject = (req, res, next) => {
 };
 
 export const validateProjectUpdate = (req, res, next) => {
-  const allowed = ['name', 'customer', 'location', 'start_date', 'end_date', 'description', 'responsible_admin_id'];
+  const allowed = ['name', 'customer', 'location', 'start_date', 'end_date', 'description', 'responsible_admin_id', 'manager_ids', 'viewer_ids'];
   const errors = [];
 
   if (!allowed.some((key) => key in req.body)) {
@@ -482,14 +482,15 @@ export const validateActivityStatusUpdate = (req, res, next) => {
   next();
 };
 
+// The day's comment is mandatory (projects-plan.md §3.2).
 export const validateActivityComplete = (req, res, next) => {
   const { completion_notes } = req.body;
-  if (completion_notes && completion_notes.length > 1000) {
-    return res.status(400).json({
-      success: false,
-      error: 'Validation failed',
-      details: ['completion_notes must not exceed 1000 characters']
-    });
+  const text = typeof completion_notes === 'string' ? completion_notes.trim() : '';
+  const details = [];
+  if (!text) details.push('Add a comment: what was done today and what is still pending');
+  else if (text.length > 2000) details.push('Comment must not exceed 2000 characters');
+  if (details.length) {
+    return res.status(400).json({ success: false, error: details[0], details });
   }
   next();
 };

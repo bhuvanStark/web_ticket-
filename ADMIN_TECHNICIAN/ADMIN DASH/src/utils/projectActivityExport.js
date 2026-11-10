@@ -11,7 +11,7 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-di
 const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 
 const ROWS = (activities) => activities.map((a) => ({
-  technician: a.technician?.full_name || '—',
+  technician: a.technician?.full_name || a.technician_name || '—',
   date: fmtDate(a.scheduled_date),
   scheduledTime: a.scheduled_time || '—',
   completedAt: fmtDateTime(a.completed_at),
@@ -19,7 +19,7 @@ const ROWS = (activities) => activities.map((a) => ({
   notes: a.completion_notes || '—'
 }));
 
-const HEADERS = ['Technician', 'Date', 'Scheduled Time', 'Actual Completion', 'Status', 'Notes'];
+const HEADERS = ['Technician', 'Date', 'Scheduled Time', 'Actual Completion', 'Status', 'Comments'];
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
