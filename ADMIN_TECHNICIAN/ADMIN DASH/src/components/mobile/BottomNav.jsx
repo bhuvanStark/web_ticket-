@@ -16,6 +16,7 @@ import {
 } from '../../config/adminNavItems';
 import { AdminMoreSheet } from './AdminMoreSheet';
 import { CountBadge } from '../common/CountBadge';
+import { quoteNavItems, useQuoteAccess } from '../quotes/quoteShared';
 import { useTechWorkload } from '../../hooks/useTechWorkload';
 
 const NAV_ITEMS_BY_ROLE = {
@@ -27,6 +28,7 @@ export const BottomNav = () => {
   const { activePage, setActivePage, role, enabledModules, rolePermissions, currentUser, isViewingAsSales, canAccessAdminPage } = useApp();
   const isMobile = useIsMobile();
   const { total: techOpenJobs } = useTechWorkload();
+  const quoteAccess = useQuoteAccess(role === 'back_office');
 
   // Admin Mobile Navigation fix — More sheet's open/closed state lives here
   // so it unmounts (and resets to closed) for free whenever this component
@@ -88,7 +90,9 @@ export const BottomNav = () => {
   // when an admin had switched those modules off for desktop). Both surfaces
   // now read the same source array (config/employeeNavItems.js) and apply
   // the same `enabledModules` filter Sidebar.jsx already applied.
-  const baseItems = NAV_ITEMS_BY_ROLE[role] || techNavItems;
+  const baseItems = role === 'back_office' && quoteAccess.mode === 'manager'
+    ? [...backOfficeNavItems, ...quoteNavItems]
+    : NAV_ITEMS_BY_ROLE[role] || techNavItems;
   const items = filterForViewAs(filterByEnabledModules(baseItems, enabledModules), isViewingAsSales);
 
   // Profile has no dedicated desktop nav entry — on desktop it's reached by

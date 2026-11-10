@@ -68,6 +68,9 @@ const ADMIN_PAGE_MODULES = {
   technicians: 'technicians',
   sales: 'sales',
   'back-office': 'back_office',
+  // Quotation module: no admin_permissions row can grant it, so only the
+  // Super Admin passes (the backend enforces the same).
+  quotations: 'quotations',
   attendance: 'attendance',
   installations: 'installations',
   inventory: 'inventory',

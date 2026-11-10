@@ -26,7 +26,8 @@ import {
   Sparkles,
   Clock3,
   TrendingUp,
-  ClipboardList
+  ClipboardList,
+  FileText
 } from 'lucide-react';
 
 export const adminNavItems = [
@@ -39,6 +40,7 @@ export const adminNavItems = [
   { id: 'technicians', label: 'Technicians', icon: Wrench, module: 'technicians' },
   { id: 'sales', label: 'Sales', icon: TrendingUp },
   { id: 'back-office', label: 'Back-Office', icon: ClipboardList },
+  { id: 'quotations', label: 'Quotations', icon: FileText },
   { id: 'attendance', label: 'Attendance', icon: Clock3 },
   { id: 'installations', label: 'Onsite Installations', icon: Layers, module: 'installations' },
   { id: 'inventory', label: 'Spare Parts Stock', icon: Package, module: 'inventory' },

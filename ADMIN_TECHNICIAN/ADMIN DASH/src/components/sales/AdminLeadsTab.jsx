@@ -23,12 +23,18 @@ import {
 import { LeadStatCard, LeadStatGrid } from './LeadStatCards';
 import { LeadRowMenu } from './LeadRowMenu';
 import { ViewTabs, SearchField, ToggleChip, FilterDivider, ListPanel } from './LeadFilterBar';
-import { LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistoryList } from './LeadQuickActions';
+import {
+  LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistoryList,
+  CreateStageFields
+} from './LeadQuickActions';
+import { FunnelStar, ProductField } from './LeadFunnel';
+import { useFunnelOptions } from './useFunnelOptions';
 import { useDuplicateAwareSave } from './useDuplicateAwareSave';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { LeadPagination } from './LeadPagination';
 import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
 import {
+  emptyCreateStage, createStageProblem, createStagePayload,
   ALL_STATUSES, ACTIVE_STATUSES, CLOSED_STATUSES, PROPOSAL_STAGES, STATUS_LABEL, STATUS_COLOR, LEADS_PAGE_SIZE,
   REF_ID_TEMPLATE, isRefIdTemplate, money, isAssignable, assignBlockReason, followUpInfo, STAGE_DAYS,
   pageCount, isWonPending, lostReasonLabel
@@ -50,8 +56,11 @@ const cellText = (value) => {
   return String(value).trim();
 };
 
-const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
+const LeadFormModal = ({ lead, roster = [], onClose, onSaved, showToast }) => {
   const isEdit = !!lead;
+  const { products } = useFunnelOptions();
+  const [product, setProduct] = useState(lead?.product || '');
+  const [stage, setStage] = useState(emptyCreateStage);
   const isClosed = isEdit && CLOSED_STATUSES.includes(lead.status);
   const inProposal = isEdit && PROPOSAL_STAGES.includes(lead.status);
   const [company, setCompany] = useState(lead?.company || '');
@@ -65,7 +74,15 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
   // A same Company + Phone match returns a warning; Admin can edit or continue.
   const { run, saving, warning } = useDuplicateAwareSave(
     (payload) => (isEdit ? updateLead(lead.id, payload) : createLead(payload)),
-    { onSaved: () => { showToast(isEdit ? 'Lead updated' : 'Lead created — select it in the list to assign a salesperson', 'success'); onSaved(); }, showToast }
+    {
+      onSaved: (saved) => {
+        showToast(isEdit ? 'Lead updated'
+          : saved?.assigned_to ? `Lead created as ${STATUS_LABEL[saved.status]}${saved.auto_closed ? ` — ${saved.auto_closed} duplicate lead${saved.auto_closed === 1 ? '' : 's'} closed as Lost` : ''}`
+          : `Lead created${stage.status === 'new' ? '' : ` as ${STATUS_LABEL[stage.status]}`} — select it in the list to assign a salesperson`, 'success');
+        onSaved();
+      },
+      showToast
+    }
   );
 
   const submit = (e) => {
@@ -74,10 +91,16 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
       showToast('Replace the example Ref ID with the real reference.', 'error');
       return;
     }
+    const stageProblem = isEdit ? null : createStageProblem(stage, valueEstimate);
+    if (stageProblem) {
+      showToast(stageProblem, 'error');
+      return;
+    }
     run({
       company, person_to_contact: personToContact || null, email: email || null,
       phone, value_estimate: valueEstimate === '' ? null : Number(valueEstimate),
-      remarks: remarks || null,
+      remarks: remarks || null, product: product || null,
+      ...(isEdit ? {} : createStagePayload(stage)),
       // Ref ID and Demand are only editable while the lead is active.
       ...(isClosed ? {} : { demand: demand || null }),
       ...(inProposal ? { ref_id: refId } : {})
@@ -86,8 +109,13 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
 
   return (
     <SalesModal onClose={onClose} onSubmit={submit} size="lg">
-      <ModalHeader title={isEdit ? 'Edit Lead' : 'Add Lead'} subtitle={isEdit ? lead.company : 'Starts Unassigned — assign a salesperson from the list.'} onClose={onClose} />
+      <ModalHeader title={isEdit ? 'Edit Lead' : 'Add Lead'} subtitle={isEdit ? lead.company : stage.status === 'won' ? 'Created Won for the salesperson you choose.' : 'Starts Unassigned — assign a salesperson from the list.'} onClose={onClose} />
       <ModalBody className="space-y-3">
+          {!isEdit && (
+            <div className="rounded-lg border border-[#E4E7EC] bg-[#F8FAFC] p-3">
+              <CreateStageFields stage={stage} setStage={setStage} isAdmin roster={roster} />
+            </div>
+          )}
           <div>
             <label className="block text-xs font-bold text-[#344054] mb-1">Company *</label>
             <input required value={company} onChange={(e) => setCompany(e.target.value)} placeholder="e.g. Acme Pvt Ltd" className="form-input text-sm" />
@@ -106,11 +134,12 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
             <label className="block text-xs font-bold text-[#344054] mb-1">Email</label>
             <input type="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" className="form-input text-sm" />
           </div>
+          <ProductField value={product} onChange={setProduct} products={products} />
           {inProposal ? (
             <ProposalFields valueEstimate={valueEstimate} setValueEstimate={setValueEstimate} refId={refId} setRefId={setRefId} required />
           ) : (
             <div>
-              <label className="block text-xs font-bold text-[#344054] mb-1">Value Estimate</label>
+              <label className="block text-xs font-bold text-[#344054] mb-1">Value Estimate{!isEdit && (PROPOSAL_STAGES.includes(stage.status) || stage.status === 'won') && ' *'}</label>
               <input type="number" inputMode="decimal" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} className="form-input text-sm" />
             </div>
           )}
@@ -425,6 +454,7 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showT
           <div className="mt-1.5 flex items-center gap-3 flex-wrap">
             <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
             {lead.assigned_to && <LeadTimerBattery lead={lead} />}
+            {!lead.archived_at && <FunnelStar lead={lead} onChanged={() => { load(); onChanged(); }} showToast={showToast} />}
             {followUpInfo(lead) && <span className={`text-[11px] font-bold ${followUpInfo(lead).due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUpInfo(lead).label}</span>}
           </div>
         )}
@@ -463,6 +493,10 @@ const DetailModal = ({ leadId, roster, onClose, onChanged, onChangeStatus, showT
               <div><span className="text-[#667085] text-xs">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
               <div><span className="text-[#667085] text-xs">Assigned To</span><div className="font-semibold text-[#172033]">{lead.assigned_to ? salesName(lead.assigned_to) : 'Unassigned'}</div></div>
               <div><span className="text-[#667085] text-xs">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
+              <div><span className="text-[#667085] text-xs">Product</span><div className="font-semibold text-[#172033]">{lead.product || '—'}</div></div>
+              <div><span className="text-[#667085] text-xs">Funnel</span><div className="font-semibold text-[#172033]">{lead.funnel_starred_at
+                ? `Backup ${money(lead.funnel_backup_value)} · Order Closed ${money(lead.funnel_order_closed_value)}${lead.funnel_remark ? ` · ${lead.funnel_remark}` : ''}`
+                : 'Not in the Funnel'}</div></div>
               <div className="col-span-2"><span className="text-[#667085] text-xs">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
             </div>
 
@@ -1005,11 +1039,12 @@ export const AdminLeadsTab = () => {
                     {l.duplicate_count > 0 && <Copy className="w-3.5 h-3.5 text-[#667085] shrink-0" aria-label="Duplicate" />}
                   </div>
                   <div className="text-[12px] text-[#667085] truncate">
-                    {[l.person_to_contact, l.phone].filter(Boolean).join(' · ')}
+                    {[l.person_to_contact, l.phone, l.product].filter(Boolean).join(' · ')}
                   </div>
                   {followUp && <div className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#98A2B3]'}`}>{followUp.label}</div>}
                 </button>
                 <span className="text-sm font-extrabold text-[#172033] shrink-0">{money(l.value_estimate)}</span>
+                {!archived && <FunnelStar lead={l} onChanged={load} showToast={showToast} className="-mt-1 -mr-1 shrink-0" />}
               </div>
 
               <div className="px-3.5 pb-3 flex items-center justify-between gap-3 flex-wrap">
@@ -1110,6 +1145,7 @@ export const AdminLeadsTab = () => {
                       />
                     </td>
                     <td className="px-4 py-4 align-middle">
+                      {!l.archived_at && <FunnelStar lead={l} onChanged={load} showToast={showToast} className="-ml-1.5 mr-0.5 align-middle" />}
                       <button onClick={() => setDetailId(l.id)} className="font-extrabold text-[13px] text-[#004898] hover:underline text-left">{l.company}</button>
                       {l.duplicate_count > 0 && (
                         <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[#F2F4F7] px-2 py-0.5 text-[10px] font-bold text-[#475467] align-middle"
@@ -1117,7 +1153,7 @@ export const AdminLeadsTab = () => {
                           <Copy className="w-3 h-3" /> Duplicate
                         </span>
                       )}
-                      {l.person_to_contact && <div className="text-[11px] text-[#667085]">{l.person_to_contact}</div>}
+                      {(l.person_to_contact || l.product) && <div className="text-[11px] text-[#667085]">{[l.person_to_contact, l.product].filter(Boolean).join(' · ')}</div>}
                       {followUp && <div className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#98A2B3]'}`}>{followUp.label}</div>}
                     </td>
                     <td className="px-4 py-4 align-middle text-[#475467] font-medium">{l.phone}</td>
@@ -1194,7 +1230,7 @@ export const AdminLeadsTab = () => {
       )}
 
       {formModal && (
-        <LeadFormModal lead={formModal.lead} onClose={() => setFormModal(null)} onSaved={() => { setFormModal(null); load(); }} showToast={showToast} />
+        <LeadFormModal lead={formModal.lead} roster={activeRoster} onClose={() => setFormModal(null)} onSaved={() => { setFormModal(null); load(); }} showToast={showToast} />
       )}
       {assignTargets && (
         <AssignSalesModal

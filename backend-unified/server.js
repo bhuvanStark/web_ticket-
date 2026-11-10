@@ -37,6 +37,8 @@ import leadsRouter from './routes/leads.js';
 import salesDailyReportsRouter from './routes/salesDailyReports.js';
 // Admin Reports — technician performance (read-only). Additive.
 import techReportsRouter from './routes/techReports.js';
+// Quotation module (Back-Office Quote Managers). Additive.
+import quotesRouter from './routes/quotes.js';
 
 // Load environment variables
 dotenv.config();
@@ -136,6 +138,7 @@ app.use('/api/sales', salesRouter);
 app.use('/api/back-office', backOfficeRouter);
 app.use('/api/sales-leads', leadsRouter);
 app.use('/api/sales-daily-reports', salesDailyReportsRouter);
+app.use('/api/quotes', quotesRouter);
 
 // ============================================
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)

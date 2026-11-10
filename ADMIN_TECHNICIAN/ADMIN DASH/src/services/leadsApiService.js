@@ -253,6 +253,59 @@ export async function addFollowUp(id, note, nextActionDate) {
   return data.data;
 }
 
+// ---- Funnel (starred leads) ----
+
+const funnelQuery = ({ from, to, salesId, location, product, q, limit = 24, offset = 0, exportAll = false } = {}) => {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (salesId) params.set('sales_id', salesId);
+  if (location) params.set('location', location);
+  if (product) params.set('product', product);
+  if (q) params.set('q', q);
+  if (exportAll) params.set('export', 'true');
+  else { params.set('limit', String(limit)); params.set('offset', String(offset)); }
+  return params.toString();
+};
+
+async function readFunnel(res) {
+  const payload = await handle(res, 'Failed to fetch the funnel');
+  const rows = Array.isArray(payload.data) ? payload.data : [];
+  return { rows, total: payload.pagination?.total ?? rows.length, totals: payload.totals || { value: 0, backup: 0, orderClosed: 0 } };
+}
+
+// One page of the Funnel: { rows, total, totals: { value, backup, orderClosed } }
+// over every matching lead. `mine` = the signed-in salesperson's own funnel
+// (Admin otherwise, where salesId/location filter by owner). `exportAll`
+// returns every matching row for the Excel file.
+export async function fetchFunnel(options = {}, { mine = false } = {}) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/${mine ? 'mine/funnel' : 'funnel'}?${funnelQuery(options)}`, { headers: authHeaders() });
+  return readFunnel(res);
+}
+
+// { products, locations } — Funnel filter choices and Product suggestions.
+export async function fetchFunnelOptions() {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/funnel/options`, { headers: authHeaders() });
+  return readApiData(res, 'fetch funnel options');
+}
+
+export async function setFunnelStar(id, starred) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/${id}/funnel-star`, {
+    method: 'POST', headers: authHeaders(true), body: JSON.stringify({ starred })
+  });
+  const data = await handle(res, starred ? 'Failed to add the lead to the funnel' : 'Failed to remove the lead from the funnel');
+  return data.data;
+}
+
+// { backup_value, order_closed_value, remark, product } — only keys sent change.
+export async function updateFunnel(id, payload) {
+  const res = await authFetch(`${API_BASE_URL}/sales-leads/${id}/funnel`, {
+    method: 'PATCH', headers: authHeaders(true), body: JSON.stringify(payload)
+  });
+  const data = await handle(res, 'Failed to save funnel details');
+  return data.data;
+}
+
 // ---- Realtime (Phase 7) ----
 
 const STREAM_RETRY_MS = 5000;

@@ -4,6 +4,7 @@ import { Avatar } from './Avatar';
 import { CountBadge } from './CountBadge';
 import { useTechWorkload } from '../../hooks/useTechWorkload';
 import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems, filterForViewAs } from '../../config/employeeNavItems';
+import { quoteNavItems, useQuoteAccess } from '../quotes/quoteShared';
 import {
   LayoutDashboard,
   Ticket,
@@ -31,7 +32,8 @@ import {
   ArrowLeft,
   Clock3,
   TrendingUp,
-  ClipboardList
+  ClipboardList,
+  FileText
 } from 'lucide-react';
 
 export const Sidebar = () => {
@@ -45,6 +47,8 @@ export const Sidebar = () => {
 
   // Technician workload badge on "My Jobs" (open tickets + open activities).
   const { total: techOpenJobs } = useTechWorkload();
+  // Back-Office employees tagged Quote Manager also get the quotation pages.
+  const quoteAccess = useQuoteAccess(role === 'back_office');
 
   const [showTechSelector, setShowTechSelector] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -114,6 +118,8 @@ export const Sidebar = () => {
     // Attendance below — always shown.
     { id: 'sales', label: 'Sales', icon: TrendingUp },
     { id: 'back-office', label: 'Back-Office', icon: ClipboardList },
+    // Quotation module — Super Admin only (read-only view).
+    { id: 'quotations', label: 'Quotations', icon: FileText },
     // Attendance Category (V1) — separate page from Service Tickets and
     // Projects, no module toggle (no Settings UI asked for one; always shown).
     { id: 'attendance', label: 'Attendance', icon: Clock3 },
@@ -135,7 +141,7 @@ export const Sidebar = () => {
 
   const allNavItems = role === 'admin' ? adminNavItems
     : role === 'sales' ? filterForViewAs(salesNavItems, isViewingAsSales)
-    : role === 'back_office' ? backOfficeNavItems
+    : role === 'back_office' ? [...backOfficeNavItems, ...(quoteAccess.mode === 'manager' ? quoteNavItems : [])]
     : techNavItems;
   const navItems = allNavItems.filter(item => {
     // 1. Module enabled check

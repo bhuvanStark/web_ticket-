@@ -121,6 +121,32 @@ router.get('/analytics', requireAdmin, requirePermission('sales'), async (req, r
   }
 });
 
+// Funnel (starred leads) with combined filters. ?export=true returns every
+// matching row (up to leadService.MAX_FUNNEL_EXPORT_ROWS) for the Excel file.
+const funnelOptions = ({ from, to, sales_id, location, product, q, limit, offset, export: exportAll }) => ({
+  from: from || undefined,
+  to: to || undefined,
+  salesId: sales_id || undefined,
+  location: location || undefined,
+  product: product || undefined,
+  q: q || undefined,
+  limit: limit ? Number(limit) : 24,
+  offset: offset ? Number(offset) : 0,
+  all: exportAll === 'true'
+});
+
+const sendFunnel = (res, result) => res.json({
+  success: true, data: result.data, pagination: { total: result.count }, totals: result.totals
+});
+
+router.get('/funnel', requireAdmin, requirePermission('sales'), async (req, res) => {
+  try {
+    sendFunnel(res, await leadService.listFunnel(funnelOptions(req.query)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 // ============================================
 // SUPER ADMIN — "View as Sales employee". Mirrors the technician "view as":
 // the Super Admin keeps their own admin JWT (no Sales token is ever minted),
@@ -302,6 +328,17 @@ router.get('/mine/summary', requireSales, async (req, res) => {
   }
 });
 
+// The signed-in salesperson's own Funnel — always scoped to req.user.userId;
+// a sales_id or location in the query is ignored.
+router.get('/mine/funnel', requireSales, async (req, res) => {
+  try {
+    const options = funnelOptions(req.query);
+    sendFunnel(res, await leadService.listFunnel({ ...options, salesId: req.user.userId, location: undefined }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 // A Sales employee adding their own lead — assigned to them on creation (leadService.createLead's ownerSalesId).
 // The owner is always req.user.userId, never an id from the request body.
 router.post('/mine', requireSales, async (req, res) => {
@@ -424,6 +461,17 @@ router.get('/stream', async (req, res) => {
 // SHARED (admin-with-sales-permission OR owning Sales employee)
 // ============================================
 
+// Funnel filter choices + Product suggestions for the lead forms.
+router.get('/funnel/options', requireAdminOrSales, async (req, res) => {
+  try {
+    const { canAccess } = await actorAndAccess(req, null);
+    if (!canAccess) return res.status(403).json({ success: false, error: 'Forbidden' });
+    res.json({ success: true, data: await leadService.getFunnelOptions() });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.get('/:id', requireAdminOrSales, validateUUID, async (req, res) => {
   try {
     const lead = await leadService.getLead(req.params.id);
@@ -518,6 +566,45 @@ router.post('/:id/follow-ups', requireAdminOrSales, validateUUID, async (req, re
     }
     const history = await leadService.addFollowUp(req.params.id, req.body?.note, req.body?.next_action_date, actor);
     res.json({ success: true, data: history });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Star / un-star a lead into the Funnel ({ starred: true|false }), and edit
+// its Funnel costing ({ backup_value, order_closed_value, remark, product }).
+// Admin: any live lead. Sales: only their own (re-checked under a row lock
+// in leadService via ownerSalesId).
+router.post('/:id/funnel-star', requireAdminOrSales, validateUUID, async (req, res) => {
+  try {
+    const lead = await leadService.getLead(req.params.id);
+    if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
+    const { actor, canAccess, isOwner } = await actorAndAccess(req, lead);
+    if (!canAccess || (req.user.role === 'sales' && !isOwner)) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    const data = await leadService.setFunnelStar(req.params.id, req.body?.starred, actor, {
+      ownerSalesId: req.user.role === 'sales' ? req.user.userId : undefined
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.patch('/:id/funnel', requireAdminOrSales, validateUUID, async (req, res) => {
+  try {
+    const lead = await leadService.getLead(req.params.id);
+    if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
+    const { actor, canAccess, isOwner } = await actorAndAccess(req, lead);
+    if (!canAccess || (req.user.role === 'sales' && !isOwner)) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    const { backup_value, order_closed_value, remark, product } = req.body || {};
+    const data = await leadService.updateFunnel(req.params.id, { backup_value, order_closed_value, remark, product }, actor, {
+      ownerSalesId: req.user.role === 'sales' ? req.user.userId : undefined
+    });
+    res.json({ success: true, data });
   } catch (error) {
     sendError(res, error);
   }

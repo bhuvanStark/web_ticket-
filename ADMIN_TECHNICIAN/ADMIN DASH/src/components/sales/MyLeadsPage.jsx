@@ -11,12 +11,18 @@
 // own fetch-on-mount, no global state.
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { LogOut, History as HistoryIcon, X, Plus, Pencil, ArrowRightCircle, CalendarClock, Hourglass } from 'lucide-react';
+import { LogOut, History as HistoryIcon, X, Plus, Pencil, ArrowRightCircle, CalendarClock, Hourglass, Star } from 'lucide-react';
 import {
   fetchMine, releaseLead, createMyLead, updateMyLead, fetchMySummary, fetchViewAsSummary,
   fetchLead, fetchLeadHistory, subscribeToLeadEvents, fetchViewAsMine
 } from '../../services/leadsApiService';
-import { LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistoryList } from './LeadQuickActions';
+import {
+  LeadStatusModal, LeadRemarks, ProposalFields, FollowUpForm, LeadHistoryList,
+  CreateStageFields
+} from './LeadQuickActions';
+import { FunnelStar, FunnelPanel, ProductField } from './LeadFunnel';
+import { useFunnelOptions } from './useFunnelOptions';
+import { ViewTabs } from './LeadFilterBar';
 import { useDuplicateAwareSave } from './useDuplicateAwareSave';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { PipelineSummaryBar } from './PipelineSummaryBar';
@@ -25,6 +31,7 @@ import { LeadRowMenu } from './LeadRowMenu';
 import { SearchField, ToggleChip, FilterDivider, ListPanel } from './LeadFilterBar';
 import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary, btnDanger } from './SalesModal';
 import {
+  emptyCreateStage, createStageProblem, createStagePayload,
   STATUS_LABEL, STATUS_COLOR, CLOSED_STATUSES, PROPOSAL_STAGES, LEADS_PAGE_SIZE,
   REF_ID_TEMPLATE, isRefIdTemplate, money, stageTimer, followUpInfo, pageCount, isWonPending, lostReasonLabel
 } from './leadPipeline';
@@ -43,10 +50,19 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
   const [refId, setRefId] = useState(lead?.ref_id || (inProposal ? REF_ID_TEMPLATE : ''));
   const [demand, setDemand] = useState(lead?.demand || '');
   const [remarks, setRemarks] = useState(lead?.remarks || '');
+  const [product, setProduct] = useState(lead?.product || '');
+  const [stage, setStage] = useState(emptyCreateStage);
+  const { products } = useFunnelOptions();
   // A same Company + Phone match returns a warning; the user can edit or continue.
   const { run, saving, warning } = useDuplicateAwareSave(
     (payload) => (isEdit ? updateMyLead(lead.id, payload) : createMyLead(payload)),
-    { onSaved: () => { showToast(isEdit ? 'Lead updated' : 'Lead added to My Leads', 'success'); onSaved(); }, showToast }
+    {
+      onSaved: () => {
+        showToast(isEdit ? 'Lead updated' : `Lead added to My Leads${stage.status === 'new' ? '' : ` as ${STATUS_LABEL[stage.status]}`}`, 'success');
+        onSaved();
+      },
+      showToast
+    }
   );
 
   const submit = (e) => {
@@ -55,10 +71,16 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
       showToast('Replace the example Ref ID with the real reference.', 'error');
       return;
     }
+    const stageProblem = isEdit ? null : createStageProblem(stage, valueEstimate);
+    if (stageProblem) {
+      showToast(stageProblem, 'error');
+      return;
+    }
     run({
       company, person_to_contact: personToContact || null, email: email || null,
       phone, value_estimate: valueEstimate === '' ? null : Number(valueEstimate),
-      demand: demand || null, remarks: remarks || null,
+      demand: demand || null, remarks: remarks || null, product: product || null,
+      ...(isEdit ? {} : createStagePayload(stage)),
       ...(inProposal ? { ref_id: refId } : {})
     });
   };
@@ -73,6 +95,11 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
         onClose={onClose}
       />
       <ModalBody className="space-y-5">
+        {!isEdit && (
+          <section className="rounded-lg border border-[#E4E7EC] bg-[#F8FAFC] p-3">
+            <CreateStageFields stage={stage} setStage={setStage} isAdmin={false} />
+          </section>
+        )}
         <section className="space-y-3">
           <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#98A2B3]">Customer</h4>
           <div>
@@ -97,11 +124,12 @@ const LeadFormModal = ({ lead, onClose, onSaved, showToast }) => {
 
         <section className="space-y-3">
           <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#98A2B3]">Deal</h4>
+          <ProductField value={product} onChange={setProduct} products={products} />
           {inProposal ? (
             <ProposalFields valueEstimate={valueEstimate} setValueEstimate={setValueEstimate} refId={refId} setRefId={setRefId} required />
           ) : (
             <div>
-              <label className={label}>Value Estimate (₹)</label>
+              <label className={label}>Value Estimate (₹){!isEdit && PROPOSAL_STAGES.includes(stage.status) && ' *'}</label>
               <input type="number" inputMode="decimal" min="0" step="any" value={valueEstimate} onChange={(e) => setValueEstimate(e.target.value)} placeholder="Required from Proposal onwards" className="form-input text-sm" />
             </div>
           )}
@@ -194,6 +222,7 @@ const DetailModal = ({ lead: initialLead, onClose, onChanged, onChangeStatus, sh
         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
           <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[lead.status]}`}>{STATUS_LABEL[lead.status]}</span>
           <LeadTimerBattery lead={lead} />
+          {!readOnly && <FunnelStar lead={lead} onChanged={() => { load(); onChanged(); }} showToast={showToast} />}
           {followUp && <span className={`text-[11px] font-bold ${followUp.due ? 'text-[#B54708]' : 'text-[#667085]'}`}>{followUp.label}</span>}
         </div>
       </ModalHeader>
@@ -214,6 +243,7 @@ const DetailModal = ({ lead: initialLead, onClose, onChanged, onChangeStatus, sh
             <div><span className="text-[#667085] text-xs">Email</span><div className="font-semibold text-[#172033] break-all">{lead.email || '—'}</div></div>
             <div><span className="text-[#667085] text-xs">Value Estimate</span><div className="font-semibold text-[#172033]">{money(lead.value_estimate)}</div></div>
             <div><span className="text-[#667085] text-xs">Ref ID</span><div className="font-semibold text-[#172033] font-mono text-xs break-all">{lead.ref_id || '—'}</div></div>
+            <div><span className="text-[#667085] text-xs">Product</span><div className="font-semibold text-[#172033]">{lead.product || '—'}</div></div>
             <div className="col-span-2"><span className="text-[#667085] text-xs">Demand</span><div className="font-semibold text-[#172033] whitespace-pre-wrap">{lead.demand || '—'}</div></div>
           </div>
 
@@ -254,6 +284,7 @@ export const MyLeadsPage = () => {
   const [detailLead, setDetailLead] = useState(null);
   const [statusLead, setStatusLead] = useState(null);
   const [formModal, setFormModal] = useState(null); // { lead? } or null
+  const [view, setView] = useState('leads'); // 'leads' | 'funnel'
   const scope = scopeFor(stageFilter);
   const stageStatus = stageFilter && !['closed', 'due'].includes(stageFilter) ? stageFilter : undefined;
   const requestSeq = useRef(0);
@@ -325,6 +356,22 @@ export const MyLeadsPage = () => {
         )}
       </div>
 
+      <ViewTabs
+        tabs={[{ id: 'leads', label: 'Leads' }, { id: 'funnel', label: 'Funnel', icon: Star }]}
+        value={view}
+        onChange={setView}
+      />
+
+      {view === 'funnel' ? (
+        <FunnelPanel
+          mode="sales"
+          viewAsSalesId={isViewingAsSales ? currentUser.id : undefined}
+          readOnly={isViewingAsSales}
+          onOpenLead={setDetailLead}
+          showToast={showToast}
+        />
+      ) : (<>
+
       <PipelineSummaryBar
         stages={summary?.stages}
         closed={{ won: summary?.won?.count ?? 0, lost: summary?.lost ?? 0 }}
@@ -385,10 +432,12 @@ export const MyLeadsPage = () => {
             const followUp = followUpInfo(l);
             return (
               <div key={l.id} className={`px-4 py-3.5 md:py-3 flex flex-col md:flex-row md:items-center gap-2.5 md:gap-3 hover:bg-[#F8FAFC] transition-colors ${overdue ? 'border-l-4 border-l-[#F04438]' : 'border-l-4 border-l-transparent'}`}>
+                <div className="min-w-0 flex-1 flex items-start gap-1">
+                {!isViewingAsSales && <FunnelStar lead={l} onChanged={load} showToast={showToast} className="-ml-1.5 shrink-0" />}
                 <button onClick={() => setDetailLead(l)} className="min-w-0 flex-1 text-left">
                   <div className="font-extrabold text-[13px] text-[#172033] truncate">{l.company}</div>
                   <div className="text-[11px] text-[#667085] truncate">
-                    {[l.person_to_contact, l.phone, l.value_estimate != null ? money(l.value_estimate) : null].filter(Boolean).join(' · ')}
+                    {[l.person_to_contact, l.phone, l.product, l.value_estimate != null ? money(l.value_estimate) : null].filter(Boolean).join(' · ')}
                   </div>
                   {(followUp || l.ref_id || l.demand || (isClosed && l.lost_reason)) && (
                     <div className="text-[11px] text-[#98A2B3] truncate">
@@ -401,6 +450,7 @@ export const MyLeadsPage = () => {
                     </div>
                   )}
                 </button>
+                </div>
                 <div className="flex items-center justify-between md:justify-start gap-4 md:w-[230px] shrink-0">
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[l.status]} w-[76px] text-center`}>{STATUS_LABEL[l.status]}</span>
                   <LeadTimerBattery lead={l} />
@@ -435,6 +485,7 @@ export const MyLeadsPage = () => {
       </ListPanel>
 
       {list && <LeadPagination page={page} totalPages={pageCount(total)} count={total} onChange={setPage} />}
+      </>)}
 
       {releaseTarget && (
         <ReleaseModal lead={releaseTarget} onClose={() => setReleaseTarget(null)} onDone={() => { setReleaseTarget(null); load(); }} showToast={showToast} />

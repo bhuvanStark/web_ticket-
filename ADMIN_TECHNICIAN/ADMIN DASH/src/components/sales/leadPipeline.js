@@ -121,3 +121,67 @@ export function followUpInfo(lead) {
 // Lead lists show 15 rows per page, fetched page by page from the server.
 export const LEADS_PAGE_SIZE = 15;
 export const pageCount = (total, pageSize = LEADS_PAGE_SIZE) => Math.max(1, Math.ceil((total || 0) / pageSize));
+
+// ---- Daily report lines ----
+
+// The lead details a daily-report line shows, by the status on that line:
+// contact, phone, value and product always; Ref ID and Demand from Proposal
+// onwards (Ref ID on Won too); the next follow-up while active; the close
+// reason on Lost/Dead. Blank fields are left out. [[label, value], ...]
+export function reportLeadFields(lead) {
+  if (!lead) return [];
+  const { status } = lead;
+  const fields = [
+    ['Contact', lead.person_to_contact],
+    ['Phone', lead.phone],
+    ['Value', lead.value_estimate != null ? money(lead.value_estimate) : null],
+    ['Product', lead.product]
+  ];
+  if (PROPOSAL_STAGES.includes(status) || status === 'won') fields.push(['Ref ID', lead.ref_id]);
+  if (PROPOSAL_STAGES.includes(status)) fields.push(['Demand', lead.demand]);
+  if (ACTIVE_STATUSES.includes(status) && lead.next_follow_up_date) {
+    const [y, m, d] = lead.next_follow_up_date.split('-').map(Number);
+    fields.push(['Next follow-up', `${d} ${MONTHS[m - 1]} ${y}`]);
+  }
+  if (['lost', 'dead'].includes(status)) fields.push(['Reason', lostReasonLabel(lead)]);
+  return fields.filter(([, value]) => value != null && String(value).trim() !== '');
+}
+
+// ---- Add Lead at a chosen stage (CreateStageFields in LeadQuickActions) ----
+
+const isBlankValue = (v) => v == null || String(v).trim() === '';
+
+// Stages a new lead may start in (mirrors leadService.CREATE_STATUSES): Won
+// and Dead are Admin-only; a salesperson wins through the normal Won flow.
+export const createStatuses = (isAdmin) => (isAdmin ? ALL_STATUSES : ALL_STATUSES.filter((s) => !['won', 'dead'].includes(s)));
+
+export const emptyCreateStage = () => ({ status: 'new', refId: REF_ID_TEMPLATE, reason: '', note: '', followUp: '', wonBy: '' });
+
+// Client-side check of a create stage before sending (the backend enforces
+// the same rules); null when it's fine.
+export function createStageProblem(stage, valueEstimate) {
+  const { status } = stage;
+  if (PROPOSAL_STAGES.includes(status) || status === 'won') {
+    if (isBlankValue(valueEstimate)) return `Enter the value estimate — ${STATUS_LABEL[status]} needs one.`;
+    if (isBlankValue(stage.refId)) return `Enter the Ref ID — ${STATUS_LABEL[status]} needs one.`;
+    if (isRefIdTemplate(stage.refId)) return 'Replace the example Ref ID with the real reference.';
+  }
+  if (status === 'won' && !stage.wonBy) return 'Choose the salesperson this lead was won by.';
+  if (['lost', 'dead'].includes(status)) {
+    if (!stage.reason) return 'Choose a reason for closing this lead.';
+    if (stage.reason === 'other' && !stage.note.trim()) return 'Explain the reason in the note.';
+  }
+  return null;
+}
+
+// The stage part of a create payload.
+export function createStagePayload(stage) {
+  const { status } = stage;
+  return {
+    status,
+    ...(PROPOSAL_STAGES.includes(status) || status === 'won' ? { ref_id: stage.refId } : {}),
+    ...(status === 'won' ? { assigned_to: stage.wonBy } : {}),
+    ...(['lost', 'dead'].includes(status) ? { lost_reason: stage.reason, lost_note: stage.note.trim() || null } : {}),
+    ...(ACTIVE_STATUSES.includes(status) && stage.followUp ? { next_follow_up_date: stage.followUp } : {})
+  };
+}

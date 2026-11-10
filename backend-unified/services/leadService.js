@@ -121,6 +121,7 @@ export const WON_REQUIRED_FIELDS = {
 };
 
 const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isZeroOrLess = (v) => !isBlank(v) && !(Number(v) > 0);
 
 // Labels of the Won-required fields `lead` is missing, in form order. A
@@ -426,6 +427,7 @@ const LEAD_FIELDS = [
   'id', 'company', 'person_to_contact', 'email', 'phone', 'value_estimate', 'remarks', 'ref_id', 'demand',
   'status', 'status_changed_at', 'next_follow_up_date', 'assigned_to', 'accepted_at', 'meeting_reached_at',
   'lost_reason', 'lost_note', 'won_requested_at', 'won_requested_by',
+  'product', 'funnel_starred_at', 'funnel_backup_value', 'funnel_order_closed_value', 'funnel_remark',
   'created_at', 'updated_at'
 ];
 // Raw-SQL column list: the follow-up date comes back as 'YYYY-MM-DD' text —
@@ -462,7 +464,11 @@ function searchCondition(q, params) {
   return `(${parts.join(' OR ')})`;
 }
 
-async function selectLeads(conditions, params, { limit, offset, orderBy, archived = false }) {
+// Every lead list is newest first (created_at DESC, id as the tie-break),
+// applied in SQL so each page continues exactly where the previous one ended.
+const LIST_ORDER_SQL = 'l.created_at DESC, l.id DESC';
+
+async function selectLeads(conditions, params, { limit, offset, archived = false }) {
   const where = [archived ? 'l.archived_at IS NOT NULL' : 'l.archived_at IS NULL', ...conditions].join(' AND ');
   const lim = clampLimit(limit);
   const off = clampOffset(offset);
@@ -471,7 +477,7 @@ async function selectLeads(conditions, params, { limit, offset, orderBy, archive
       `SELECT ${leadColumnsSql('l')}, l.archived_at, ${duplicateCountSql('l')} AS duplicate_count,
               ${expiredSql('l')} AS expired
        FROM leads l WHERE ${where}
-       ORDER BY ${orderBy}, l.id
+       ORDER BY ${LIST_ORDER_SQL}
        LIMIT ${lim} OFFSET ${off}`,
       params
     ),
@@ -480,8 +486,8 @@ async function selectLeads(conditions, params, { limit, offset, orderBy, archive
   return { data: list.rows, count: total.rows[0].count };
 }
 
-// Admin list. `overdueOnly` = assigned, timer running, past its stage
-// deadline (most overdue first); `expiredOnly` = the subset still waiting
+// Admin list (newest first, like every lead list). `overdueOnly` =
+// assigned, timer running, past its stage deadline; `expiredOnly` = the subset still waiting
 // for an Admin decision (the Expired queue); `wonRequestsOnly` = Sales Won
 // requests waiting for approval; `archivedOnly` = the read-only archive.
 export async function listLeads({ status, assignedTo, unassignedOnly, overdueOnly, expiredOnly, wonRequestsOnly, archivedOnly, q, limit = 50, offset = 0 } = {}) {
@@ -495,15 +501,11 @@ export async function listLeads({ status, assignedTo, unassignedOnly, overdueOnl
   if (wonRequestsOnly) conditions.push('l.won_requested_at IS NOT NULL');
   const search = searchCondition(q, params);
   if (search) conditions.push(search);
-  const orderBy = wonRequestsOnly ? 'l.won_requested_at ASC'
-    : overdueOnly || expiredOnly ? `${stageDeadlineSql('l')} ASC`
-    : archivedOnly ? 'l.archived_at DESC'
-    : 'l.created_at DESC';
-  return selectLeads(conditions, params, { limit, offset, orderBy, archived: !!archivedOnly });
+  return selectLeads(conditions, params, { limit, offset, archived: !!archivedOnly });
 }
 
-// A salesperson's own leads. scope: 'active' (default — open stages, most
-// urgent first), 'closed' (Won/Lost/Dead, latest first), 'due' (active
+// A salesperson's own leads, newest first. scope: 'active' (default — open
+// stages), 'closed' (Won/Lost/Dead), 'due' (active
 // with a follow-up due today or earlier) or 'all'. `status` narrows to one
 // stage; `q` searches. Unassigned leads are only visible to Admin.
 export const MINE_SCOPES = ['active', 'closed', 'due', 'all'];
@@ -511,20 +513,9 @@ export async function listMine(salesId, { scope = 'active', status, q, limit = 5
   if (!MINE_SCOPES.includes(scope)) throw Object.assign(new Error(`scope must be one of: ${MINE_SCOPES.join(', ')}`), { status: 400 });
   const params = [salesId];
   const conditions = ['l.assigned_to = $1'];
-  let orderBy = 'l.created_at DESC';
-  if (scope === 'active' || scope === 'due') {
-    conditions.push(`l.status IN ${OPEN_STATUSES_SQL}`);
-    // Paused (Won requested) leads sort after the running ones.
-    orderBy = `(l.won_requested_at IS NOT NULL), ${stageDeadlineSql('l')} ASC`;
-  }
-  if (scope === 'due') {
-    conditions.push(`l.next_follow_up_date <= ${TODAY_IST_SQL}`);
-    orderBy = 'l.next_follow_up_date ASC';
-  }
-  if (scope === 'closed') {
-    conditions.push("l.status IN ('won', 'lost', 'dead')");
-    orderBy = 'l.updated_at DESC';
-  }
+  if (scope === 'active' || scope === 'due') conditions.push(`l.status IN ${OPEN_STATUSES_SQL}`);
+  if (scope === 'due') conditions.push(`l.next_follow_up_date <= ${TODAY_IST_SQL}`);
+  if (scope === 'closed') conditions.push("l.status IN ('won', 'lost', 'dead')");
   if (status) {
     if (!STATUSES.includes(status)) throw Object.assign(new Error('Unknown status'), { status: 400 });
     params.push(status);
@@ -532,7 +523,7 @@ export async function listMine(salesId, { scope = 'active', status, q, limit = 5
   }
   const search = searchCondition(q, params);
   if (search) conditions.push(search);
-  return selectLeads(conditions, params, { limit, offset, orderBy });
+  return selectLeads(conditions, params, { limit, offset });
 }
 
 export async function getLead(id) {
@@ -550,11 +541,53 @@ export async function getLead(id) {
 // ============================================
 
 // `ownerSalesId` set = a Sales employee creating their own lead: it is
-// assigned to them in the same INSERT and its New-stage clock starts now.
+// assigned to them in the same INSERT and its stage clock starts now.
 // Admin-created leads (no ownerSalesId) start unassigned — visible only to
-// Admin until assigned (no common pool). A Company + Phone (or phone-only)
-// match is returned as a DUPLICATE_LEAD warning unless `confirmDuplicate`.
-export async function createLead({ company, person_to_contact, email, phone, value_estimate, remarks, demand }, actor, { ownerSalesId, confirmDuplicate } = {}) {
+// Admin until assigned (no common pool) — unless created Won, which needs
+// `assigned_to` (a win must belong to someone). A Company + Phone (or
+// phone-only) match is returned as a DUPLICATE_LEAD warning unless
+// `confirmDuplicate`.
+//
+// `status` (default 'new') creates the lead straight into a stage, with that
+// stage's fields required exactly as a status move would (checkCreateStatus):
+// Proposal/Follow-up/Hold need Value Estimate + Ref ID, Lost/Dead a close
+// reason, Won every Won field. Won and Dead are Admin-only here; a
+// salesperson wins a lead through the normal Won flow so its approval and
+// duplicate rules always apply.
+export const CREATE_STATUSES = {
+  sales: ['new', 'meeting', 'proposal', 'follow_up', 'hold', 'lost'],
+  admin: ['new', 'meeting', 'proposal', 'follow_up', 'hold', 'won', 'lost', 'dead']
+};
+
+// Validates the stage-specific part of a create. Pure — unit-tested.
+// Returns { status, ref_id, lost_reason, lost_note, next_follow_up_date }.
+export function checkCreateStatus(rawStatus, actorType, lead) {
+  const status = rawStatus === undefined || rawStatus === null || rawStatus === '' ? 'new' : rawStatus;
+  const allowed = CREATE_STATUSES[actorType === 'admin' ? 'admin' : 'sales'];
+  if (!allowed.includes(status)) {
+    if (CREATE_STATUSES.admin.includes(status)) {
+      throw Object.assign(new Error(status === 'won'
+        ? 'A new lead can’t start as Won — create it at Proposal or later, then mark it Won.'
+        : 'Only an Admin can create a lead as Dead'), { status: 403 });
+    }
+    throw Object.assign(new Error(`status must be one of: ${allowed.join(', ')}`), { status: 400 });
+  }
+  const refId = PROPOSAL_STAGES.includes(status) || status === 'won' ? parseRefId(lead.ref_id) : null;
+  if (PROPOSAL_STAGES.includes(status)) {
+    const missing = missingProposalFields({ value_estimate: lead.value_estimate, ref_id: refId });
+    if (missing.length) throw proposalFieldsError(missing);
+  }
+  if (status === 'won') {
+    const missing = missingWonFields({ ...lead, ref_id: refId });
+    if (missing.length) throw wonFieldsError(missing);
+  }
+  const close = CLOSED_STATUSES.includes(status) && status !== 'won' ? parseCloseReason(lead.lost_reason, lead.lost_note) : null;
+  const nextFollowUp = ACTIVE_STATUSES.includes(status) ? parseFollowUpDate(lead.next_follow_up_date) ?? null : null;
+  return { status, ref_id: refId, lost_reason: close?.reason ?? null, lost_note: close?.note ?? null, next_follow_up_date: nextFollowUp };
+}
+
+export async function createLead(fields, actor, { ownerSalesId, confirmDuplicate } = {}) {
+  const { company, person_to_contact, email, phone, value_estimate, remarks, demand, product, assigned_to } = fields;
   if (typeof company !== 'string' || !company.trim()) throw Object.assign(new Error('company is required'), { status: 400 });
   if (!isValidPhone(phone)) throw Object.assign(new Error('A valid phone number is required'), { status: 400 });
   const valueEstimate = requireValidValueEstimate(value_estimate);
@@ -562,23 +595,63 @@ export async function createLead({ company, person_to_contact, email, phone, val
   const demandValue = parseDemand(demand);
   const contact = parseOptionalText(person_to_contact, 'Person to Contact');
   const emailValue = parseOptionalText(email, 'Email');
-  await warnIfDuplicate(company, phone, actor, { confirmDuplicate });
-  const createdDetails = confirmDuplicate ? { duplicate_confirmed: true } : {};
-
-  const data = await withTransaction(async (client) => {
-    const inserted = await client.query(
-      `INSERT INTO leads (company, person_to_contact, email, phone, value_estimate, remarks, demand, status, assigned_to, accepted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'new', $8, CASE WHEN $8::uuid IS NULL THEN NULL ELSE now() END)
-       RETURNING ${LEAD_RETURNING}`,
-      [company.trim(), contact, emailValue, normalizePhone(phone), valueEstimate, remarksValue, demandValue, ownerSalesId || null]
-    );
-    await logHistory(client, inserted.rows[0].id, 'created', actor, ownerSalesId
-      ? { source: 'sales', assigned_to: ownerSalesId, ...createdDetails }
-      : { source: 'manual', ...createdDetails });
-    return inserted.rows[0];
+  const productValue = parseOptionalText(product, 'Product');
+  const stage = checkCreateStatus(fields.status, actor.type, {
+    company, phone, person_to_contact: contact, email: emailValue, value_estimate: valueEstimate,
+    ref_id: fields.ref_id, lost_reason: fields.lost_reason, lost_note: fields.lost_note, next_follow_up_date: fields.next_follow_up_date
   });
-  publish('lead_created', { id: data.id, assignedTo: ownerSalesId || null }, [ownerSalesId]);
-  return data;
+  // Owner: the salesperson themself, or (Admin, Won only) the one it was won by.
+  let owner = ownerSalesId || null;
+  if (!owner && stage.status === 'won') {
+    if (typeof assigned_to !== 'string' || !UUID_RE.test(assigned_to)) {
+      throw Object.assign(new Error('Choose the salesperson this lead was won by.'), { status: 400 });
+    }
+    await requireActiveSales(assigned_to);
+    owner = assigned_to;
+  }
+  await warnIfDuplicate(company, phone, actor, { confirmDuplicate });
+  const createdDetails = {
+    ...(confirmDuplicate ? { duplicate_confirmed: true } : {}),
+    ...(stage.status !== 'new' ? { status: stage.status } : {})
+  };
+
+  const result = await withTransaction(async (client) => {
+    // A Won lead is written as Proposal and then won through applyWon, so it
+    // gets the same field guard and duplicate auto-close as any other win.
+    const insertStatus = stage.status === 'won' ? 'proposal' : stage.status;
+    const inserted = await client.query(
+      `INSERT INTO leads (company, person_to_contact, email, phone, value_estimate, remarks, demand, product, status,
+                          ref_id, lost_reason, lost_note, next_follow_up_date, assigned_to, accepted_at, meeting_reached_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+               CASE WHEN $14::uuid IS NULL THEN NULL ELSE now() END,
+               CASE WHEN $9 IN ('new', 'lost', 'dead') THEN NULL ELSE now() END)
+       RETURNING ${LEAD_RETURNING}`,
+      [company.trim(), contact, emailValue, normalizePhone(phone), valueEstimate, remarksValue, demandValue, productValue,
+        insertStatus, stage.ref_id, stage.lost_reason, stage.lost_note, stage.next_follow_up_date, owner]
+    );
+    const lead = inserted.rows[0];
+    await logHistory(client, lead.id, 'created', actor, ownerSalesId
+      ? { source: 'sales', assigned_to: ownerSalesId, ...createdDetails }
+      : { source: 'manual', ...(owner ? { assigned_to: owner } : {}), ...createdDetails });
+    // A lead created past New also gets the status_changed row a move would
+    // have written, so Analytics (closed-in-period), the daily report's
+    // as-of status and the history all see when it reached that stage.
+    if (stage.status !== 'won') {
+      if (stage.status !== 'new') {
+        await logHistory(client, lead.id, 'status_changed', actor, {
+          from: 'new', to: stage.status, at_creation: true, clock_started_at: lead.status_changed_at,
+          ...(stage.lost_reason ? { lost_reason: stage.lost_reason, ...(stage.lost_note ? { lost_note: stage.lost_note } : {}) } : {})
+        });
+      }
+      return { lead, closed: [] };
+    }
+    await lockCustomer(client, lead.id);
+    const won = await applyWon(client, lead.id, 'proposal', actor, { at_creation: true });
+    if (!won) throw Object.assign(new Error('This lead could not be created as Won. Check its details and try again.'), { status: 409 });
+    return won;
+  });
+  publish('lead_created', { id: result.lead.id, assignedTo: owner }, [owner, ...result.closed.map((c) => c.assigned_to)]);
+  return { ...result.lead, ...(result.closed.length ? { auto_closed: result.closed.length } : {}) };
 }
 
 // Short optional text fields (contact, email): text or blank only — never an
@@ -598,7 +671,7 @@ function parseOptionalText(raw, label) {
 // returned; undefined means "leave unchanged". Remarks, Demand and Ref ID
 // are optional here (blank clears them); whether a blank is allowed for the
 // lead's current stage is checked against the stored status in the UPDATE.
-export function parseLeadEdits({ company, person_to_contact, email, phone, value_estimate, remarks, ref_id, demand }) {
+export function parseLeadEdits({ company, person_to_contact, email, phone, value_estimate, remarks, ref_id, demand, product }) {
   if (company !== undefined && (typeof company !== 'string' || !company.trim())) throw Object.assign(new Error('company cannot be empty'), { status: 400 });
   if (phone !== undefined && !isValidPhone(phone)) throw Object.assign(new Error('A valid phone number is required'), { status: 400 });
   const valueEstimate = value_estimate !== undefined ? requireValidValueEstimate(value_estimate) : undefined;
@@ -615,6 +688,7 @@ export function parseLeadEdits({ company, person_to_contact, email, phone, value
   if (remarks !== undefined) payload.remarks = remarksValue;
   if (ref_id !== undefined) payload.ref_id = refIdValue;
   if (demand !== undefined) payload.demand = demandValue;
+  if (product !== undefined) payload.product = parseOptionalText(product, 'Product');
   return payload;
 }
 
@@ -1624,6 +1698,164 @@ export async function importLeads(rows, actor, { includeDuplicates = false } = {
 
   publish('leads_imported', { count: toImport.length });
   return { ...result, imported: toImport.length };
+}
+
+// ============================================
+// FUNNEL (migration 044) — starred leads with their costing: Value (the
+// lead's value_estimate), Backup, Order Closed and a short remark. Admin
+// can star any live lead; a salesperson stars their own (`ownerSalesId`,
+// enforced in the UPDATE). Costing stays editable on Won/Lost leads — it is
+// the deal's money, not its stage — but archived leads are immutable.
+// Un-starring keeps the costing, so starring again restores it.
+// ============================================
+
+export const MAX_FUNNEL_REMARK_LENGTH = 500;
+export const MAX_FUNNEL_EXPORT_ROWS = 5000;
+
+function funnelAccessError(existing, ownerSalesId) {
+  if (!existing) return Object.assign(new Error('Lead not found'), { status: 404 });
+  if (ownerSalesId && existing.assigned_to !== ownerSalesId) return Object.assign(new Error('You do not own this lead'), { status: 403 });
+  if (existing.archived_at) return Object.assign(new Error('This lead has been archived and can no longer be changed.'), { status: 409 });
+  return null;
+}
+
+export async function setFunnelStar(id, starred, actor, { ownerSalesId } = {}) {
+  if (typeof starred !== 'boolean') throw Object.assign(new Error('starred must be true or false'), { status: 400 });
+  const data = await withTransaction(async (client) => {
+    const before = await lockLead(client, id);
+    const denied = funnelAccessError(before, ownerSalesId);
+    if (denied) throw denied;
+    if (!!before.funnel_starred_at === starred) return before;
+    const { rows } = await client.query(
+      `UPDATE leads SET funnel_starred_at = ${starred ? 'now()' : 'NULL'}, updated_at = now()
+       WHERE id = $1 RETURNING ${LEAD_RETURNING}`,
+      [id]
+    );
+    await logHistory(client, id, starred ? 'funnel_starred' : 'funnel_unstarred', actor, {});
+    return rows[0];
+  });
+  publish('lead_updated', { id }, [data.assigned_to]);
+  return data;
+}
+
+// Validates the Funnel card's editable fields. Only keys present are
+// returned; blank clears. Pure — unit-tested.
+export function parseFunnelEdits({ backup_value, order_closed_value, remark, product } = {}) {
+  const amount = (raw, label) => {
+    const { value, error } = parseValueEstimate(raw);
+    if (error) throw Object.assign(new Error(error.replace('Value estimate', label)), { status: 400 });
+    return value;
+  };
+  const payload = {};
+  if (backup_value !== undefined) payload.funnel_backup_value = amount(backup_value, 'Backup');
+  if (order_closed_value !== undefined) payload.funnel_order_closed_value = amount(order_closed_value, 'Order Closed');
+  if (remark !== undefined) {
+    if (remark !== null && typeof remark !== 'string') throw Object.assign(new Error('Remark must be text'), { status: 400 });
+    const trimmed = (remark || '').trim();
+    if (trimmed.length > MAX_FUNNEL_REMARK_LENGTH) {
+      throw Object.assign(new Error(`Remark cannot exceed ${MAX_FUNNEL_REMARK_LENGTH} characters`), { status: 400 });
+    }
+    payload.funnel_remark = trimmed || null;
+  }
+  if (product !== undefined) payload.product = parseOptionalText(product, 'Product');
+  return payload;
+}
+
+export async function updateFunnel(id, fields, actor, { ownerSalesId } = {}) {
+  const payload = parseFunnelEdits(fields || {});
+  if (!Object.keys(payload).length) throw Object.assign(new Error('Nothing to update'), { status: 400 });
+  const data = await withTransaction(async (client) => {
+    const before = await lockLead(client, id);
+    const denied = funnelAccessError(before, ownerSalesId);
+    if (denied) throw denied;
+    if (!before.funnel_starred_at) throw Object.assign(new Error('Star this lead to add it to the Funnel first.'), { status: 409 });
+    const keys = Object.keys(payload);
+    const { rows } = await client.query(
+      `UPDATE leads SET ${keys.map((key, i) => `${key} = $${i + 2}`).join(', ')}, updated_at = now()
+       WHERE id = $1 RETURNING ${LEAD_RETURNING}`,
+      [id, ...keys.map((key) => payload[key])]
+    );
+    const norm = (key, v) => (v == null ? null : key.endsWith('_value') ? Number(v) : v);
+    const changes = Object.fromEntries(keys
+      .filter((key) => norm(key, before[key]) !== norm(key, payload[key]))
+      .map((key) => [key, { from: norm(key, before[key]), to: norm(key, payload[key]) }]));
+    if (Object.keys(changes).length) await logHistory(client, id, 'funnel_updated', actor, { fields: Object.keys(changes), changes });
+    return rows[0];
+  });
+  publish('lead_updated', { id }, [data.assigned_to]);
+  return data;
+}
+
+// Funnel list + totals. Filters combine: from/to (India date the lead was
+// starred, inclusive), salesId (owner), location (owner's branch),
+// product (case-insensitive exact), q (same search as the lead lists).
+// `all` returns up to MAX_FUNNEL_EXPORT_ROWS rows for the Excel export.
+export async function listFunnel({ from, to, salesId, location, product, q, limit = 24, offset = 0, all = false } = {}) {
+  const params = [];
+  const conditions = ['l.archived_at IS NULL', 'l.funnel_starred_at IS NOT NULL'];
+  for (const [value, op] of [[from, '>='], [to, '<=']]) {
+    if (!value) continue;
+    if (!isValidDateKey(value)) throw Object.assign(new Error('Dates must be YYYY-MM-DD'), { status: 400 });
+    params.push(value);
+    conditions.push(`(l.funnel_starred_at AT TIME ZONE 'Asia/Kolkata')::date ${op} $${params.length}::date`);
+  }
+  if (salesId) {
+    if (!UUID_RE.test(String(salesId))) throw Object.assign(new Error('Invalid salesperson'), { status: 400 });
+    params.push(salesId);
+    conditions.push(`l.assigned_to = $${params.length}`);
+  }
+  if (location) {
+    params.push(String(location).trim());
+    conditions.push(`btrim(s.location) = $${params.length}`);
+  }
+  if (product) {
+    params.push(String(product).trim().toLowerCase());
+    conditions.push(`lower(btrim(l.product)) = $${params.length}`);
+  }
+  const search = searchCondition(q, params);
+  if (search) conditions.push(search);
+  const where = conditions.join(' AND ');
+  const lim = all ? MAX_FUNNEL_EXPORT_ROWS : clampLimit(limit);
+  const off = all ? 0 : clampOffset(offset);
+
+  const [list, totals] = await Promise.all([
+    query(
+      `SELECT ${leadColumnsSql('l')}, s.full_name AS sales_name, s.location AS sales_location
+       FROM leads l LEFT JOIN sales s ON s.id = l.assigned_to
+       WHERE ${where}
+       ORDER BY l.funnel_starred_at DESC, l.id DESC
+       LIMIT ${lim} OFFSET ${off}`,
+      params
+    ),
+    query(
+      `SELECT COUNT(*)::int AS count,
+              COALESCE(SUM(l.value_estimate), 0) AS value,
+              COALESCE(SUM(l.funnel_backup_value), 0) AS backup,
+              COALESCE(SUM(l.funnel_order_closed_value), 0) AS order_closed
+       FROM leads l LEFT JOIN sales s ON s.id = l.assigned_to
+       WHERE ${where}`,
+      params
+    )
+  ]);
+  const t = totals.rows[0];
+  return {
+    data: list.rows,
+    count: t.count,
+    totals: { value: Number(t.value), backup: Number(t.backup), orderClosed: Number(t.order_closed) }
+  };
+}
+
+// Filter choices for the Funnel and suggestions for the lead form's Product
+// field: products already used on live leads, and the salespeople's branches.
+export async function getFunnelOptions() {
+  const [products, locations] = await Promise.all([
+    query(`SELECT MIN(btrim(product)) AS product FROM leads
+           WHERE archived_at IS NULL AND NULLIF(btrim(product), '') IS NOT NULL
+           GROUP BY lower(btrim(product)) ORDER BY 1`),
+    query(`SELECT DISTINCT btrim(location) AS location FROM sales
+           WHERE NULLIF(btrim(location), '') IS NOT NULL ORDER BY 1`)
+  ]);
+  return { products: products.rows.map((r) => r.product), locations: locations.rows.map((r) => r.location) };
 }
 
 // ============================================

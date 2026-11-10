@@ -46,6 +46,9 @@ import { BackOfficeDashboard } from './components/dashboard/BackOfficeDashboard'
 import { MyLeadsPage } from './components/sales/MyLeadsPage';
 import { ViewAsSalesBanner } from './components/sales/ViewAsSalesBanner';
 import { SalesDailyReportPage } from './components/sales/SalesDailyReportPage';
+// Quotation module — Back-Office Quote Managers + Super Admin (read-only). Additive.
+import { QuoteWorkspace } from './components/quotes/QuoteWorkspace';
+import { QUOTE_PAGE_IDS } from './components/quotes/quoteShared';
 
 // Modals & Panels
 import { TicketDetailsModal } from './components/requests/TicketDetailsModal';
@@ -66,7 +69,7 @@ import { ToastContainer } from './components/common/ToastContainer';
 import { EmptyState } from './components/common/EmptyState';
 
 const MainLayout = () => {
-  const { isLoggedIn, isRestoringSession, role, baseRole, activePage, canAccessAdminPage } = useApp();
+  const { isLoggedIn, isRestoringSession, role, baseRole, activePage, setActivePage, canAccessAdminPage } = useApp();
   const isMobile = useIsMobile();
 
   // The password-reset link emailed to an admin lands here. Checked before the
@@ -142,6 +145,8 @@ const MainLayout = () => {
           return <SalesPage />;
         case 'back-office':
           return <BackOfficePage />;
+        case 'quotations':
+          return <QuoteWorkspace />;
         case 'attendance':
           return <AttendancePage />;
         case 'installations':
@@ -183,6 +188,7 @@ const MainLayout = () => {
       return <><ViewAsSalesBanner />{page}</>;
     }
     if (role === 'back_office') {
+      if (QUOTE_PAGE_IDS.includes(activePage)) return <QuoteWorkspace section={activePage} onNavigate={setActivePage} />;
       return activePage === 'my-attendance' ? <MyAttendancePage /> : <BackOfficeDashboard />;
     }
 

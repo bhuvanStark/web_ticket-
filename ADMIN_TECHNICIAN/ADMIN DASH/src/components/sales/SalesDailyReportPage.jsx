@@ -6,16 +6,17 @@
 // with a comment. Isolated like MyLeadsPage: own fetches, nothing global.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Plus, Pencil, Download, X, Search, Sparkles, Trash2, ChevronDown, ChevronUp, FileText } from 'lucide-react';
+import { Plus, Pencil, Download, X, Search, Sparkles, Trash2, ChevronDown, ChevronUp, FileText, Star } from 'lucide-react';
 import { fetchMine } from '../../services/leadsApiService';
 import { fetchMyReports, createTodayReport, updateMyReport, fetchViewAsReports } from '../../services/salesDailyReportApiService';
 import { generateSalesDailyReportPDF, formatReportDate } from '../../utils/salesDailyReportPdf';
 import { LeadTimerBattery } from './LeadTimerBattery';
-import { STATUS_LABEL, STATUS_COLOR } from './leadPipeline';
+import { STATUS_LABEL, STATUS_COLOR, reportLeadFields } from './leadPipeline';
 import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary } from './SalesModal';
 
 // Read-only list of a report's entries — shared with the Admin tab. Status
-// and timer are frozen as of the report's last save.
+// and timer are frozen as of the report's last save; the lead details under
+// them (reportLeadFields) are the lead's current values for that status.
 export const ReportItemsList = ({ items }) => (
   <div className="divide-y divide-[#F2F4F7]">
     {items.map((item) => (
@@ -29,11 +30,22 @@ export const ReportItemsList = ({ items }) => (
               <>
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_COLOR[item.lead.status]}`}>{STATUS_LABEL[item.lead.status]}</span>
                 <LeadTimerBattery lead={item.lead} now={Date.parse(item.lead.as_of)} />
+                {item.lead.in_funnel && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#FFFAEB] text-[#B54708] inline-flex items-center gap-1"><Star className="w-3 h-3" fill="currentColor" /> Funnel</span>}
               </>
             ) : (
               <span className="text-[11px] text-[#98A2B3] italic">Lead removed</span>
             )}
           </div>
+          {reportLeadFields(item.lead).length > 0 && (
+            <dl className="mt-1.5 space-y-0.5 text-[11px]">
+              {reportLeadFields(item.lead).map(([label, value]) => (
+                <div key={label} className="flex gap-1.5 min-w-0">
+                  <dt className="text-[#98A2B3] shrink-0">{label}</dt>
+                  <dd className="text-[#344054] font-semibold break-words min-w-0">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </div>
         <p className="text-xs text-[#344054] whitespace-pre-wrap flex-1">{item.comment}</p>
       </div>

@@ -19,6 +19,7 @@ import { RemoveStaffDialog } from '../common/RemoveStaffDialog';
 import { AdminLeadsTab } from './AdminLeadsTab';
 import { AdminLeadsAnalyticsTab } from './AdminLeadsAnalyticsTab';
 import { AdminDailyReportsTab } from './AdminDailyReportsTab';
+import { AdminFunnelTab } from './LeadFunnel';
 import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary } from './SalesModal';
 
 const FieldError = ({ children }) =>
@@ -343,6 +344,7 @@ export const SalesPage = () => {
       <div className="sales-scroll-x -mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-1 shadow-[inset_0_-1px_0_#E4E7EC] overflow-x-auto">
         {[
           { id: 'leads', label: 'Leads' },
+          { id: 'funnel', label: 'Funnel' },
           { id: 'analytics', label: 'Analytics' },
           { id: 'daily-reports', label: 'Daily Reports' },
           { id: 'roster', label: 'Sales Team' }
@@ -359,6 +361,7 @@ export const SalesPage = () => {
         ))}
       </div>
       {tab === 'leads' ? <AdminLeadsTab />
+        : tab === 'funnel' ? <AdminFunnelTab />
         : tab === 'analytics' ? <AdminLeadsAnalyticsTab />
         : tab === 'daily-reports' ? <AdminDailyReportsTab />
         : <SalesRosterTab />}

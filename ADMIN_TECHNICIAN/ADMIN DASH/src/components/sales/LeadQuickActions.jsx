@@ -9,8 +9,8 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Copy, Hourglass } from 'lucide-react';
 import { updateLeadStatus, updateLeadRemarks, addFollowUp } from '../../services/leadsApiService';
 import {
-  STATUS_LABEL, STATUS_COLOR, PROPOSAL_STAGES, CLOSED_STATUSES, REF_ID_TEMPLATE, LOST_REASONS,
-  isRefIdTemplate, nextStatuses, todayKey, isWonPending, keepsStageClock, money
+  STATUS_LABEL, STATUS_COLOR, PROPOSAL_STAGES, CLOSED_STATUSES, ACTIVE_STATUSES, REF_ID_TEMPLATE, LOST_REASONS,
+  isRefIdTemplate, nextStatuses, todayKey, isWonPending, keepsStageClock, money, createStatuses
 } from './leadPipeline';
 import { LeadTimerBattery } from './LeadTimerBattery';
 import { SalesModal, ModalHeader, ModalBody, ModalFooter, btnPrimary, btnSecondary } from './SalesModal';
@@ -48,7 +48,7 @@ export const ProposalFields = ({ valueEstimate, setValueEstimate, refId, setRefI
 };
 
 // Reason (required) + note for a move to Lost or Dead.
-const CloseReasonFields = ({ reason, setReason, note, setNote }) => (
+export const CloseReasonFields = ({ reason, setReason, note, setNote }) => (
   <div className="rounded-lg border border-[#FECDCA] bg-[#FFFBFA] p-3 space-y-2">
     <label className="block text-xs font-bold text-[#344054]">Reason *</label>
     <select value={reason} onChange={(e) => setReason(e.target.value)} required className="form-input text-sm">
@@ -59,6 +59,62 @@ const CloseReasonFields = ({ reason, setReason, note, setNote }) => (
       placeholder={reason === 'other' ? 'Explain the reason *' : 'Add a note (optional)'} className="form-input text-sm" />
   </div>
 );
+
+// "Start in stage" block of the Add Lead form. `stage` holds { status,
+// refId, reason, note, followUp, wonBy }; the fields each stage needs appear
+// under the picker, exactly as a status move would ask for them. Value
+// Estimate lives in the form itself (it is shown for every stage).
+export const CreateStageFields = ({ stage, setStage, isAdmin, roster = [] }) => {
+  const set = (key) => (value) => setStage((s) => ({ ...s, [key]: value }));
+  const { status } = stage;
+  const needsRefId = PROPOSAL_STAGES.includes(status) || status === 'won';
+  const closing = ['lost', 'dead'].includes(status);
+  const label = 'block text-xs font-bold text-[#344054] mb-1';
+  const refIsTemplate = isRefIdTemplate(stage.refId);
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className={label}>Stage</label>
+        <select value={status} onChange={(e) => set('status')(e.target.value)} className="form-input text-sm">
+          {createStatuses(isAdmin).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+        </select>
+        {status !== 'new' && <p className="text-[11px] text-[#667085] mt-1">The lead is created straight into {STATUS_LABEL[status]} — fill in what that stage needs below.</p>}
+      </div>
+      {needsRefId && (
+        <div>
+          <label className={label}>Ref ID *</label>
+          <input required value={stage.refId} onChange={(e) => set('refId')(e.target.value)} placeholder={REF_ID_TEMPLATE} maxLength={120}
+            className={`form-input text-sm font-mono ${refIsTemplate ? 'border-[#FDB022]' : ''}`} />
+          <p className={`text-[11px] mt-1 ${refIsTemplate ? 'text-[#B54708] font-semibold' : 'text-[#667085]'}`}>
+            {refIsTemplate ? 'This is the example format — edit it to this proposal’s real reference.' : `Required from Proposal onwards, with a Value Estimate. Format e.g. ${REF_ID_TEMPLATE}`}
+          </p>
+        </div>
+      )}
+      {status === 'won' && (
+        <>
+          <div>
+            <label className={label}>Won by *</label>
+            <select required value={stage.wonBy} onChange={(e) => set('wonBy')(e.target.value)} className="form-input text-sm">
+              <option value="">Choose a salesperson…</option>
+              {roster.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+            </select>
+          </div>
+          <p className="text-[11px] text-[#B54708] bg-[#FFFAEB] border border-[#FEDF89] rounded-lg px-3 py-2">
+            A Won lead needs every field — Person to Contact, Email, Ref ID and a value above ₹0 — and is final once saved.
+          </p>
+        </>
+      )}
+      {closing && <CloseReasonFields reason={stage.reason} setReason={set('reason')} note={stage.note} setNote={set('note')} />}
+      {/* Sales only: an Admin-created lead starts unassigned, and assigning it clears the date. */}
+      {!isAdmin && ACTIVE_STATUSES.includes(status) && (
+        <div>
+          <label className={label}>Next follow-up</label>
+          <input type="date" value={stage.followUp} min={todayKey()} onChange={(e) => set('followUp')(e.target.value)} className="form-input text-sm" />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const LeadStatusModal = ({ lead, isAdmin = false, onClose, onDone, showToast }) => {
   const pending = isWonPending(lead);
@@ -354,13 +410,18 @@ const EVENT_LABEL = {
   remarks_updated: 'Remarks updated',
   follow_up: 'Follow-up',
   status_changed: 'Status changed',
-  deactivation_reassigned: 'Returned to Admin (salesperson deactivated)'
+  deactivation_reassigned: 'Returned to Admin (salesperson deactivated)',
+  funnel_starred: 'Added to the Funnel',
+  funnel_unstarred: 'Removed from the Funnel',
+  funnel_updated: 'Funnel details updated'
 };
 const FIELD_LABEL = {
   company: 'Company', person_to_contact: 'Contact', email: 'Email', phone: 'Phone',
-  value_estimate: 'Value', ref_id: 'Ref ID', demand: 'Demand'
+  value_estimate: 'Value', ref_id: 'Ref ID', demand: 'Demand', product: 'Product',
+  funnel_backup_value: 'Backup', funnel_order_closed_value: 'Order Closed', funnel_remark: 'Remark'
 };
-const showValue = (key, v) => (v == null || v === '' ? '—' : key === 'value_estimate' ? money(v) : String(v));
+const MONEY_FIELDS = ['value_estimate', 'funnel_backup_value', 'funnel_order_closed_value'];
+const showValue = (key, v) => (v == null || v === '' ? '—' : MONEY_FIELDS.includes(key) ? money(v) : String(v));
 
 // Lead history, shared by the Admin and Sales lead popups. `salesName`
 // (Admin only) turns salesperson ids into names; `showActor` adds who did it.
@@ -380,6 +441,7 @@ export const LeadHistoryList = ({ history, salesName, showActor = false }) => (
               {d.reason === 'duplicate_won' && ' (another lead for this customer was Won)'}
               {d.approved_request && ' (Won request approved)'}
               {d.clock_kept && ' · timer kept'}
+              {d.at_creation && ' (when the lead was created)'}
             </div>
           )}
           {d.lost_reason && <div className="text-[#667085]">Reason: {LOST_REASONS[d.lost_reason] || d.lost_reason}{d.lost_note ? ` — ${d.lost_note}` : ''}</div>}
@@ -388,7 +450,7 @@ export const LeadHistoryList = ({ history, salesName, showActor = false }) => (
           {h.event_type === 'follow_up' && 'next_action_date' in d && (
             <div className="text-[#667085]">{d.next_action_date ? `Next follow-up: ${d.next_action_date}` : 'Follow-up date cleared'}</div>
           )}
-          {h.event_type === 'edited' && d.changes && Object.entries(d.changes).map(([key, change]) => (
+          {['edited', 'funnel_updated'].includes(h.event_type) && d.changes && Object.entries(d.changes).map(([key, change]) => (
             <div key={key} className="text-[#667085]">{FIELD_LABEL[key] || key}: {showValue(key, change.from)} → {showValue(key, change.to)}</div>
           ))}
           {h.event_type === 'edited' && !d.changes && Array.isArray(d.fields) && <div className="text-[#667085]">{d.fields.map((f) => FIELD_LABEL[f] || f).join(', ')}</div>}

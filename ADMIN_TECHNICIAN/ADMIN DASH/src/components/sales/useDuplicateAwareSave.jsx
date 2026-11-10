@@ -12,9 +12,9 @@ export function useDuplicateAwareSave(save, { onSaved, showToast }) {
     if (saving) return;
     setSaving(true);
     try {
-      await save(payload);
+      const saved = await save(payload);
       setPending(null);
-      onSaved();
+      onSaved(saved);
     } catch (err) {
       if (err.code === 'DUPLICATE_LEAD' && !payload.confirm_duplicate) setPending({ payload, duplicates: err.duplicates || [], message: err.message });
       else showToast(err.message, 'error');

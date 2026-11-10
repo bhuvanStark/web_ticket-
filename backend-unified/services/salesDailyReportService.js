@@ -77,6 +77,7 @@ async function insertItems(client, reportId, items) {
 }
 
 // Reports (newest first) with their lines. Each existing-lead line carries
+// the lead's current details (contact, phone, value, product, Ref ID, …) and
 // the lead's status and stage clock *as of the report's last save*
 // (`as_of`), so the battery timer is frozen at submission. If the lead's
 // status has changed since, the earlier status comes from lead_history and
@@ -99,6 +100,9 @@ async function loadReports(where, params, limit = 200) {
   const { rows: items } = await query(
     `SELECT i.id, i.report_id, i.is_potential, i.lead_id, i.company, i.comment,
             r.updated_at AS as_of, l.archived_at AS lead_archived_at,
+            l.person_to_contact, l.phone, l.value_estimate, l.product, l.ref_id, l.demand,
+            to_char(l.next_follow_up_date, 'YYYY-MM-DD') AS next_follow_up_date,
+            l.lost_reason, l.lost_note, l.funnel_starred_at,
             CASE WHEN later.changed THEN COALESCE(h.to_status, 'new') ELSE l.status END AS lead_status,
             CASE WHEN NOT later.changed AND l.status_changed_at <= r.updated_at THEN l.status_changed_at
                  WHEN h.to_status IS NOT NULL AND h.to_status <> 'new' THEN h.clock_start
@@ -136,7 +140,13 @@ async function loadReports(where, params, limit = 200) {
       company: i.company,
       comment: i.comment,
       lead: i.lead_id && i.lead_status
-        ? { status: i.lead_status, status_changed_at: i.lead_status_changed_at, as_of: i.as_of, archived: !!i.lead_archived_at }
+        ? {
+          status: i.lead_status, status_changed_at: i.lead_status_changed_at, as_of: i.as_of, archived: !!i.lead_archived_at,
+          // The lead's details as they are now (the status above is as of the report).
+          person_to_contact: i.person_to_contact, phone: i.phone, value_estimate: i.value_estimate, product: i.product,
+          ref_id: i.ref_id, demand: i.demand, next_follow_up_date: i.next_follow_up_date,
+          lost_reason: i.lost_reason, lost_note: i.lost_note, in_funnel: !!i.funnel_starred_at
+        }
         : null
     });
   }

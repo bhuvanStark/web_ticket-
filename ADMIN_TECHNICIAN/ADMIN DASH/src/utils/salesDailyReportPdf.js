@@ -1,5 +1,5 @@
 import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
-import { STATUS_LABEL, stageTimer } from '../components/sales/leadPipeline';
+import { STATUS_LABEL, stageTimer, reportLeadFields } from '../components/sales/leadPipeline';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -44,7 +44,8 @@ export function generateSalesDailyReportPDF(report, salesName) {
     }
     return `<tr>
       <td class="num">${i + 1}</td>
-      <td><strong>${esc(item.company)}</strong></td>
+      <td><strong>${esc(item.company)}</strong>${item.lead?.in_funnel ? ' <span class="tag funnel">Funnel</span>' : ''}${reportLeadFields(item.lead)
+        .map(([label, value]) => `<div class="detail"><span class="muted">${esc(label)}:</span> ${esc(value)}</div>`).join('')}</td>
       <td>${status}</td>
       <td>${timer}</td>
       <td class="comment">${esc(item.comment)}</td>
@@ -72,6 +73,8 @@ export function generateSalesDailyReportPDF(report, salesName) {
         .comment { white-space: pre-wrap; line-height: 1.5; }
         .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #EFF5FC; color: #004898; font-weight: 700; font-size: 11px; }
         .tag.potential { background: #F4F3FF; color: #5925DC; }
+        .tag.funnel { background: #FFFAEB; color: #B54708; }
+        .detail { font-size: 11px; margin-top: 2px; }
         .muted { color: #94A3B8; }
         .battery { display: inline-flex; gap: 2px; padding: 2px; border: 2px solid #CBD5E1; border-radius: 4px; vertical-align: middle; }
         .battery i { display: block; width: 5px; height: 9px; border-radius: 1px; background: #F1F5F9; }
