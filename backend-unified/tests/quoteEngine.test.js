@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { computeLine, computeVersion, roundUpToStep } from '../services/quoteEngine.js';
-import { parseVersionPayload, parseImportRows, parseStatus, parseItem } from '../services/quoteService.js';
+import { parseVersionPayload, parseImportRows, parseStatus, parseItem, parseLead } from '../services/quoteService.js';
 
 const status400 = (fn, re) => assert.throws(fn, (err) => err.status === 400 && (!re || re.test(err.message)));
 
@@ -122,4 +122,13 @@ test('a model repeated in one import file keeps the last row', () => {
   ]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].price, 2);
+});
+
+test('a quote lead needs a customer and a project', () => {
+  status400(() => parseLead({ customer: 'Acme' }), /Project/);
+  status400(() => parseLead({ customer: ' ', project: 'Lobby' }), /Customer/);
+  assert.deepEqual(parseLead({ customer: ' Acme ', project: 'Lobby' }), {
+    customer: 'Acme', project: 'Lobby', site_location: null, contact_person: null, account_manager_id: null
+  });
+  status400(() => parseLead({ customer: 'Acme', project: 'Lobby', account_manager_id: 'nope' }), /Account manager/);
 });

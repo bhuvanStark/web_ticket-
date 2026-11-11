@@ -54,6 +54,13 @@ export const requireQuoteManager = (req, res, next) => {
   res.status(403).json({ success: false, error: 'Forbidden', message: 'Quotations are read-only for this account' });
 };
 
+// Super Admin decisions (approving / rejecting delete requests). The Super
+// Admin is the only session that resolves to 'viewer'.
+export const requireQuoteApprover = (req, res, next) => {
+  if (req.quoteMode === 'viewer') return next();
+  res.status(403).json({ success: false, error: 'Forbidden', message: 'Only the Super Admin can decide delete requests' });
+};
+
 // GET /access never 403s — it tells the UI whether to show the module.
 export const readQuoteAccess = async (req, res) => {
   try {

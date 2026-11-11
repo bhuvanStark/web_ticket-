@@ -46,7 +46,6 @@ export const QuoteWorkspace = ({ section: routedSection, onNavigate }) => {
     <QuoteLeadsPage
       readOnly={readOnly}
       onOpenQuote={(id) => openQuotations({ quoteId: id })}
-      onShowQuotes={(customer) => openQuotations({ search: customer })}
     />
   ) : section === 'quote-items' ? (
     <QuoteItemsPage readOnly={readOnly} />

@@ -15,11 +15,23 @@ export const MAX_LINES_PER_SECTION = 500;
 export const MAX_IMPORT_ROWS = 5000;
 
 export const DEFAULT_NOTES = [
-  'Electrical work is not included. It is in client scope.',
-  'Civil cutting / re-doing work is not included. It is in client scope.',
-  'Civil, carpentry and false-ceiling work is not included. It is extra and can be done at actuals if required.',
-  'IT infrastructure like Server / Thin client / LAN cabling will be in client scope.',
-  'Any additional mounting structure will be at actuals as per site requirement.'
+  'Civil and electrical works are not included in the quotation and will be under the client\'s scope.',
+  'False ceiling cutting and redoing work are not included and will be under the client\'s scope.',
+  'Raceway, conduiting and capping are not included. If required, these will be charged extra at actuals.',
+  'All IT-related infrastructure, including servers, thin clients and LAN cabling, will be under the client\'s scope.',
+  'All cabling infrastructure will be charged at actuals based on site requirements.',
+  'Equipment racks and enclosures are not included. The client must provide suitable enclosures for equipment installation.',
+  'The client must provide the required power points and conduits/raceways for cable routing at the LED mounting locations.',
+  'DTH connectivity will be under the client\'s scope.'
+].map((line, i) => `${i + 1}. ${line}`).join('\n');
+
+// Starting Terms & Conditions for a new quotation; editable per version.
+export const DEFAULT_TERMS = [
+  'Prices are in Indian Rupees (INR). GST is charged extra at the applicable rate as shown.',
+  'This quotation is valid for 30 days from the date of issue.',
+  'Payment terms: as agreed in the purchase order.',
+  'Warranty: as per the manufacturer\'s standard warranty terms.',
+  'Any work outside the quoted scope will be charged extra at actuals.'
 ].map((line, i) => `${i + 1}. ${line}`).join('\n');
 
 // ---- field parsing ----
@@ -281,16 +293,94 @@ export async function importItems(rows, userId) {
 }
 
 // ============================================
+// ACTIVITY LOG
+// ============================================
+
+// Autosave would log a "saved" every few seconds; consecutive saves of the
+// same version by the same person within this window collapse into one row.
+const SAVE_EVENT_WINDOW = '30 minutes';
+
+// `admin` true when the actor is the Super Admin (admins table), else a
+// Back-Office Quote Manager.
+async function logEvent(db, quoteId, action, { by, admin = false, versionNo = null, detail = null } = {}) {
+  const actor = `(SELECT full_name FROM ${admin ? 'admins' : 'back_office'} WHERE id = $2)`;
+  if (action === 'saved') {
+    const { rowCount } = await db.query(`
+      UPDATE quote_events SET created_at = now()
+       WHERE id = (SELECT max(id) FROM quote_events WHERE quote_id = $1)
+         AND action = 'saved' AND version_no = $3 AND actor_name = ${actor}
+         AND created_at > now() - interval '${SAVE_EVENT_WINDOW}'`, [quoteId, by, versionNo]);
+    if (rowCount) return;
+  }
+  await db.query(
+    `INSERT INTO quote_events (quote_id, version_no, action, actor_name, detail) VALUES ($1, $3, $4, ${actor}, $5)`,
+    [quoteId, by, versionNo, action, detail]
+  );
+}
+
+export async function listEvents(quoteId) {
+  const { rows } = await query(
+    `SELECT id, version_no, action, actor_name, detail, created_at FROM quote_events
+      WHERE quote_id = $1 ORDER BY id DESC LIMIT 200`, [uuid(quoteId, 'Quote')]
+  );
+  return rows;
+}
+
+// ============================================
 // QUOTE LEADS
 // ============================================
 
-function parseLead(body) {
+// A lead is one customer + project (case and spacing ignored, see
+// quote_lead_key() in migration 049); it holds at most one quotation.
+export function parseLead(body) {
   return {
     customer: text(body.customer, 'Customer', 200, { required: true }),
-    project: text(body.project, 'Project', 300),
-    site_location: text(body.site_location, 'Location / Site', 300)
+    project: text(body.project, 'Project', 300, { required: true }),
+    site_location: text(body.site_location, 'Location / Site', 300),
+    contact_person: text(body.contact_person, 'Contact person', 200),
+    account_manager_id: body.account_manager_id ? uuid(body.account_manager_id, 'Account manager') : null
   };
 }
+
+// Account managers are Sales employees; their phone prints on the quotation.
+export async function listAccountManagers() {
+  const { rows } = await query(
+    'SELECT id, full_name, phone FROM sales WHERE is_active AND removed_at IS NULL ORDER BY full_name'
+  );
+  return rows;
+}
+
+// A lead may keep a manager who has since left, as long as it isn't changed.
+async function assertAccountManager(id, leadId = null) {
+  if (!id) return;
+  const { rowCount } = await query(
+    `SELECT 1 FROM sales WHERE id = $1
+        AND ((is_active AND removed_at IS NULL) OR id = (SELECT account_manager_id FROM quote_leads WHERE id = $2))`,
+    [id, leadId]
+  );
+  if (!rowCount) throw fail(400, 'Pick an active Sales employee as the account manager');
+}
+
+const duplicateLead = (row) => Object.assign(
+  fail(409, `A lead for "${row.customer}" – "${row.project}" already exists. Open that one instead.`),
+  { details: { code: 'DUPLICATE_LEAD', lead_id: row.id } }
+);
+
+async function assertLeadUnique(lead, excludeId = null) {
+  const { rows } = await query(
+    `SELECT id, customer, project FROM quote_leads
+      WHERE quote_lead_key(customer) = quote_lead_key($1) AND quote_lead_key(project) = quote_lead_key($2)
+        AND ($3::uuid IS NULL OR id <> $3)`,
+    [lead.customer, lead.project, excludeId]
+  );
+  if (rows[0]) throw duplicateLead(rows[0]);
+}
+
+// The unique index is the backstop for two people saving the same lead at once.
+const onLeadConflict = (lead) => async (error) => {
+  if (error.code === '23505') { await assertLeadUnique(lead); throw duplicateLead({ ...lead, id: null }); }
+  throw error;
+};
 
 export async function listLeads({ search } = {}) {
   const values = [];
@@ -301,37 +391,49 @@ export async function listLeads({ search } = {}) {
     where = 'WHERE l.customer ILIKE $1 OR l.project ILIKE $1 OR l.site_location ILIKE $1';
   }
   const { rows } = await query(`
-    SELECT l.id, l.customer, l.project, l.site_location, l.created_at, l.updated_at,
+    SELECT l.id, l.customer, l.project, l.site_location, l.contact_person, l.account_manager_id,
+           am.full_name AS account_manager_name, am.phone AS account_manager_phone, l.created_at, l.updated_at,
            b.full_name AS created_by_name,
            count(q.id)::int AS quote_count,
            count(q.id) FILTER (WHERE q.status = 'won')::int AS won_count,
-           max(q.updated_at) AS last_quote_at
+           max(q.updated_at) AS last_quote_at,
+           min(q.id::text)::uuid AS quote_id,
+           min(q.status) AS quote_status
       FROM quote_leads l
       LEFT JOIN back_office b ON b.id = l.created_by
+      LEFT JOIN sales am ON am.id = l.account_manager_id
       LEFT JOIN quotes q ON q.lead_id = l.id
       ${where}
-     GROUP BY l.id, b.full_name
+     GROUP BY l.id, b.full_name, am.full_name, am.phone
      ORDER BY l.updated_at DESC`, values);
   return rows;
 }
 
 export async function createLead(body, userId) {
   const lead = parseLead(body);
+  await assertLeadUnique(lead);
+  await assertAccountManager(lead.account_manager_id);
   const { rows } = await query(
-    `INSERT INTO quote_leads (customer, project, site_location, created_by) VALUES ($1, $2, $3, $4)
-     RETURNING id, customer, project, site_location, created_at, updated_at`,
-    [lead.customer, lead.project, lead.site_location, userId]
-  );
-  return { ...rows[0], quote_count: 0, won_count: 0 };
+    `INSERT INTO quote_leads (customer, project, site_location, contact_person, account_manager_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, customer, project, site_location, contact_person, account_manager_id, created_at, updated_at`,
+    [lead.customer, lead.project, lead.site_location, lead.contact_person, lead.account_manager_id, userId]
+  ).catch(onLeadConflict(lead));
+  return { ...rows[0], quote_count: 0, won_count: 0, quote_id: null };
 }
 
+// Editing a lead only changes drafts: issued versions keep the snapshot of
+// customer / project / site they went out with.
 export async function updateLead(id, body) {
   const lead = parseLead(body);
+  await assertLeadUnique(lead, uuid(id, 'Lead'));
+  await assertAccountManager(lead.account_manager_id, id);
   const { rows } = await query(
-    `UPDATE quote_leads SET customer = $2, project = $3, site_location = $4 WHERE id = $1
-     RETURNING id, customer, project, site_location, created_at, updated_at`,
-    [uuid(id, 'Lead'), lead.customer, lead.project, lead.site_location]
-  );
+    `UPDATE quote_leads SET customer = $2, project = $3, site_location = $4, contact_person = $5, account_manager_id = $6
+      WHERE id = $1
+     RETURNING id, customer, project, site_location, contact_person, account_manager_id, created_at, updated_at`,
+    [id, lead.customer, lead.project, lead.site_location, lead.contact_person, lead.account_manager_id]
+  ).catch(onLeadConflict(lead));
   if (!rows[0]) throw fail(404, 'Lead not found');
   return rows[0];
 }
@@ -371,11 +473,14 @@ export async function listQuotes({ search, status } = {}) {
     SELECT q.id, q.lead_id, q.project_ref, q.status, q.po_number, q.po_date::text AS po_date, q.lost_reason,
            q.created_at, q.updated_at, l.customer, l.project, l.site_location,
            b.full_name AS created_by_name,
+           q.delete_requested_at, q.delete_reason, rb.full_name AS delete_requested_by_name,
            v.id AS version_id, v.version_no, v.quote_date::text AS quote_date, v.sm, v.supply_osp, v.supply_price,
-           v.services_osp, v.services_price, v.gst_total, v.grand_total, v.updated_at AS version_updated_at
+           v.services_osp, v.services_price, v.gst_total, v.grand_total, v.updated_at AS version_updated_at,
+           v.issued_at
       FROM quotes q
       JOIN quote_leads l ON l.id = q.lead_id
       LEFT JOIN back_office b ON b.id = q.created_by
+      LEFT JOIN back_office rb ON rb.id = q.delete_requested_by
       JOIN LATERAL (
         SELECT * FROM quote_versions WHERE quote_id = q.id ORDER BY version_no DESC LIMIT 1
       ) v ON true
@@ -384,37 +489,59 @@ export async function listQuotes({ search, status } = {}) {
   return rows.map((row) => toNum(row, VERSION_NUMS));
 }
 
+const quoteExists = (quoteId) => Object.assign(
+  fail(409, 'This lead already has a quotation. Open it and make a new version instead.'),
+  { details: { code: 'QUOTE_EXISTS', quote_id: quoteId } }
+);
+
+// One quotation per lead (unique index quotes_lead_unique).
 export async function createQuote(body, userId) {
   const leadId = uuid(body.lead_id, 'Lead');
   return withTransaction(async (client) => {
-    const lead = await client.query('SELECT id FROM quote_leads WHERE id = $1', [leadId]);
+    const lead = await client.query('SELECT id FROM quote_leads WHERE id = $1 FOR UPDATE', [leadId]);
     if (!lead.rows[0]) throw fail(404, 'Lead not found');
+    const existing = await client.query('SELECT id FROM quotes WHERE lead_id = $1', [leadId]);
+    if (existing.rows[0]) throw quoteExists(existing.rows[0].id);
     const { rows } = await client.query(
       'INSERT INTO quotes (lead_id, project_ref, created_by) VALUES ($1, $2, $3) RETURNING id',
       [leadId, text(body.project_ref, 'Project Ref', 200), userId]
     );
     const quoteId = rows[0].id;
     const version = await client.query(
-      `INSERT INTO quote_versions (quote_id, version_no, notes, created_by, updated_by)
-       VALUES ($1, 1, $2, $3, $3) RETURNING id`,
-      [quoteId, DEFAULT_NOTES, userId]
+      `INSERT INTO quote_versions (quote_id, version_no, notes, terms, created_by, updated_by)
+       VALUES ($1, 1, $2, $3, $4, $4) RETURNING id`,
+      [quoteId, DEFAULT_NOTES, DEFAULT_TERMS, userId]
     );
     await client.query(
       `INSERT INTO quote_sections (version_id, kind, name, sort_order) VALUES ($1, 'solution', '', 0)`,
       [version.rows[0].id]
     );
+    await logEvent(client, quoteId, 'created', { by: userId, versionNo: 1 });
     return { id: quoteId, version_id: version.rows[0].id };
+  }).catch((error) => {
+    if (error.code === '23505') throw quoteExists(null);
+    throw error;
   });
 }
 
+// `editing` is the live edit lease (null when free or expired).
 async function loadQuote(id, db = { query }) {
   const { rows } = await db.query(`
     SELECT q.id, q.lead_id, q.project_ref, q.status, q.po_number, q.po_date::text AS po_date, q.lost_reason,
-           q.created_at, q.updated_at, l.customer, l.project, l.site_location,
-           b.full_name AS created_by_name
+           q.won_version_id, q.created_at, q.updated_at, l.customer, l.project, l.site_location, l.contact_person,
+           am.full_name AS account_manager_name, am.phone AS account_manager_phone,
+           b.full_name AS created_by_name,
+           q.delete_requested_at, q.delete_reason, rb.full_name AS delete_requested_by_name,
+           CASE WHEN k.expires_at > now() THEN
+             json_build_object('back_office_id', k.back_office_id, 'name', kb.full_name, 'expires_at', k.expires_at)
+           END AS editing
       FROM quotes q
       JOIN quote_leads l ON l.id = q.lead_id
       LEFT JOIN back_office b ON b.id = q.created_by
+      LEFT JOIN back_office rb ON rb.id = q.delete_requested_by
+      LEFT JOIN sales am ON am.id = l.account_manager_id
+      LEFT JOIN quote_edit_locks k ON k.quote_id = q.id
+      LEFT JOIN back_office kb ON kb.id = k.back_office_id
      WHERE q.id = $1`, [uuid(id, 'Quote')]);
   if (!rows[0]) throw fail(404, 'Quotation not found');
   return rows[0];
@@ -424,10 +551,11 @@ export async function getQuote(id) {
   const quote = await loadQuote(id);
   const { rows: versions } = await query(`
     SELECT v.id, v.version_no, v.quote_date::text AS quote_date, v.sm, v.supply_osp, v.supply_price, v.services_osp,
-           v.services_price, v.gst_total, v.grand_total, v.created_at, v.updated_at,
-           b.full_name AS updated_by_name
+           v.services_price, v.gst_total, v.grand_total, v.created_at, v.updated_at, v.issued_at,
+           b.full_name AS updated_by_name, ib.full_name AS issued_by_name
       FROM quote_versions v
       LEFT JOIN back_office b ON b.id = v.updated_by
+      LEFT JOIN back_office ib ON ib.id = v.issued_by
      WHERE v.quote_id = $1
      ORDER BY v.version_no DESC`, [id]);
   return { ...quote, versions: versions.map((v) => toNum(v, VERSION_NUMS)) };
@@ -456,9 +584,10 @@ export async function getVersion(quoteId, versionId) {
   const { rows } = await query(`
     -- quote_date as text: pg would map DATE to a local-midnight Date that
     -- serializes to the previous day in UTC.
-    SELECT v.*, v.quote_date::text AS quote_date,
+    SELECT v.*, v.quote_date::text AS quote_date, ib.full_name AS issued_by_name,
            (v.version_no = (SELECT max(version_no) FROM quote_versions WHERE quote_id = v.quote_id)) AS is_latest
       FROM quote_versions v
+      LEFT JOIN back_office ib ON ib.id = v.issued_by
      WHERE v.id = $1 AND v.quote_id = $2`, [uuid(versionId, 'Version'), quoteId]);
   if (!rows[0]) throw fail(404, 'Version not found');
   const version = toNum(rows[0], VERSION_NUMS);
@@ -482,6 +611,8 @@ export function parseVersionPayload(body) {
     sm,
     rounding_step: roundingStep,
     notes: text(body.notes, 'Notes', 10000),
+    terms: text(body.terms, 'Terms & Conditions', 20000),
+    delivery_timeline: text(body.delivery_timeline, 'Delivery timeline', 300),
     sections: sections.map((section, si) => {
       const label = `Solution ${si + 1}`;
       const kind = section.kind === 'ppm' ? 'ppm' : 'solution';
@@ -517,24 +648,86 @@ export function parseVersionPayload(body) {
   };
 }
 
-async function lockedCheck(client, quoteId, versionId, baseUpdatedAt) {
+// ---- edit lease: one editor per quotation ----
+
+// The builder renews its lease every ~45s while the person is active; an
+// abandoned tab frees the quotation once the lease runs out.
+export const LOCK_SECONDS = 120;
+
+const lockedBy = (name) => Object.assign(
+  fail(409, `${name || 'Another Quote Manager'} is editing this quotation right now.`),
+  { details: { code: 'LOCKED', editing_by_name: name || null } }
+);
+
+async function holdLock(client, quoteId, userId) {
+  await client.query(
+    `INSERT INTO quote_edit_locks (quote_id, back_office_id, expires_at)
+     VALUES ($1, $2, now() + make_interval(secs => $3))
+     ON CONFLICT (quote_id) DO UPDATE SET back_office_id = EXCLUDED.back_office_id, expires_at = EXCLUDED.expires_at`,
+    [quoteId, userId, LOCK_SECONDS]
+  );
+}
+
+// Every write to a quotation goes through here, inside a transaction: the
+// quote row is locked, a pending delete freezes everything, and someone
+// else's live lease blocks the write.
+async function writeGuard(client, quoteId, userId) {
   await client.query('SELECT id FROM quotes WHERE id = $1 FOR UPDATE', [uuid(quoteId, 'Quote')]);
   const quote = await loadQuote(quoteId, client);
-  if (quote.status === 'won' || quote.status === 'lost') {
-    throw fail(409, `This quotation is marked ${quote.status.toUpperCase()}. Reopen it to make changes.`);
+  if (quote.delete_requested_at) {
+    throw fail(409, 'Deletion of this quotation is awaiting Super Admin approval. Cancel the request to make changes.');
   }
+  if (quote.editing && quote.editing.back_office_id !== userId) throw lockedBy(quote.editing.name);
+  return quote;
+}
+
+const assertOpen = (quote, what = 'make changes') => {
+  if (quote.status === 'won' || quote.status === 'lost') {
+    throw fail(409, `This quotation is marked ${quote.status.toUpperCase()}. Reopen it to ${what}.`);
+  }
+};
+
+async function latestVersion(client, quoteId) {
   const { rows } = await client.query(
-    `SELECT version_no, updated_at, (SELECT max(version_no) FROM quote_versions WHERE quote_id = $2) AS latest
+    'SELECT * FROM quote_versions WHERE quote_id = $1 ORDER BY version_no DESC LIMIT 1', [quoteId]
+  );
+  return rows[0];
+}
+
+async function lockedCheck(client, quoteId, versionId, baseUpdatedAt, userId) {
+  const quote = await writeGuard(client, quoteId, userId);
+  assertOpen(quote);
+  const { rows } = await client.query(
+    `SELECT version_no, updated_at, issued_at, (SELECT max(version_no) FROM quote_versions WHERE quote_id = $2) AS latest
        FROM quote_versions WHERE id = $1 AND quote_id = $2`,
     [uuid(versionId, 'Version'), quoteId]
   );
   if (!rows[0]) throw fail(404, 'Version not found');
   if (rows[0].version_no !== rows[0].latest) throw fail(409, 'Older versions are read-only. Edit the latest version.');
+  if (rows[0].issued_at) {
+    throw fail(409, `V${rows[0].version_no}.0 was issued to the client and is frozen. Start a new version to revise it.`);
+  }
   // pg gives timestamptz at millisecond precision, same as the JSON the editor got.
-  if (baseUpdatedAt && rows[0].updated_at.getTime() !== Date.parse(baseUpdatedAt)) {
+  if (!baseUpdatedAt || rows[0].updated_at.getTime() !== Date.parse(baseUpdatedAt)) {
     throw fail(409, 'Someone else saved this quotation while you were editing. Reload to see their changes.');
   }
-  return quote;
+  return { quote, versionNo: rows[0].version_no };
+}
+
+// Freezes the latest version as sent to the client, snapshotting the lead.
+// No-op when it is already issued.
+async function issueLatest(client, quote, userId, detail) {
+  const latest = await latestVersion(client, quote.id);
+  if (latest.issued_at) return latest;
+  await client.query(
+    `UPDATE quote_versions SET issued_at = now(), issued_by = $2, issued_customer = $3, issued_project = $4,
+            issued_site_location = $5, issued_contact_person = $6, issued_account_manager = $7,
+            issued_account_manager_phone = $8 WHERE id = $1`,
+    [latest.id, userId, quote.customer, quote.project, quote.site_location, quote.contact_person,
+      quote.account_manager_name, quote.account_manager_phone]
+  );
+  await logEvent(client, quote.id, 'issued', { by: userId, versionNo: latest.version_no, detail });
+  return latest;
 }
 
 async function insertContent(client, versionId, sections) {
@@ -577,45 +770,78 @@ export async function saveVersion(quoteId, versionId, body, userId) {
   const payload = parseVersionPayload(body);
   const totals = totalsParams(payload);
   await withTransaction(async (client) => {
-    await lockedCheck(client, quoteId, versionId, payload.base_updated_at);
+    const { versionNo } = await lockedCheck(client, quoteId, versionId, payload.base_updated_at, userId);
     await client.query('UPDATE quotes SET project_ref = $2 WHERE id = $1', [quoteId, payload.project_ref]);
     await client.query(
       `UPDATE quote_versions SET quote_date = $2, sm = $3, rounding_step = $4, notes = $5, updated_by = $6,
-              supply_osp = $7, supply_price = $8, services_osp = $9, services_price = $10, gst_total = $11, grand_total = $12
+              supply_osp = $7, supply_price = $8, services_osp = $9, services_price = $10, gst_total = $11, grand_total = $12,
+              terms = $13, delivery_timeline = $14
         WHERE id = $1`,
-      [versionId, payload.quote_date, payload.sm, payload.rounding_step, payload.notes, userId, ...totals]
+      [versionId, payload.quote_date, payload.sm, payload.rounding_step, payload.notes, userId, ...totals,
+        payload.terms, payload.delivery_timeline]
     );
     await client.query('DELETE FROM quote_sections WHERE version_id = $1', [versionId]);
     await insertContent(client, versionId, payload.sections);
+    // Saving is editing: the saver holds (or renews) the lease.
+    await holdLock(client, quoteId, userId);
+    await logEvent(client, quoteId, 'saved', { by: userId, versionNo });
   });
   return getVersion(quoteId, versionId);
 }
 
 // Clones the latest version into V(n+1); the previous one becomes read-only.
+// The quote keeps its status — a revision of a quote with the client is
+// still Under Process.
 export async function createNextVersion(quoteId, userId) {
   const newId = await withTransaction(async (client) => {
-    await client.query('SELECT id FROM quotes WHERE id = $1 FOR UPDATE', [uuid(quoteId, 'Quote')]);
-    const quote = await loadQuote(quoteId, client);
-    if (quote.status === 'won' || quote.status === 'lost') {
-      throw fail(409, `This quotation is marked ${quote.status.toUpperCase()}. Reopen it to make a new version.`);
-    }
-    const { rows } = await client.query(
-      'SELECT * FROM quote_versions WHERE quote_id = $1 ORDER BY version_no DESC LIMIT 1', [quoteId]
-    );
-    const latest = rows[0];
+    const quote = await writeGuard(client, quoteId, userId);
+    assertOpen(quote, 'make a new version');
+    const latest = await latestVersion(client, quoteId);
     const sections = await loadVersionContent(latest.id, client);
     const inserted = await client.query(
       `INSERT INTO quote_versions (quote_id, version_no, sm, rounding_step, notes, supply_osp, supply_price,
-              services_osp, services_price, gst_total, grand_total, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12) RETURNING id`,
+              services_osp, services_price, gst_total, grand_total, created_by, updated_by, terms, delivery_timeline)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14) RETURNING id`,
       [quoteId, latest.version_no + 1, latest.sm, latest.rounding_step, latest.notes, latest.supply_osp,
-        latest.supply_price, latest.services_osp, latest.services_price, latest.gst_total, latest.grand_total, userId]
+        latest.supply_price, latest.services_osp, latest.services_price, latest.gst_total, latest.grand_total, userId,
+        latest.terms, latest.delivery_timeline]
     );
     await insertContent(client, inserted.rows[0].id, sections);
-    await client.query("UPDATE quotes SET status = 'draft', updated_at = now() WHERE id = $1", [quoteId]);
+    await client.query('UPDATE quotes SET updated_at = now() WHERE id = $1', [quoteId]);
+    await holdLock(client, quoteId, userId);
+    await logEvent(client, quoteId, 'version_created', {
+      by: userId, versionNo: latest.version_no + 1, detail: `Copied from V${latest.version_no}.0`
+    });
     return inserted.rows[0].id;
   });
   return { version_id: newId };
+}
+
+const EXPORT_LABELS = { pdf: 'PDF', xlsx: 'Excel' };
+
+// Client export of the latest draft: freezes it as sent to the client.
+export async function issueVersion(quoteId, versionId, body, userId) {
+  const label = EXPORT_LABELS[body.format] ? `Client ${EXPORT_LABELS[body.format]}` : 'Issued to client';
+  await withTransaction(async (client) => {
+    const quote = await writeGuard(client, quoteId, userId);
+    assertOpen(quote, 'issue it');
+    const latest = await latestVersion(client, quoteId);
+    if (latest.id !== uuid(versionId, 'Version')) throw fail(409, 'Only the latest version can be issued.');
+    await issueLatest(client, quote, userId, label);
+  });
+  return getVersion(quoteId, versionId);
+}
+
+// Logged for the history; exporting never changes the quotation.
+export async function recordExport(quoteId, versionId, body, { by, admin }) {
+  const format = EXPORT_LABELS[body.format];
+  if (!format) throw fail(400, 'Unknown export format');
+  const { rows } = await query('SELECT version_no FROM quote_versions WHERE id = $1 AND quote_id = $2',
+    [uuid(versionId, 'Version'), uuid(quoteId, 'Quote')]);
+  if (!rows[0]) throw fail(404, 'Version not found');
+  await logEvent({ query }, quoteId, 'exported', {
+    by, admin, versionNo: rows[0].version_no, detail: `${body.internal ? 'Internal' : 'Client'} ${format}`
+  });
 }
 
 export function parseStatus(body) {
@@ -635,19 +861,110 @@ export function parseStatus(body) {
   return { status, po_number: null, po_date: null, lost_reason: null };
 }
 
-export async function setQuoteStatus(id, body) {
+const STATUS_LABELS = { draft: 'Draft', sent: 'Under Process', won: 'Won', lost: 'Lost' };
+
+// Under Process and Won mean the client has the latest version, so it is
+// issued (frozen) on the way; Won also records which version won.
+export async function setQuoteStatus(id, body, userId) {
   const next = parseStatus(body);
-  const { rowCount } = await query(
-    'UPDATE quotes SET status = $2, po_number = $3, po_date = $4, lost_reason = $5 WHERE id = $1',
-    [uuid(id, 'Quote'), next.status, next.po_number, next.po_date, next.lost_reason]
-  );
-  if (!rowCount) throw fail(404, 'Quotation not found');
+  await withTransaction(async (client) => {
+    const quote = await writeGuard(client, id, userId);
+    let wonVersionId = null;
+    if (next.status === 'sent' || next.status === 'won') {
+      const issued = await issueLatest(client, quote, userId, `Marked ${STATUS_LABELS[next.status]}`);
+      if (next.status === 'won') wonVersionId = issued.id;
+    }
+    await client.query(
+      'UPDATE quotes SET status = $2, po_number = $3, po_date = $4, lost_reason = $5, won_version_id = $6 WHERE id = $1',
+      [id, next.status, next.po_number, next.po_date, next.lost_reason, wonVersionId]
+    );
+    const latest = await latestVersion(client, id);
+    const detail = next.status === 'won' ? `PO ${next.po_number} · ${next.po_date}`
+      : next.status === 'lost' ? next.lost_reason : null;
+    await logEvent(client, id, `status_${next.status}`, { by: userId, versionNo: latest.version_no, detail });
+  });
   return getQuote(id);
 }
 
-export async function deleteQuote(id) {
-  const { rowCount } = await query('DELETE FROM quotes WHERE id = $1', [uuid(id, 'Quote')]);
-  if (!rowCount) throw fail(404, 'Quotation not found');
+// ---- edit lease endpoints ----
+
+// Takes (or renews) the lease when it is free, expired or already ours.
+// Someone else's live lease is only replaced with `takeover`.
+export async function acquireLock(quoteId, body, userId) {
+  return withTransaction(async (client) => {
+    await client.query('SELECT id FROM quotes WHERE id = $1 FOR UPDATE', [uuid(quoteId, 'Quote')]);
+    const quote = await loadQuote(quoteId, client);
+    const other = quote.editing && quote.editing.back_office_id !== userId ? quote.editing : null;
+    if (other && body.takeover !== true) return { mine: false, editing: other };
+    await holdLock(client, quoteId, userId);
+    if (other) {
+      const latest = await latestVersion(client, quoteId);
+      await logEvent(client, quoteId, 'lock_taken_over', { by: userId, versionNo: latest.version_no, detail: `from ${other.name || 'another manager'}` });
+    }
+    const { editing } = await loadQuote(quoteId, client);
+    return { mine: true, editing };
+  });
+}
+
+export async function releaseLock(quoteId, userId) {
+  await query('DELETE FROM quote_edit_locks WHERE quote_id = $1 AND back_office_id = $2', [uuid(quoteId, 'Quote'), userId]);
+}
+
+// ---- deletion: a Quote Manager asks, the Super Admin decides ----
+
+export async function requestDelete(id, body, userId) {
+  const reason = text(body.reason, 'Reason', 1000, { required: true });
+  await withTransaction(async (client) => {
+    await writeGuard(client, id, userId);
+    await client.query(
+      'UPDATE quotes SET delete_requested_by = $2, delete_requested_at = now(), delete_reason = $3 WHERE id = $1',
+      [id, userId, reason]
+    );
+    await client.query('DELETE FROM quote_edit_locks WHERE quote_id = $1', [id]);
+    await logEvent(client, id, 'delete_requested', { by: userId, detail: reason });
+  });
+  return getQuote(id);
+}
+
+async function pendingDelete(client, id) {
+  await client.query('SELECT id FROM quotes WHERE id = $1 FOR UPDATE', [uuid(id, 'Quote')]);
+  const quote = await loadQuote(id, client);
+  if (!quote.delete_requested_at) throw fail(409, 'There is no pending delete request for this quotation.');
+  return quote;
+}
+
+const clearDeleteRequest = (client, id) => client.query(
+  'UPDATE quotes SET delete_requested_by = NULL, delete_requested_at = NULL, delete_reason = NULL WHERE id = $1', [id]
+);
+
+export async function cancelDeleteRequest(id, userId) {
+  await withTransaction(async (client) => {
+    await pendingDelete(client, id);
+    await clearDeleteRequest(client, id);
+    await logEvent(client, id, 'delete_cancelled', { by: userId });
+  });
+  return getQuote(id);
+}
+
+export async function rejectDelete(id, body, adminId) {
+  const note = text(body.note, 'Note', 1000);
+  await withTransaction(async (client) => {
+    await pendingDelete(client, id);
+    await clearDeleteRequest(client, id);
+    await logEvent(client, id, 'delete_rejected', { by: adminId, admin: true, detail: note });
+  });
+  return getQuote(id);
+}
+
+// The lead stays, so a fresh quotation can be started from it afterwards.
+export async function approveDelete(id, adminId) {
+  await withTransaction(async (client) => {
+    const quote = await pendingDelete(client, id);
+    await logEvent(client, id, 'deleted', {
+      by: adminId, admin: true, detail: `${quote.customer} – ${quote.project} (asked by ${quote.delete_requested_by_name || 'a Quote Manager'}: ${quote.delete_reason})`
+    });
+    await client.query('DELETE FROM quotes WHERE id = $1', [id]);
+  });
 }
 
 // ============================================

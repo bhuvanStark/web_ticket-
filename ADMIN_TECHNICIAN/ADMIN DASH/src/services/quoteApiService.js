@@ -51,14 +51,39 @@ export const fetchQuoteLeads = (params) => call(`/leads${qs(params)}`, { operati
 export const createQuoteLead = (lead) => call('/leads', { method: 'POST', body: lead, operation: 'create lead' });
 export const updateQuoteLead = (id, lead) => call(`/leads/${id}`, { method: 'PATCH', body: lead, operation: 'update lead' });
 export const deleteQuoteLead = (id) => call(`/leads/${id}`, { method: 'DELETE', operation: 'delete lead' });
+// Sales employees, for the lead's account manager.
+export const fetchAccountManagers = () => call('/account-managers', { operation: 'load account managers' });
 
 // Quotations
 export const fetchQuotes = (params) => call(`/${qs(params)}`, { operation: 'load quotations' });
 export const createQuote = (leadId) => call('/', { method: 'POST', body: { lead_id: leadId }, operation: 'create quotation' });
 export const fetchQuote = (id) => call(`/${id}`, { operation: 'load quotation' });
-export const deleteQuote = (id) => call(`/${id}`, { method: 'DELETE', operation: 'delete quotation' });
 export const setQuoteStatus = (id, body) => call(`/${id}/status`, { method: 'PATCH', body, operation: 'update status' });
 export const createQuoteVersion = (id) => call(`/${id}/versions`, { method: 'POST', operation: 'create version' });
 export const fetchQuoteVersion = (id, versionId) => call(`/${id}/versions/${versionId}`, { operation: 'load version' });
 export const saveQuoteVersion = (id, versionId, body) =>
   call(`/${id}/versions/${versionId}`, { method: 'PUT', body, operation: 'save quotation' });
+export const issueQuoteVersion = (id, versionId, format) =>
+  call(`/${id}/versions/${versionId}/issue`, { method: 'POST', body: { format }, operation: 'issue version' });
+export const recordQuoteExport = (id, versionId, format, internal) =>
+  call(`/${id}/versions/${versionId}/exported`, { method: 'POST', body: { format, internal }, operation: 'log export' });
+export const fetchQuoteEvents = (id) => call(`/${id}/events`, { operation: 'load history' });
+
+// Edit lease — one editor per quotation. `takeover` replaces someone else's.
+export const acquireQuoteLock = (id, takeover = false) =>
+  call(`/${id}/lock`, { method: 'POST', body: { takeover }, operation: 'start editing' });
+export const releaseQuoteLock = (id) => call(`/${id}/lock`, { method: 'DELETE', operation: 'stop editing' });
+// Fire-and-forget release while the tab is closing (keepalive outlives the page).
+export const releaseQuoteLockOnUnload = (id) => {
+  fetch(`${BASE}/${id}/lock`, { method: 'DELETE', headers: authHeaders(false), keepalive: true }).catch(() => {});
+};
+
+// Deletion needs the Super Admin's approval.
+export const requestQuoteDelete = (id, reason) =>
+  call(`/${id}/delete-request`, { method: 'POST', body: { reason }, operation: 'request deletion' });
+export const cancelQuoteDeleteRequest = (id) =>
+  call(`/${id}/delete-request`, { method: 'DELETE', operation: 'cancel delete request' });
+export const approveQuoteDelete = (id) =>
+  call(`/${id}/delete-request/approve`, { method: 'POST', operation: 'approve deletion' });
+export const rejectQuoteDelete = (id, note) =>
+  call(`/${id}/delete-request/reject`, { method: 'POST', body: { note }, operation: 'reject deletion' });

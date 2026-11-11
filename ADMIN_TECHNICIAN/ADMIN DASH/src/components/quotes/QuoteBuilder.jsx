@@ -6,15 +6,56 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Save, Plus, Trash2, Copy, ChevronUp, ChevronDown, Search, Package, Wrench, Layers,
   FileDown, FileSpreadsheet, GitBranch, CheckCircle2, XCircle, Send, RotateCcw, Lock, Eye, EyeOff, Loader2,
-  ClipboardList, AlertTriangle, Undo2, MoreHorizontal, Check
+  ClipboardList, AlertTriangle, Undo2, MoreHorizontal, Check, History, UserCheck, ShieldCheck, X, ScrollText
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
-  fetchQuote, fetchQuoteVersion, saveQuoteVersion, createQuoteVersion, setQuoteStatus, fetchQuoteItems, fetchQuoteCategories, deleteQuote
+  fetchQuote, fetchQuoteVersion, saveQuoteVersion, createQuoteVersion, setQuoteStatus, fetchQuoteItems, fetchQuoteCategories,
+  issueQuoteVersion, recordQuoteExport, fetchQuoteEvents, acquireQuoteLock, releaseQuoteLock, releaseQuoteLockOnUnload,
+  requestQuoteDelete, cancelQuoteDeleteRequest, approveQuoteDelete, rejectQuoteDelete
 } from '../../services/quoteApiService';
 import { computeVersion, hasOverride, round2, ROUNDING_STEPS } from './quoteEngine';
-import { formatINR, formatNum, formatDate, QUOTE_STATUS, smToMarginPct, marginTone, todayKey } from './quoteShared';
+import { formatINR, formatNum, formatDate, formatDateTime, QUOTE_STATUS, smToMarginPct, marginTone, todayKey } from './quoteShared';
 import { exportQuotePdf, exportQuoteXlsx } from '../../utils/quoteExport';
+
+// Edit lease (backend LOCK_SECONDS = 120): renewed every RENEW_MS while the
+// person has touched the page within IDLE_MS, so an abandoned tab frees the
+// quotation a couple of minutes after they walk away.
+const RENEW_MS = 45 * 1000;
+const IDLE_MS = 5 * 60 * 1000;
+const AUTOSAVE_MS = 3000;
+
+// The backend refuses a line with neither an item nor a description, so
+// autosave waits until a freshly added blank line is filled in.
+const hasBlankLine = (doc) => doc.sections.some((s) => s.lines.some((l) => !l.model_name && !String(l.description || '').trim()));
+
+// Issued versions print the customer details they went out with.
+const asIssued = (quote, version) => (version.issued_at ? {
+  ...quote,
+  customer: version.issued_customer,
+  project: version.issued_project,
+  site_location: version.issued_site_location,
+  contact_person: version.issued_contact_person,
+  account_manager_name: version.issued_account_manager,
+  account_manager_phone: version.issued_account_manager_phone
+} : quote);
+
+const EVENT_LABELS = {
+  created: 'Created the quotation',
+  saved: 'Saved changes',
+  issued: 'Issued to the client',
+  exported: 'Exported',
+  version_created: 'Started a new version',
+  status_draft: 'Moved back to Draft',
+  status_sent: 'Marked Under Process',
+  status_won: 'Marked Won',
+  status_lost: 'Marked Lost',
+  lock_taken_over: 'Took over editing',
+  delete_requested: 'Requested deletion',
+  delete_cancelled: 'Cancelled the delete request',
+  delete_rejected: 'Rejected the delete request',
+  deleted: 'Deleted the quotation'
+};
 
 let keySeq = 0;
 const newKey = () => `k${++keySeq}`;
@@ -33,6 +74,8 @@ const toDoc = (version, quote) => ({
   sm: Number(version.sm),
   rounding_step: Number(version.rounding_step),
   notes: version.notes || '',
+  terms: version.terms || '',
+  delivery_timeline: version.delivery_timeline || '',
   sections: version.sections.map((s) => ({
     key: newKey(), kind: s.kind, name: s.name || '',
     lines: s.lines.map((l) => ({ ...l, key: newKey() }))
@@ -48,6 +91,8 @@ const toPayload = (doc) => ({
   sm: doc.sm,
   rounding_step: doc.rounding_step,
   notes: doc.notes,
+  terms: doc.terms,
+  delivery_timeline: doc.delivery_timeline,
   sections: doc.sections.map((s) => ({
     kind: s.kind,
     name: s.name,
@@ -244,6 +289,106 @@ const StatusDialog = ({ kind, onClose, onConfirm }) => {
           </button>
         </div>
       </form>
+    </div>
+  );
+};
+
+// ---- Reason dialog (delete request / Super Admin rejection note) ----
+const ReasonDialog = ({ title, subtitle, placeholder, confirmLabel, required, onClose, onConfirm }) => {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (required && !reason.trim()) return;
+    setBusy(true);
+    try { await onConfirm(reason.trim()); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <form onSubmit={submit} className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-[#E4E7EC] overflow-hidden">
+        <div className="p-5 bg-[#FEF3F2] flex items-center gap-3">
+          <Trash2 className="w-6 h-6 text-[#F04438]" />
+          <div>
+            <h3 className="font-extrabold text-lg text-[#172033]">{title}</h3>
+            <p className="text-xs text-[#475467]">{subtitle}</p>
+          </div>
+        </div>
+        <div className="p-5">
+          <textarea autoFocus value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder={placeholder} className="form-input resize-none" />
+        </div>
+        <div className="px-5 pb-5 flex justify-end gap-3">
+          <button type="button" onClick={onClose} disabled={busy} className="btn btn-secondary">Cancel</button>
+          <button type="submit" disabled={busy || (required && !reason.trim())} className="btn text-white bg-[#F04438] hover:bg-[#D92D20] disabled:opacity-60">
+            {busy && <Loader2 className="w-4 h-4 animate-spin" />}{confirmLabel}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+// ---- Terms & Conditions (saved with the version, printed on the quotation) ----
+const TermsDialog = ({ doc, readOnly, onChange, onClose }) => (
+  <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-[#E4E7EC] overflow-hidden flex flex-col max-h-[88vh]">
+      <div className="p-5 border-b border-[#E4E7EC] flex items-center justify-between">
+        <div>
+          <h3 className="font-extrabold text-lg text-[#172033]">Terms &amp; Conditions</h3>
+          <p className="text-xs text-[#667085]">Printed at the end of the quotation. Saved with this version.</p>
+        </div>
+        <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg hover:bg-[#F2F4F7]"><X className="w-5 h-5" /></button>
+      </div>
+      <div className="p-5 space-y-4 overflow-y-auto">
+        <div>
+          <label className="form-label">Delivery timeline</label>
+          <input value={doc.delivery_timeline} disabled={readOnly} onChange={(e) => onChange({ delivery_timeline: e.target.value })}
+            placeholder="e.g. 4–6 weeks from the date of purchase order" className="form-input disabled:bg-[#F8FAFC]" />
+        </div>
+        <div>
+          <label className="form-label">Terms</label>
+          <textarea value={doc.terms} disabled={readOnly} onChange={(e) => onChange({ terms: e.target.value })} rows={12}
+            className="form-input text-[13px] leading-relaxed resize-y disabled:bg-[#F8FAFC]" />
+        </div>
+      </div>
+      <div className="px-5 py-4 border-t border-[#E4E7EC] flex justify-end">
+        <button onClick={onClose} className="btn btn-primary"><Check className="w-4 h-4" />Done</button>
+      </div>
+    </div>
+  </div>
+);
+
+// ---- Activity history ----
+const HistoryPanel = ({ quoteId, onClose }) => {
+  const [events, setEvents] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { fetchQuoteEvents(quoteId).then(setEvents).catch((err) => setError(err.message)); }, [quoteId]);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white w-full max-w-md h-full shadow-2xl border-l border-[#E4E7EC] flex flex-col">
+        <div className="p-5 border-b border-[#E4E7EC] flex items-center justify-between">
+          <h3 className="font-extrabold text-lg text-[#172033] inline-flex items-center gap-2"><History className="w-5 h-5 text-[#004898]" />History</h3>
+          <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg hover:bg-[#F2F4F7]"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          {error ? <p className="text-sm text-[#B42318]">{error}</p>
+            : !events ? <Loader2 className="w-6 h-6 text-[#004898] animate-spin mx-auto mt-10" />
+            : events.length === 0 ? <p className="text-sm text-[#667085]">No activity yet.</p>
+            : (
+              <ol className="relative border-l border-[#E4E7EC] ml-2 space-y-5">
+                {events.map((e) => (
+                  <li key={e.id} className="ml-5">
+                    <span className="absolute -left-[5px] mt-1.5 w-2.5 h-2.5 rounded-full bg-[#004898]" />
+                    <p className="text-[13px] font-bold text-[#172033]">
+                      {EVENT_LABELS[e.action] || e.action}{e.version_no ? <span className="font-semibold text-[#667085]"> · V{e.version_no}.0</span> : null}
+                    </p>
+                    {e.detail && <p className="text-xs text-[#475467] mt-0.5 break-words">{e.detail}</p>}
+                    <p className="text-[11px] text-[#98A2B3] mt-0.5">{e.actor_name || 'Unknown'} · {formatDateTime(e.created_at)}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -478,11 +623,18 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   const [doc, setDoc] = useState(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  // { doc, message } of the last failed save; autosave won't retry that doc.
+  const [saveError, setSaveError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [picker, setPicker] = useState(null);
   const [statusDialog, setStatusDialog] = useState(null);
+  const [reasonDialog, setReasonDialog] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
   const [showCosting, setShowCosting] = useState(true);
   const [busy, setBusy] = useState(false);
+  // Edit lease from the server: { mine, editing: { name, … } | null }.
+  const [lock, setLock] = useState(null);
 
   const load = useCallback(async (versionId) => {
     setLoading(true);
@@ -492,12 +644,14 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
       const { version } = await fetchQuoteVersion(quoteId, target);
       const draft = unsavedDrafts.get(version.id);
       unsavedDrafts.delete(version.id);
-      const restore = draft && draft.base === version.updated_at && version.is_latest && !['won', 'lost'].includes(q.status);
+      const restore = draft && draft.base === version.updated_at && version.is_latest && !version.issued_at
+        && !q.delete_requested_at && !['won', 'lost'].includes(q.status);
       setQuote(q);
       setVersionMeta(version);
       setDoc(restore ? draft.doc : toDoc(version, q));
       setDirty(Boolean(restore));
-      if (restore) showToast('Your unsaved changes were restored. Save to keep them.', 'info');
+      setSaveError(null);
+      if (restore) showToast('Your unsaved changes were restored.', 'info');
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -523,7 +677,67 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
 
   const locked = quote && (quote.status === 'won' || quote.status === 'lost');
   const isLatest = versionMeta?.is_latest;
-  const readOnly = viewerOnly || !isLatest || locked;
+  const issued = Boolean(versionMeta?.issued_at);
+  const pendingDelete = Boolean(quote?.delete_requested_at);
+  // The version itself allows edits; whether *you* may edit also needs the lease.
+  const editableVersion = Boolean(quote && versionMeta && !viewerOnly && isLatest && !locked && !issued && !pendingDelete);
+  const readOnly = !editableVersion || !lock?.mine;
+  const canNewVersion = Boolean(quote && !viewerOnly && !locked && isLatest && !pendingDelete);
+
+  // ---- edit lease ----
+  const lockRef = useRef(null);
+  lockRef.current = lock;
+  const reloadRef = useRef(null);
+  reloadRef.current = () => load(latest.current.versionMeta?.id);
+  const versionId = versionMeta?.id;
+
+  useEffect(() => {
+    if (!editableVersion) { setLock(null); return undefined; }
+    let alive = true;
+    let lastActive = Date.now();
+    const renew = async () => {
+      try {
+        const next = await acquireQuoteLock(quoteId);
+        if (!alive) return;
+        const prev = lockRef.current;
+        setLock(next);
+        if (prev?.mine && !next.mine) {
+          showToast(`${next.editing?.name || 'Another Quote Manager'} took over editing this quotation.`, 'error');
+        }
+        // The other editor left: pick up what they saved before editing.
+        if (prev && !prev.mine && next.mine) reloadRef.current();
+      } catch { /* network blip: the next tick retries */ }
+    };
+    renew();
+    const tick = setInterval(() => { if (Date.now() - lastActive < IDLE_MS) renew(); }, RENEW_MS);
+    const onActive = () => {
+      const wasIdle = Date.now() - lastActive >= IDLE_MS;
+      lastActive = Date.now();
+      if (wasIdle) renew();
+    };
+    const onLeave = () => { if (lockRef.current?.mine) releaseQuoteLockOnUnload(quoteId); };
+    window.addEventListener('keydown', onActive);
+    window.addEventListener('pointerdown', onActive);
+    window.addEventListener('pagehide', onLeave);
+    return () => {
+      alive = false;
+      clearInterval(tick);
+      window.removeEventListener('keydown', onActive);
+      window.removeEventListener('pointerdown', onActive);
+      window.removeEventListener('pagehide', onLeave);
+      if (lockRef.current?.mine) releaseQuoteLock(quoteId).catch(() => {});
+    };
+  }, [editableVersion, quoteId, versionId, showToast]);
+
+  const takeOver = async () => {
+    const name = lock?.editing?.name || 'the other Quote Manager';
+    if (!window.confirm(`Take over editing from ${name}?\n\nAnything they typed in the last few seconds and haven't saved will be lost.`)) return;
+    try {
+      setLock(await acquireQuoteLock(quoteId, true));
+      await load(versionMeta.id);
+      showToast('You are now editing this quotation', 'success');
+    } catch (err) { showToast(err.message, 'error'); }
+  };
 
   const update = (patch) => { setDoc((d) => ({ ...d, ...patch })); setDirty(true); };
   const updateSection = (key, next) => update({ sections: doc.sections.map((s) => (s.key === key ? next : s)) });
@@ -534,27 +748,52 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
     return { ...result, sections: result.sections.map((s, i) => ({ ...s, key: doc.sections[i].key })) };
   }, [doc]);
 
-  const save = useCallback(async () => {
-    if (!doc || readOnly || saving) return;
+  // ---- save (manual and autosave) ----
+  const savingRef = useRef(false);
+  const save = useCallback(async ({ silent = false } = {}) => {
+    if (!doc || readOnly || savingRef.current) return false;
     const sent = doc;
+    savingRef.current = true;
     setSaving(true);
     try {
       const { version } = await saveQuoteVersion(quoteId, versionMeta.id, { ...toPayload(sent), base_updated_at: versionMeta.updated_at });
       setVersionMeta((m) => ({ ...m, ...version, sections: undefined }));
       // Edits typed while the request was in flight stay unsaved.
       setDirty(latest.current.doc !== sent);
-      showToast('Quotation saved', 'success');
+      setSaveError(null);
+      if (!silent) showToast('Quotation saved', 'success');
       setQuote(await fetchQuote(quoteId));
+      return true;
     } catch (err) {
-      if (err.status === 409 && /Someone else saved/.test(err.message)) {
+      setSaveError({ doc: sent, message: err.message });
+      if (err.details?.code === 'LOCKED') {
+        setLock({ mine: false, editing: { name: err.details.editing_by_name } });
+        showToast(`${err.message} Your latest edits could not be saved.`, 'error');
+      } else if (err.status === 409 && /Someone else saved/.test(err.message)) {
         if (window.confirm(`${err.message}\n\nReload now? Your unsaved edits here will be lost.`)) load(versionMeta.id);
-      } else {
+      } else if (!silent) {
         showToast(err.message, 'error');
       }
+      return false;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [doc, readOnly, saving, quoteId, versionMeta, showToast, load]);
+  }, [doc, readOnly, quoteId, versionMeta, showToast, load]);
+
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const blankLine = doc ? hasBlankLine(doc) : false;
+  useEffect(() => {
+    if (!dirty || readOnly || saving || blankLine || saveError?.doc === doc) return undefined;
+    const t = setTimeout(() => saveRef.current({ silent: true }), AUTOSAVE_MS);
+    return () => clearTimeout(t);
+  }, [doc, dirty, readOnly, saving, blankLine, saveError]);
+
+  // Writes below copy from the saved version, so flush pending edits first.
+  // Read-only edits (lease lost) can't be saved; the server explains the
+  // refusal of whatever comes next.
+  const flush = async () => (dirty && !readOnly ? save({ silent: true }) : true);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -575,15 +814,16 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   const switchVersion = (id) => { if (id !== versionMeta.id && confirmDiscard()) load(id); };
 
   const newVersion = async () => {
-    if (dirty) {
-      showToast('Save your changes first — the new version is copied from the saved one.', 'error');
-      return;
-    }
-    if (!window.confirm(`Create V${quote.versions[0].version_no + 1}.0? V${quote.versions[0].version_no}.0 will be frozen (view-only) and editing continues in the new version.`)) return;
+    const n = quote.versions[0].version_no;
+    const message = quote.versions[0].issued_at
+      ? `Start V${n + 1}.0? It begins as a copy of V${n}.0, which stays frozen as issued to the client.`
+      : `Create V${n + 1}.0? V${n}.0 will be frozen (view-only) and editing continues in the new version.`;
+    if (!window.confirm(message)) return;
     setBusy(true);
     try {
+      if (!(await flush())) return;
       const { version_id } = await createQuoteVersion(quoteId);
-      showToast(`V${(quote.versions[0]?.version_no || 0) + 1}.0 created — the previous version is now read-only`, 'success');
+      showToast(`V${n + 1}.0 created — the previous version is now read-only`, 'success');
       await load(version_id);
     } catch (err) {
       showToast(err.message, 'error');
@@ -592,14 +832,17 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
     }
   };
 
+  // Under Process / Won issue the latest version if it isn't already.
   const changeStatus = async (body) => {
-    if (dirty && (body.status === 'won' || body.status === 'lost')) {
-      showToast('Save your changes first.', 'error');
-      return;
-    }
+    const head = quote.versions[0];
+    if ((body.status === 'sent' || body.status === 'won') && !head.issued_at
+      && !window.confirm(`This issues V${head.version_no}.0 to the client and freezes it. Continue?`)) return;
     try {
+      if (!(await flush())) return;
       const q = await setQuoteStatus(quoteId, body);
       setQuote(q);
+      const { version } = await fetchQuoteVersion(quoteId, versionMeta.id);
+      setVersionMeta(version);
       setStatusDialog(null);
       showToast(`Marked ${QUOTE_STATUS[body.status].label}`, 'success');
     } catch (err) {
@@ -607,22 +850,75 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
     }
   };
 
-  const removeQuote = async () => {
-    if (!window.confirm('Delete this quotation and all its versions? This cannot be undone.')) return;
-    try {
-      await deleteQuote(quoteId);
-      showToast('Quotation deleted', 'success');
-      onBack();
-    } catch (err) { showToast(err.message, 'error'); }
+  // ---- deletion (Super Admin approves) ----
+  const requestDelete = () => setReasonDialog({
+    title: 'Request deletion',
+    subtitle: 'The Super Admin approves or rejects it. Until then the quotation is frozen.',
+    placeholder: 'Why should this quotation be deleted?',
+    confirmLabel: 'Send request',
+    required: true,
+    onConfirm: async (reason) => {
+      try {
+        if (!(await flush())) return;
+        setQuote(await requestQuoteDelete(quoteId, reason));
+        setReasonDialog(null);
+        showToast('Delete request sent to the Super Admin', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
+
+  const cancelDelete = async () => {
+    try { setQuote(await cancelQuoteDeleteRequest(quoteId)); showToast('Delete request cancelled', 'success'); } catch (err) { showToast(err.message, 'error'); }
   };
 
+  const approveDelete = async () => {
+    if (!window.confirm('Approve and permanently delete this quotation with all its versions? This cannot be undone.')) return;
+    try { await approveQuoteDelete(quoteId); showToast('Quotation deleted', 'success'); onBack(); } catch (err) { showToast(err.message, 'error'); }
+  };
+
+  const rejectDelete = () => setReasonDialog({
+    title: 'Reject delete request',
+    subtitle: 'The quotation goes back to normal. The note is kept in its history.',
+    placeholder: 'Note for the Quote Manager (optional)',
+    confirmLabel: 'Reject request',
+    required: false,
+    onConfirm: async (note) => {
+      try { setQuote(await rejectQuoteDelete(quoteId, note)); setReasonDialog(null); showToast('Delete request rejected', 'success'); } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
+
+  // ---- exports ----
+  // A client copy of the editable draft is what goes to the client, so it
+  // issues (freezes) the version first. Internal copies never freeze.
   const doExport = async (format, internal) => {
-    if (dirty && !window.confirm('This version has unsaved changes. Export what is on screen anyway?')) return;
-    const data = { quote, version: { ...versionMeta, ...doc }, computed };
+    const issuing = !internal && editableVersion;
+    if (issuing) {
+      const n = versionMeta.version_no;
+      if (!window.confirm(`Issue V${n}.0 to the client?\n\nIt will be frozen as sent and can't be edited again — later changes go into V${n + 1}.0.\n\nTo preview without issuing, use an Internal export.`)) return;
+    } else if (dirty && !window.confirm('This version has unsaved changes. Export what is on screen anyway?')) {
+      return;
+    }
+    // Opened during the click: popup blockers refuse window.open after an await.
+    const win = format === 'pdf' && issuing ? window.open('', '_blank') : null;
     try {
-      if (format === 'pdf') exportQuotePdf(data, { internal });
+      let version = { ...versionMeta, ...doc };
+      let q = quote;
+      if (issuing) {
+        if (!(await flush())) { win?.close(); return; }
+        const issuedVersion = (await issueQuoteVersion(quoteId, versionMeta.id, format)).version;
+        setVersionMeta(issuedVersion);
+        q = await fetchQuote(quoteId);
+        setQuote(q);
+        version = { ...issuedVersion, ...latest.current.doc };
+        showToast(`V${issuedVersion.version_no}.0 issued to the client and frozen`, 'success');
+      } else {
+        recordQuoteExport(quoteId, versionMeta.id, format, internal).catch(() => {});
+      }
+      const data = { quote: asIssued(q, version), version, computed };
+      if (format === 'pdf') exportQuotePdf(data, { internal, win });
       else await exportQuoteXlsx(data, { internal });
     } catch (err) {
+      win?.close();
       showToast(err.message || 'Export failed', 'error');
     }
   };
@@ -684,10 +980,17 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
               <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border ${status.cls}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />{status.label}
               </span>
-              {dirty && <span className="text-[11px] font-bold text-[#B54708] bg-[#FFFAEB] border border-[#FEDF89] px-2 py-0.5 rounded-full">Unsaved changes</span>}
+              {pendingDelete && <span className="text-[11px] font-bold text-[#B42318] bg-[#FEF3F2] border border-[#FECDCA] px-2 py-0.5 rounded-full">Deletion pending</span>}
+              {!readOnly && (
+                saving ? <span className="text-[11px] font-bold text-[#475467] bg-[#F2F4F7] border border-[#E4E7EC] px-2 py-0.5 rounded-full inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Saving…</span>
+                  : saveError?.doc === doc ? <span title={saveError.message} className="text-[11px] font-bold text-[#B42318] bg-[#FEF3F2] border border-[#FECDCA] px-2 py-0.5 rounded-full max-w-xs truncate">Not saved: {saveError.message}</span>
+                  : dirty ? <span className="text-[11px] font-bold text-[#B54708] bg-[#FFFAEB] border border-[#FEDF89] px-2 py-0.5 rounded-full">{blankLine ? 'Unsaved — fill in the empty line' : 'Unsaved changes'}</span>
+                  : <span className="text-[11px] font-bold text-[#027A48] bg-[#ECFDF3] border border-[#A6F4C5] px-2 py-0.5 rounded-full inline-flex items-center gap-1"><Check className="w-3 h-3" />All changes saved</span>
+              )}
             </div>
             <p className="text-xs text-[#667085] mt-1 truncate">
-              {[quote.project, quote.site_location].filter(Boolean).join(' · ') || 'No project details'}
+              {[quote.project, quote.site_location, quote.contact_person && `Contact: ${quote.contact_person}`,
+                quote.account_manager_name && `AM: ${quote.account_manager_name}`].filter(Boolean).join(' · ') || 'No project details'}
               {quote.created_by_name && <> · created by {quote.created_by_name}</>}
             </p>
             {quote.status === 'won' && <p className="text-xs font-semibold text-[#027A48] mt-1">PO {quote.po_number} · {formatDate(quote.po_date)}</p>}
@@ -702,9 +1005,9 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
           <div className="flex items-center bg-white border border-[#E4E7EC] rounded-xl shadow-xs">
             <Menu trigger={(toggle, open) => (
               <button onClick={toggle} title="Version history"
-                className={`h-[34px] pl-3 pr-2 ${!viewerOnly && !locked && isLatest ? 'rounded-l-xl' : 'rounded-xl'} text-xs font-bold inline-flex items-center gap-1.5 ${isLatest ? 'text-[#004898]' : 'text-[#B54708] bg-[#FFFAEB]'}`}>
-                {isLatest ? <GitBranch className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                V{versionMeta.version_no}.0
+                className={`h-[34px] pl-3 pr-2 ${canNewVersion ? 'rounded-l-xl' : 'rounded-xl'} text-xs font-bold inline-flex items-center gap-1.5 ${isLatest ? 'text-[#004898]' : 'text-[#B54708] bg-[#FFFAEB]'}`}>
+                {isLatest && !issued ? <GitBranch className="w-3.5 h-3.5" /> : issued ? <Send className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                V{versionMeta.version_no}.0{issued && <span className="text-[10px] font-bold text-[#027A48]">Issued</span>}
                 <span className="font-semibold text-[#98A2B3]">/ {quote.versions.length}</span>
                 <ChevronDown className={`w-3.5 h-3.5 text-[#98A2B3] transition-transform ${open ? 'rotate-180' : ''}`} />
               </button>
@@ -720,12 +1023,17 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
                       <span className="flex-1 min-w-0">
                         <span className="flex items-center gap-1.5 text-[12px] font-bold text-[#172033]">
                           {formatINR(v.grand_total)}
-                          {i === 0
-                            ? <span className="text-[9px] font-bold uppercase tracking-wide text-[#027A48] bg-[#ECFDF3] px-1.5 rounded">Latest · editable</span>
-                            : <span className="text-[9px] font-bold uppercase tracking-wide text-[#667085] bg-[#F2F4F7] px-1.5 rounded inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />Read-only</span>}
+                          {v.issued_at
+                            ? <span className="text-[9px] font-bold uppercase tracking-wide text-[#004898] bg-[#EFF5FC] px-1.5 rounded inline-flex items-center gap-0.5"><Send className="w-2.5 h-2.5" />Issued</span>
+                            : i === 0
+                              ? <span className="text-[9px] font-bold uppercase tracking-wide text-[#027A48] bg-[#ECFDF3] px-1.5 rounded">Draft · editable</span>
+                              : <span className="text-[9px] font-bold uppercase tracking-wide text-[#667085] bg-[#F2F4F7] px-1.5 rounded inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />Read-only</span>}
+                          {quote.won_version_id === v.id && <span className="text-[9px] font-bold uppercase tracking-wide text-white bg-[#12B76A] px-1.5 rounded">Won</span>}
                         </span>
                         <span className="block text-[11px] text-[#98A2B3] truncate">
-                          {formatDate(v.updated_at)}{v.updated_by_name ? ` · ${v.updated_by_name}` : ''}
+                          {v.issued_at
+                            ? `Issued ${formatDate(v.issued_at)}${v.issued_by_name ? ` · ${v.issued_by_name}` : ''}`
+                            : `${formatDate(v.updated_at)}${v.updated_by_name ? ` · ${v.updated_by_name}` : ''}`}
                         </span>
                       </span>
                       {current && <Check className="w-4 h-4 text-[#004898] shrink-0 mt-0.5" />}
@@ -734,7 +1042,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
                 })}
               </div>
             </Menu>
-            {!viewerOnly && !locked && isLatest && (
+            {canNewVersion && (
               <button onClick={newVersion} disabled={busy} title="Freeze this version and continue in a new copy"
                 className="h-[34px] px-3 border-l border-[#E4E7EC] rounded-r-xl text-xs font-bold text-[#004898] hover:bg-[#EFF5FC] inline-flex items-center gap-1 disabled:opacity-60">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}New version
@@ -746,50 +1054,86 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
             <button onClick={toggle} className="btn btn-secondary text-xs !py-2"><FileDown className="w-4 h-4" />Export</button>
           )}>
             <p className="px-3.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#98A2B3]">Client copy · no cost/margin</p>
-            <MenuItem icon={FileDown} onClick={() => doExport('pdf', false)}>Client PDF</MenuItem>
-            <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', false)}>Client Excel</MenuItem>
+            <MenuItem icon={FileDown} onClick={() => doExport('pdf', false)} hint={editableVersion ? 'issues & freezes' : null}>Client PDF</MenuItem>
+            <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', false)} hint={editableVersion ? 'issues & freezes' : null}>Client Excel</MenuItem>
             <div className="my-1.5 border-t border-[#F2F4F7]" />
             <p className="px-3.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#98A2B3]">Internal · with OSP & SM</p>
             <MenuItem icon={FileDown} onClick={() => doExport('pdf', true)}>Internal PDF</MenuItem>
             <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', true)}>Internal Excel</MenuItem>
           </Menu>
 
+          <button onClick={() => setShowHistory(true)} className="btn btn-secondary text-xs !py-2" title="Who did what, and when"><History className="w-4 h-4" />History</button>
+
           {!viewerOnly && (
             <Menu trigger={(toggle) => (
               <button onClick={toggle} className="btn btn-secondary text-xs !py-2">Status<ChevronDown className="w-3.5 h-3.5" /></button>
             )}>
-              {quote.status !== 'sent' && !locked && <MenuItem icon={Send} onClick={() => changeStatus({ status: 'sent' })}>Mark Under Process</MenuItem>}
-              {quote.status !== 'draft' && !locked && <MenuItem icon={RotateCcw} onClick={() => changeStatus({ status: 'draft' })}>Back to Draft</MenuItem>}
-              {!locked && <MenuItem icon={CheckCircle2} tone="text-[#027A48]" onClick={() => setStatusDialog('won')}>Mark Won…</MenuItem>}
-              {!locked && <MenuItem icon={XCircle} tone="text-[#D92D20]" onClick={() => setStatusDialog('lost')}>Mark Lost…</MenuItem>}
-              {locked && <MenuItem icon={RotateCcw} onClick={() => changeStatus({ status: 'sent' })}>Reopen (Under Process)</MenuItem>}
-              <div className="my-1.5 border-t border-[#F2F4F7]" />
-              <MenuItem icon={Trash2} tone="text-[#D92D20]" onClick={removeQuote}>Delete quotation</MenuItem>
+              {pendingDelete ? (
+                <MenuItem icon={RotateCcw} onClick={cancelDelete}>Cancel delete request</MenuItem>
+              ) : (
+                <>
+                  {quote.status !== 'sent' && !locked && <MenuItem icon={Send} onClick={() => changeStatus({ status: 'sent' })}>Mark Under Process</MenuItem>}
+                  {quote.status !== 'draft' && !locked && <MenuItem icon={RotateCcw} onClick={() => changeStatus({ status: 'draft' })}>Back to Draft</MenuItem>}
+                  {!locked && <MenuItem icon={CheckCircle2} tone="text-[#027A48]" onClick={() => setStatusDialog('won')}>Mark Won…</MenuItem>}
+                  {!locked && <MenuItem icon={XCircle} tone="text-[#D92D20]" onClick={() => setStatusDialog('lost')}>Mark Lost…</MenuItem>}
+                  {locked && <MenuItem icon={RotateCcw} onClick={() => changeStatus({ status: 'sent' })}>Reopen (Under Process)</MenuItem>}
+                  <div className="my-1.5 border-t border-[#F2F4F7]" />
+                  <MenuItem icon={Trash2} tone="text-[#D92D20]" onClick={requestDelete} hint="needs approval">Request deletion…</MenuItem>
+                </>
+              )}
             </Menu>
           )}
 
           {!readOnly && (
-            <button onClick={save} disabled={saving || !dirty} className="btn btn-primary text-xs !py-2 shadow-sm disabled:opacity-60" title="Save (Ctrl/⌘ + S)">
+            <button onClick={() => save()} disabled={saving || !dirty} className="btn btn-primary text-xs !py-2 shadow-sm disabled:opacity-60" title="Save (Ctrl/⌘ + S) — changes also save automatically">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}{saving ? 'Saving…' : 'Save'}
             </button>
           )}
         </div>
       </div>
 
-      {readOnly && (
+      {pendingDelete ? (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-xs font-semibold text-[#B42318] bg-[#FEF3F2] border border-[#FECDCA] rounded-xl px-4 py-3">
+          <Trash2 className="w-4 h-4 shrink-0" />
+          <span className="flex-1">
+            {quote.delete_requested_by_name || 'A Quote Manager'} asked to delete this quotation on {formatDate(quote.delete_requested_at)}: “{quote.delete_reason}”.
+            {' '}{viewerOnly ? 'Approve to delete it permanently, or reject to keep it.' : 'It is frozen until the Super Admin decides.'}
+          </span>
+          {viewerOnly ? (
+            <span className="flex gap-2 shrink-0">
+              <button onClick={rejectDelete} className="text-[11px] font-bold text-[#344054] bg-white border border-[#D0D5DD] hover:bg-[#F8FAFC] px-3 py-1.5 rounded-lg">Reject</button>
+              <button onClick={approveDelete} className="text-[11px] font-bold text-white bg-[#D92D20] hover:bg-[#B42318] px-3 py-1.5 rounded-lg inline-flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5" />Approve &amp; delete</button>
+            </span>
+          ) : (
+            <button onClick={cancelDelete} className="shrink-0 text-[11px] font-bold text-[#344054] bg-white border border-[#D0D5DD] hover:bg-[#F8FAFC] px-3 py-1.5 rounded-lg">Cancel request</button>
+          )}
+        </div>
+      ) : readOnly && (viewerOnly || !editableVersion || lock) && (
         <div className="flex items-center gap-2 text-xs font-semibold text-[#475467] bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl px-4 py-2.5">
-          <Lock className="w-4 h-4 text-[#667085]" />
+          {editableVersion ? <UserCheck className="w-4 h-4 text-[#B54708]" /> : issued && isLatest ? <Send className="w-4 h-4 text-[#004898]" /> : <Lock className="w-4 h-4 text-[#667085]" />}
           <span className="flex-1">
             {viewerOnly ? 'Read-only view. Only Quote Managers can edit quotations.'
               : locked ? `This quotation is ${status.label}. Reopen it from Status to make changes.`
-              : `You are viewing V${versionMeta.version_no}.0 — an older, frozen version kept for reference. It can be viewed and exported but not edited.`}
+              : !isLatest ? `You are viewing V${versionMeta.version_no}.0 — an older, frozen version kept for reference. It can be viewed and exported but not edited.`
+              : issued ? `V${versionMeta.version_no}.0 was issued to the client on ${formatDate(versionMeta.issued_at)}${versionMeta.issued_by_name ? ` by ${versionMeta.issued_by_name}` : ''} and is frozen. Start a new version to revise it.`
+              : `${lock.editing?.name || 'Another Quote Manager'} is editing this quotation right now. You can view it; editing opens up when they leave.`}
           </span>
-          {!isLatest && (
+          {!isLatest ? (
             <button onClick={() => switchVersion(quote.versions[0].id)}
               className="shrink-0 text-[11px] font-bold text-white bg-[#004898] hover:bg-[#003774] px-3 py-1.5 rounded-lg">
               Go to latest V{quote.versions[0].version_no}.0
             </button>
-          )}
+          ) : issued && canNewVersion ? (
+            <button onClick={newVersion} disabled={busy}
+              className="shrink-0 text-[11px] font-bold text-white bg-[#004898] hover:bg-[#003774] px-3 py-1.5 rounded-lg inline-flex items-center gap-1 disabled:opacity-60">
+              <Plus className="w-3.5 h-3.5" />Start V{versionMeta.version_no + 1}.0
+            </button>
+          ) : editableVersion ? (
+            <button onClick={takeOver}
+              className="shrink-0 text-[11px] font-bold text-[#B54708] bg-white border border-[#FEDF89] hover:bg-[#FFFAEB] px-3 py-1.5 rounded-lg">
+              Take over
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -882,8 +1226,8 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
           </div>
         )}
 
-        {!readOnly && (
-          <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
+          {!readOnly && (<>
             <button onClick={() => {
               const section = { key: newKey(), kind: 'solution', name: '', lines: [] };
               const ppmAt = doc.sections.findIndex((s) => s.kind === 'ppm');
@@ -897,8 +1241,12 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
                 <ClipboardList className="w-4 h-4" />Add Pre-Installation &amp; PPM
               </button>
             )}
-          </div>
-        )}
+          </>)}
+          <button onClick={() => setShowTerms(true)}
+            className="flex-1 min-w-[200px] border-2 border-dashed border-[#D0D5DD] hover:border-[#475467] hover:bg-[#F8FAFC] text-[#344054] rounded-xl py-3.5 text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors">
+            <ScrollText className="w-4 h-4" />Terms &amp; Conditions
+          </button>
+        </div>
       </div>
 
       {/* Investment summary + notes */}
@@ -961,7 +1309,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
         <div className="card bg-white border border-[#E4E7EC] shadow-xs overflow-hidden flex flex-col">
           <div className="px-5 py-3.5 border-b border-[#F2F4F7] flex items-center justify-between">
             <div>
-              <h3 className="font-extrabold text-[#172033]">Notes &amp; Terms</h3>
+              <h3 className="font-extrabold text-[#172033]">Notes</h3>
               <p className="text-[11px] text-[#667085]">Printed under the summary. Saved with this version.</p>
             </div>
             {!readOnly && doc.notes.trim() === '' && <AlertTriangle className="w-4 h-4 text-[#F79009]" title="No notes" />}
@@ -979,6 +1327,9 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
         />
       )}
       {statusDialog && <StatusDialog kind={statusDialog} onClose={() => setStatusDialog(null)} onConfirm={changeStatus} />}
+      {reasonDialog && <ReasonDialog {...reasonDialog} onClose={() => setReasonDialog(null)} />}
+      {showTerms && <TermsDialog doc={doc} readOnly={readOnly} onChange={update} onClose={() => setShowTerms(false)} />}
+      {showHistory && <HistoryPanel quoteId={quoteId} onClose={() => setShowHistory(false)} />}
     </div>
   );
 };

@@ -3,7 +3,7 @@
 // gets in. Business logic lives in services/quoteService.js.
 import express from 'express';
 import { requireSuperAdmin } from '../middleware/auth.js';
-import { requireQuoteAccess, requireQuoteManager, readQuoteAccess } from '../middleware/quoteAuth.js';
+import { requireQuoteAccess, requireQuoteManager, requireQuoteApprover, readQuoteAccess } from '../middleware/quoteAuth.js';
 import * as quotes from '../services/quoteService.js';
 
 const router = express.Router();
@@ -44,19 +44,39 @@ router.patch('/items/:id', write, handle((req) => quotes.updateItem(req.params.i
 
 // Quote leads (separate from Sales leads)
 router.get('/leads', handle((req) => quotes.listLeads(req.query)));
+router.get('/account-managers', handle(() => quotes.listAccountManagers()));
 router.post('/leads', write, handle((req) => quotes.createLead(req.body || {}, me(req)), 201));
 router.patch('/leads/:id', write, handle((req) => quotes.updateLead(req.params.id, req.body || {})));
 router.delete('/leads/:id', write, handle((req) => quotes.deleteLead(req.params.id)));
 
-// Quotations
+// Quotations — one per lead, shared by every Quote Manager. Writes are
+// blocked while someone else holds the quotation's edit lease.
 router.get('/', handle((req) => quotes.listQuotes(req.query)));
 router.post('/', write, handle((req) => quotes.createQuote(req.body || {}, me(req)), 201));
 router.get('/:id', handle((req) => quotes.getQuote(req.params.id)));
-router.delete('/:id', write, handle((req) => quotes.deleteQuote(req.params.id)));
-router.patch('/:id/status', write, handle((req) => quotes.setQuoteStatus(req.params.id, req.body || {})));
+router.get('/:id/events', handle((req) => quotes.listEvents(req.params.id)));
+router.patch('/:id/status', write, handle((req) => quotes.setQuoteStatus(req.params.id, req.body || {}, me(req))));
+
+// Edit lease (acquire / renew / take over, release)
+router.post('/:id/lock', write, handle((req) => quotes.acquireLock(req.params.id, req.body || {}, me(req))));
+router.delete('/:id/lock', write, handle((req) => quotes.releaseLock(req.params.id, me(req))));
+
+// Deletion: a Quote Manager requests, the Super Admin approves or rejects.
+router.post('/:id/delete-request', write, handle((req) => quotes.requestDelete(req.params.id, req.body || {}, me(req))));
+router.delete('/:id/delete-request', write, handle((req) => quotes.cancelDeleteRequest(req.params.id, me(req))));
+router.post('/:id/delete-request/approve', requireQuoteApprover, handle((req) => quotes.approveDelete(req.params.id, me(req))));
+router.post('/:id/delete-request/reject', requireQuoteApprover,
+  handle((req) => quotes.rejectDelete(req.params.id, req.body || {}, me(req))));
+
+// Versions
 router.post('/:id/versions', write, handle((req) => quotes.createNextVersion(req.params.id, me(req)), 201));
 router.get('/:id/versions/:versionId', handle((req) => quotes.getVersion(req.params.id, req.params.versionId)));
 router.put('/:id/versions/:versionId', write,
   handle((req) => quotes.saveVersion(req.params.id, req.params.versionId, req.body || {}, me(req))));
+router.post('/:id/versions/:versionId/issue', write,
+  handle((req) => quotes.issueVersion(req.params.id, req.params.versionId, req.body || {}, me(req))));
+// Export log only (the file is built in the browser); viewers export too.
+router.post('/:id/versions/:versionId/exported', handle((req) =>
+  quotes.recordExport(req.params.id, req.params.versionId, req.body || {}, { by: me(req), admin: req.quoteMode === 'viewer' })));
 
 export default router;

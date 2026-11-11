@@ -10,6 +10,8 @@
 
 A Configure-Price-Quote tool inside the Admin Dash. Quote Managers keep an item catalog with cost prices (OSP). They create quote leads (customer + project + site) and build versioned quotations from them. A quotation is organised into solutions, such as a room, floor or system. The selling price is calculated from cost using a Standard Multiplier (SM). Managers export a client copy (no cost or margin) or an internal copy (with cost and margin) as PDF or Excel. Each deal is then tracked to Won (with PO) or Lost (with reason).
 
+**Leads and quotations are shared.** Every Quote Manager sees and works the same leads and quotations. Section 3a lists the rules that keep shared editing safe: unique leads, one quotation per lead, one editor at a time, freezing a version when it is issued, Super Admin approved deletes, and a history log.
+
 The module is purely additive. It adds new tables, new routes and new pages, and it touches no existing table, column or constraint. **Quote leads are separate from Sales `leads`.** The two are never linked, and nothing in the module reads or writes the Sales pipeline.
 
 ---
@@ -67,12 +69,14 @@ flowchart LR
 - Deleting an item never changes saved quotes. Each quote line keeps its own copy of the item's fields.
 
 ### Step 2: Create a Quote Lead (Quote Leads page)
-- Fields: **Customer** (required), Project, Location / Site.
-- The list shows the creator, the quotation count, how many are won, and the last activity. Clicking the quote count opens Quotations filtered to that customer.
-- A lead with quotations can't be deleted. Delete its quotations first.
+- Fields: **Customer** (required), **Project** (required, free text), Location / Site, **Contact Person**, and **Account Manager** (a dropdown of active Sales employees). The manager's phone fills in automatically and prints on the quotation. Project is not linked to any other module.
+- **A lead is unique on Customer + Project**, ignoring case and extra spaces (`Acme Corp` / `Board Room` = ` acme  corp` / `BOARD ROOM`). Creating or renaming into an existing pair is refused with *"A lead for … already exists"*, and **Show it** filters the list to that lead.
+- The list shows the creator, the quotation's status and the last activity.
+- A lead with a quotation can't be deleted.
 
 ### Step 3: Start a quotation
-- **New Quotation** on a lead row creates the quote with **V1.0**. V1.0 starts with one empty solution and the default Notes & Terms, and the builder opens on it straight away.
+- **A lead has exactly one quotation.** Revisions are versions of it, not new quotations.
+- **New Quotation** on a lead row creates the quote with **V1.0**. V1.0 starts with one empty solution, the default Notes and the default Terms & Conditions, and the builder opens on it straight away. After that the button becomes **Open Quotation**. If two managers click at once, the second is taken to the first one's quotation.
 - The Quotations page's **New Quotation** button sends you to Quote Leads, because every quote must belong to a lead.
 
 ### Step 4: Build it (Quote Builder)
@@ -100,20 +104,25 @@ flowchart LR
 - Lines with either override are tagged **Indiv**, the rest **Univ**. Clicking the *Indiv* tag clears both overrides and puts the line back on the universal SM.
 - Lines can be reordered with the up/down arrows and removed.
 
+**Terms & Conditions:** the **Terms & Conditions** button sits beside *Add Pre-Installation & PPM*. It opens an editor for the **delivery timeline** and the **terms text**. Both are saved with the version, copied into new versions, and printed after the Notes. New quotations start from `DEFAULT_TERMS` in `quoteService.js`.
+
 **Below the solutions:**
 - **Investment Summary:** one row per solution with Supply / Services / GST, then Grand Total (Supply + Installation + PPM), Grand Total (All Inclusive), and the SM margin row when costing is shown.
-- **Notes & Terms:** free text saved with each version. New quotes start with five default exclusions (electrical, civil, carpentry/false ceiling, IT infrastructure, additional mounting structures).
+- **Notes:** free text saved with each version. New quotes start with eight default notes (`DEFAULT_NOTES`): civil/electrical, false ceiling, raceway/conduiting, IT infrastructure, cabling at actuals, racks/enclosures, power points/conduits, DTH.
 
 **Saving:**
-- Save with the **Save** button or **Ctrl/⌘ + S**. The whole version (settings + solutions + lines) is sent and replaces what was stored.
-- An "Unsaved changes" badge shows while there are edits. Closing the tab warns before discarding them.
-- Navigating to another page without saving keeps your edits in memory. They are restored the next time you open that version, unless someone saved it in the meantime.
-- **Conflict protection:** each save sends the `updated_at` that was loaded. If another user saved first, the save is refused with *"Someone else saved this quotation while you were editing"* and you are offered a reload.
+- **Autosave:** edits save automatically about 3 seconds after you stop typing. The badge shows *Saving… → All changes saved*, or *Not saved: reason*. Autosave waits while a freshly added line has neither an item nor a description.
+- **Save** / **Ctrl/⌘ + S** saves immediately. The whole version (settings + solutions + lines) is sent and replaces what was stored.
+- Closing the tab with unsaved edits warns first. Navigating to another page keeps unsaved edits in memory and restores them when you reopen that version, unless someone saved it in the meantime.
+- **Conflict protection:** each save must send the `updated_at` that was loaded. If it doesn't match, the save is refused with *"Someone else saved this quotation while you were editing"* and you are offered a reload.
 
 ### Step 5: Versions (V1.0, V2.0, …)
-- The **version picker** lists every version with its grand total, date and editor. Only the **latest** version is editable, and older versions open read-only for viewing and exporting.
-- **New version** copies the latest saved version into V(n+1), including SM, rounding, notes, every solution and every line. The previous version is frozen, and the quote's status is reset to **Draft**.
-- Save your edits before creating a new version, because the copy is taken from what is saved.
+- A version is either a **Draft** (editable) or **Issued** (sent to the client and frozen for good). Only the latest version can be a draft.
+- **A Client PDF / Client Excel export of the draft issues it.** You are asked *"Issue V1.0 to the client?"*, and on yes the version is frozen and stamped with who issued it and when. **Internal exports never freeze.** To preview a draft without issuing it, use an Internal export.
+- Re-exporting an issued version gives the same document, and no new version is made.
+- An issued version stores the **customer / project / site it went out with**, so editing the lead later never changes an issued PDF.
+- To revise an issued version, use **Start V(n+1).0** (shown on the issued banner) or **New version**. **New version** is always available on the latest version, so you can bump the version manually at any time. It copies the latest saved version, including SM, rounding, notes, solutions and lines, and pending edits are saved first. **The quote's status is kept**, so a revision of an Under Process quote stays Under Process.
+- The **version picker** shows each version's total, a Draft / Issued / Read-only badge, who issued or last edited it, and which version **Won**.
 
 ### Step 6: Status / deal outcome
 | Status | Label | Rules |
@@ -123,8 +132,20 @@ flowchart LR
 | `won` | Won | Requires **PO number** and **PO date** |
 | `lost` | Lost | Requires a reason: Competitor price, Budget cancelled, Timeline mismatch, Scope changed, No response, or Other (free text) |
 
+- **Mark Under Process** and **Mark Won** issue the latest version if it isn't issued yet (you are asked first). Won also records **which version won**.
 - A **Won** or **Lost** quote is **locked**: it can't be saved and no new version can be made from it. **Reopen (Under Process)** unlocks it.
-- The Status menu also holds **Delete quotation**, which deletes every version permanently.
+- **Deleting needs Super Admin approval.** **Request deletion…** in the Status menu asks for a reason. The quotation then shows *Deletion pending* and is frozen for everyone, and any manager can **Cancel request**. The Super Admin approves or rejects it from the **Delete requests** panel at the top of the Quotations page, or from the banner inside the quotation. Approving deletes every version. The lead stays, so a new quotation can be started from it.
+
+### 3a. Shared-editing rules (migration `049_quote_sharing_rules.sql`)
+
+| Rule | How it works |
+|---|---|
+| Unique leads | Unique index on `quote_lead_key(customer), quote_lead_key(project)`. Project is `NOT NULL`. |
+| One quotation per lead | Unique index on `quotes.lead_id`. |
+| One editor at a time | Opening an editable draft takes an **edit lease** (`quote_edit_locks`, 2 minutes). The builder renews it every 45 seconds while you've used the page in the last 5 minutes, and releases it when you leave. Everyone else sees *"Asha is editing this quotation right now"* and can only view. **Take over** replaces the lease. The previous editor's next save is refused, and they are told who took over. Every write (save, issue, status, new version, delete request) is refused while someone else holds a live lease. |
+| Issue freezes | `quote_versions.issued_at` set. Saves to an issued version get a 409. |
+| Delete approval | `quotes.delete_requested_*`. The approve / reject routes accept only the Super Admin. |
+| History | `quote_events` records created, saved (consecutive saves by one person within 30 minutes collapse into one entry), issued, exported, new version, status changes, takeovers, and delete request / cancel / reject / approve. The **History** button in the builder shows it. Entries have no FK to `quotes`, so the trail of a deleted quotation survives. |
 - The Quotations list shows each quote's latest version with Grand Total, Margin %, status and PO number. It has status tabs and status tiles (count and value per status) plus a search over customer, project and ref.
 
 ---
@@ -176,10 +197,18 @@ They are available from the **Export** menu on any version, including frozen one
 | Shows | Selling prices, GST, totals | Everything in the client copy plus OSP Unit/Total, SM, Margin ₹/%, Univ/Indiv mode |
 | Marked | — | "INTERNAL · CONFIDENTIAL", `_INTERNAL` filename suffix |
 
-- **PDF:** opens a print-ready page in a new window, so popups must be allowed. It has the TaskTel logo, a header (Project, Customer, Date, Version, Project Ref), a table per solution with an Installation & Services divider, the Investment Summary, the amount in words (Indian numbering), the notes, and an "Authorised Signatory" block.
+- **PDF:** opens a print-ready page in a new window, so popups must be allowed. In order:
+  - the TaskTel logo
+  - the customer box (Customer, Contact, Project, Site) and the quotation box (Project Ref, Date, Version, Account Manager · phone)
+  - the **Investment Summary** and the amount in words
+  - the **Bill of Materials**: a table per room with a **Sub-total** row and an Installation & Services divider, then the **Grand Total** once, directly under the last room's sub-total
+  - **Notes**, then **Terms & Conditions** with the delivery timeline
+
+  Totals rows are not table footers, so they don't repeat on every printed page. There is no "QUOTATION" title and no signature block. The internal copy shows **one margin per room** (Amount − OSP Total) instead of per-line margin and Univ/Indiv mode.
 - **Excel (.xlsx via ExcelJS, loaded on demand):** two sheets.
   - **Investment Summary:** a row per solution, Grand Total, amount in words, the SM margin row (internal only), and the notes.
-  - **Bill of Materials:** every line per solution with a subtotal per solution, then the Grand Total. OSP columns are tinted green on the internal copy. Amounts use the Indian number format (₹1,00,000), and the page is set to landscape A4 fit-to-width.
+  - **Bill of Materials:** every line per solution with a subtotal per solution, then the Grand Total directly below. The internal copy has no Margin, Margin % or Mode columns. Instead, each room gets a **Room margin (Amount − OSP Total)** row, and OSP columns are tinted green.
+  - Both sheets show the contact person and account manager in the header. The summary sheet ends with the Notes and the Terms & Conditions. Amounts use the Indian number format (₹1,00,000), and the page is set to landscape A4 fit-to-width.
 - Filename: `Quotation_<Customer>_V<n>[_INTERNAL].xlsx`.
 
 ---
@@ -191,9 +220,11 @@ They are available from the **Export** menu on any version, including frozen one
 | `quote_managers` | Back-Office employees with the tag | PK `back_office_id` → `back_office` (cascade), `granted_by` → `admins` |
 | `quote_categories` | Catalog folders | Unique on `lower(btrim(name))` |
 | `quote_items` | Catalog items | `price` = OSP; unique on `lower(btrim(model_name))`; category FK is `RESTRICT` |
-| `quote_leads` | Customer / project / site | Independent of Sales `leads` |
-| `quotes` | One quotation | `status` ∈ draft/sent/won/lost; DB `CHECK`s force PO no. + date when won and a reason when lost; lead FK `RESTRICT` |
-| `quote_versions` | V1, V2, … | Unique `(quote_id, version_no)`; holds `sm`, `rounding_step`, `notes`, `quote_date` and **cached totals** for the list view |
+| `quote_leads` | Customer / project / site | Independent of Sales `leads`; project required; unique on customer + project (049) |
+| `quotes` | One quotation per lead | `status` ∈ draft/sent/won/lost; DB `CHECK`s force PO no. + date when won and a reason when lost; lead FK `RESTRICT`, unique; `won_version_id`; `delete_requested_by/at`, `delete_reason` (049) |
+| `quote_versions` | V1, V2, … | Unique `(quote_id, version_no)`; holds `sm`, `rounding_step`, `notes`, `quote_date` and **cached totals** for the list view; `issued_at/by` + `issued_customer/project/site_location` snapshot (049) |
+| `quote_edit_locks` | Edit lease | One row per quotation being edited; `expires_at` (049) |
+| `quote_events` | Activity log | No FK to `quotes`, so it outlives a deleted quotation (049) |
 | `quote_sections` | Solutions / PPM block | `kind` ∈ solution/ppm; cascade from version |
 | `quote_lines` | Line items | Copied item fields; `sm_override`, `price_override`; `item_id` → `SET NULL` if the item is deleted |
 
@@ -223,17 +254,28 @@ Every route except `/access` and `/managers*` passes `requireQuoteAccess`. Write
 | POST / PATCH / DELETE | `/leads[/:id]` | manager | Create / edit / delete (only with no quotes) |
 | GET | `/?search=&status=` | read | Quotes with their latest version |
 | POST | `/` | manager | `{ lead_id, project_ref? }` → creates the quote + V1 |
-| GET | `/:id` | read | Quote + version list |
-| DELETE | `/:id` | manager | Delete quote and all versions |
-| PATCH | `/:id/status` | manager | `{ status, po_number?, po_date?, lost_reason? }` |
-| POST | `/:id/versions` | manager | Clone latest → V(n+1) |
-| GET | `/:id/versions/:versionId` | read | Full version (sections + lines, `is_latest`) |
-| PUT | `/:id/versions/:versionId` | manager | Save whole version; send `base_updated_at` for conflict detection |
+| GET | `/:id` | read | Quote + version list + live `editing` lease |
+| GET | `/:id/events` | read | Activity log (latest 200) |
+| PATCH | `/:id/status` | manager | `{ status, po_number?, po_date?, lost_reason? }`; sent / won issue the latest version |
+| POST | `/:id/lock` | manager | `{ takeover? }` → `{ mine, editing }`; takes / renews the lease |
+| DELETE | `/:id/lock` | manager | Release your lease |
+| POST | `/:id/delete-request` | manager | `{ reason }`; freezes the quotation |
+| DELETE | `/:id/delete-request` | manager | Cancel the request |
+| POST | `/:id/delete-request/approve` | Super Admin | Delete quote and all versions |
+| POST | `/:id/delete-request/reject` | Super Admin | `{ note? }` |
+| POST | `/:id/versions` | manager | Clone latest → V(n+1) (status kept) |
+| GET | `/:id/versions/:versionId` | read | Full version (sections + lines, `is_latest`, issued snapshot) |
+| PUT | `/:id/versions/:versionId` | manager | Save whole version; `base_updated_at` **required** |
+| POST | `/:id/versions/:versionId/issue` | manager | `{ format }`; freeze the latest draft as sent to the client |
+| POST | `/:id/versions/:versionId/exported` | read | `{ format, internal }`; history entry only |
 
-Save-time errors return **409**:
+Write errors return **409** when:
 - the quote is Won/Lost (*"Reopen it to make changes"*)
-- the version is not the latest (*"Older versions are read-only"*)
-- someone else saved first
+- the version is not the latest (*"Older versions are read-only"*) or is issued (*"…issued to the client and is frozen"*)
+- someone else saved first, or `base_updated_at` is missing
+- someone else holds the edit lease (`details.code = 'LOCKED'`)
+- a delete request is pending
+- the lead already exists (`DUPLICATE_LEAD`, with `lead_id`) or already has a quotation (`QUOTE_EXISTS`, with `quote_id`)
 
 Validation errors return **400** with a readable message. For imports, the per-row errors are in `details`.
 
@@ -244,6 +286,10 @@ Validation errors return **400** with a readable message. For imports, the per-r
 ```
 backend-unified/
 ├── migrations/045_quotations.sql      # schema (section 6)
+├── migrations/049_quote_sharing_rules.sql  # sharing rules (section 3a)
+├── migrations/050_quote_contact_terms.sql  # contact person, account manager, T&C + delivery
+├── scripts/check-quote-rules.js       # read-only pre-deploy check for 049
+├── integration-tests/quote-sharing-rules.test.js
 ├── middleware/quoteAuth.js            # manager / viewer resolution, live DB checks
 ├── routes/quotes.js                   # /api/quotes routes (mounted in server.js)
 ├── services/quoteService.js           # validation, catalog, leads, quotes, versions, import
@@ -276,6 +322,7 @@ Wiring touched outside the module:
 ## 9. Deployment & operations
 
 - **Database:** run `npm run db:migrate` in `backend-unified` to apply `045_quotations.sql`. It runs inside the migration transaction. No seed data is shipped, so the catalog starts empty; load it with the Items page's Excel import.
+- **Migration 049 (sharing rules):** before migrating, run `DATABASE_URL=<db> node scripts/check-quote-rules.js`. It is read-only and lists leads with no project, duplicate customer + project leads, and leads with more than one quotation. Fix those in the UI until it prints `OK`. If you skip the check, the migration runs the same check itself and stops with that list, rolling back and changing nothing.
 - **Backend:** pushing to `main` redeploys `backend-unified` on Railway. The router is mounted at `/api/quotes` in `server.js`.
 - **Admin frontend:** `npm run build` in `ADMIN DASH`, then upload the build to cPanel. ExcelJS is loaded only when an Excel import or export runs.
 - **Tests:** run `npm test` in `backend-unified` (`quoteEngine.test.js`) before pushing, since a push deploys to production.

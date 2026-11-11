@@ -1,7 +1,10 @@
 // Quotation exports — PDF (print window, same approach and TaskTel logo as
 // the ticket/sales reports) and .xlsx (ExcelJS, loaded on demand).
 // Client copy: selling prices, GST and totals only — never OSP, SM or margin.
-// Internal copy: the full investment-summary layout with OSP and SM margin.
+// Internal copy: adds OSP / SM per line and one margin figure per room
+// (Amount − OSP Total), never per-line margins.
+// Layout: summary first, then the room-wise detail with a sub-total per room
+// and the grand total once at the end, then Notes and Terms & Conditions.
 import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
 
 const COMPANY = 'Tasktel Technologees Pvt Ltd';
@@ -15,6 +18,7 @@ const fmtDate = (key) => {
   return y && m && d ? `${String(d).padStart(2, '0')}/${MONTHS[m - 1]}/${y}` : '';
 };
 
+const managerLine = (quote) => [quote.account_manager_name, quote.account_manager_phone].filter(Boolean).join(' · ');
 const sectionLabel = (section) => section.name || (section.kind === 'ppm' ? 'Pre-Installation Planning & Migration Services' : 'Untitled solution');
 const lineLabel = (line) => [line.model_name, line.series && `(${line.series})`].filter(Boolean).join(' ');
 const fileBase = (quote, version) =>
@@ -54,14 +58,17 @@ const orderedLines = (section) => [
 // PDF
 // ============================================
 
-export function exportQuotePdf({ quote, version, computed }, { internal = false } = {}) {
-  const win = window.open('', '_blank');
+// `win`: a window the caller opened during the click, for exports that await
+// a request first (popup blockers refuse window.open after an await).
+export function exportQuotePdf({ quote, version, computed }, { internal = false, win: opened = null } = {}) {
+  const win = opened || window.open('', '_blank');
   if (!win) {
     alert('Please allow popups to view & download the PDF.');
     return;
   }
   const totals = computed.totals;
   const ver = `${version.version_no}.0`;
+  const cols = internal ? 10 : 9;
 
   const sectionTables = computed.sections.map((section, si) => {
     const lines = orderedLines(section);
@@ -72,7 +79,7 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
       const desc = line.line_type === 'service'
         ? `<div class="strong">${esc(line.description)}</div>`
         : `<div class="strong">${esc(lineLabel(line))}</div>${line.description ? `<div class="sub">${esc(line.description)}</div>` : ''}`;
-      const divider = hasSupply && i === firstService ? `<tr class="group"><td colspan="${internal ? 12 : 9}">Installation &amp; Services</td></tr>` : '';
+      const divider = hasSupply && i === firstService ? `<tr class="group"><td colspan="${cols}">Installation &amp; Services</td></tr>` : '';
       return `${divider}<tr>
         <td class="c">${i + 1}</td><td>${desc}</td><td class="mono">${esc(line.hsn_code)}</td>
         <td class="r">${money(line.qty)}</td>
@@ -80,7 +87,6 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
         <td class="r">${money(c.unit_price)}</td><td class="r">${money(c.amount)}</td>
         <td class="r">${money(line.gst_rate)}%</td>${internal ? '' : `<td class="r">${money(c.gst)}</td>`}
         <td class="r strong">${money(c.total)}</td>
-        ${internal ? `<td class="r ${c.margin_pct < 0 ? 'neg' : ''}">${money(c.margin)}<div class="sub">${c.margin_pct}%</div></td><td class="c tag">${line.sm_override != null || line.price_override != null ? 'Indiv' : 'Univ'}</td>` : ''}
       </tr>`;
     }).join('');
     const t = section.totals;
@@ -94,14 +100,15 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
             <th class="r" style="width:84px">Unit Price</th><th class="r" style="width:90px">Amount</th><th class="r" style="width:44px">GST</th>
             ${internal ? '' : '<th class="r" style="width:76px">GST Amt</th>'}
             <th class="r" style="width:96px">Total</th>
-            ${internal ? '<th class="r" style="width:80px">Margin</th><th class="c" style="width:38px">Mode</th>' : ''}
           </tr></thead>
-          <tbody>${rows || `<tr><td colspan="${internal ? 12 : 9}" class="c muted">No lines</td></tr>`}</tbody>
-          <tfoot><tr>
-            <td colspan="${internal ? 7 : 5}" class="r">Sub-total</td>
-            <td class="r">${money(t.subtotal)}</td><td></td>${internal ? '' : `<td class="r">${money(t.gst_total)}</td>`}
-            <td class="r">${money(t.grand_total)}</td>${internal ? `<td class="r">${money(t.margin)}</td><td></td>` : ''}
-          </tr></tfoot>
+          <tbody>${rows || `<tr><td colspan="${cols}" class="c muted">No lines</td></tr>`}
+            <tr class="total"><td colspan="${internal ? 7 : 5}" class="r">Sub-total</td>
+              <td class="r">${money(t.subtotal)}</td><td></td>${internal ? '' : `<td class="r">${money(t.gst_total)}</td>`}
+              <td class="r">${money(t.grand_total)}</td></tr>
+            ${internal ? `<tr class="sm"><td colspan="${cols - 1}" class="r">Room margin (Amount ${money(t.subtotal)} − OSP Total ${money(t.supply_osp + t.services_osp)})</td>
+              <td class="r ${t.margin < 0 ? 'neg' : ''}">${money(t.margin)}</td></tr>` : ''}
+            ${si === computed.sections.length - 1 ? `<tr class="grand"><td colspan="${cols - 1}" class="r">Grand Total (All Inclusive)</td><td class="r">₹ ${money(totals.grand_total)}</td></tr>` : ''}
+          </tbody>
         </table>
       </div>`;
   }).join('');
@@ -129,7 +136,6 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
     .logo-img { height: 34px; display: block; margin-bottom: 6px; }
     .company { font-size: 11px; color: #64748B; }
     .doc-title { text-align: right; }
-    .doc-title h1 { margin: 0; font-size: 20px; letter-spacing: .12em; color: #004898; }
     .doc-title .badge { display: inline-block; margin-top: 4px; font-size: 10px; font-weight: 800; letter-spacing: .08em; color: #B42318; background: #FEF3F2; border: 1px solid #FECDCA; padding: 2px 8px; border-radius: 999px; }
     .meta { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; margin-bottom: 18px; }
     .box { border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; }
@@ -144,7 +150,7 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
     th, td { padding: 6px 7px; border: 1px solid #E2E8F0; vertical-align: top; }
     th { background: #F1F5F9; color: #475569; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; text-align: left; }
     tr { page-break-inside: avoid; }
-    .lines tfoot td, .summary tfoot td { background: #F8FAFC; font-weight: 800; }
+    .total td { background: #F8FAFC; font-weight: 800; }
     .group td { background: #F8FAFC; color: #64748B; font-weight: 800; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
     .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .c { text-align: center; }
@@ -155,26 +161,24 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
     .osp { background: #F7FEE7; }
     th.osp { background: #ECFCCB; color: #3F6212; }
     .neg { color: #B42318; }
-    .tag { font-size: 9px; font-weight: 800; color: #4F46E5; }
     .h2 { font-size: 12px; font-weight: 800; color: #004898; text-transform: uppercase; letter-spacing: .05em; margin: 22px 0 8px; page-break-after: avoid; }
     .grand td { background: #004898 !important; color: #FFF; font-size: 13px; }
     .sm td { background: #F7FEE7 !important; color: #3F6212; }
     .words { margin-top: 8px; font-size: 11px; } .words b { color: #004898; }
     .notes { page-break-inside: avoid; white-space: pre-wrap; line-height: 1.6; font-size: 10.5px; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; }
-    .sign { display: flex; justify-content: flex-end; margin-top: 30px; page-break-inside: avoid; }
-    .sign div { text-align: center; width: 230px; font-size: 10px; color: #475569; }
-    .sign .line { margin-top: 44px; border-top: 1px solid #94A3B8; padding-top: 6px; }
+    .delivery { margin-bottom: 6px; font-size: 10.5px; } .delivery b { color: #004898; }
     .foot { margin-top: 24px; text-align: center; font-size: 9.5px; color: #94A3B8; border-top: 1px solid #E2E8F0; padding-top: 10px; }
     @media print { .print-bar { display: none; } body { padding: 0; } }
   </style></head><body>
     <div class="print-bar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
     <div class="head">
       <div><img class="logo-img" src="${TASKTEL_LOGO_DATA_URI}" alt="TaskTel" /><div class="company">${COMPANY}</div></div>
-      <div class="doc-title"><h1>QUOTATION</h1>${internal ? '<div class="badge">INTERNAL · CONFIDENTIAL</div>' : ''}</div>
+      <div class="doc-title">${internal ? '<div class="badge">INTERNAL · CONFIDENTIAL</div>' : ''}</div>
     </div>
     <div class="meta">
       <div class="box"><div class="label">Customer</div><div class="kv">
         <span>Customer</span><span>${esc(quote.customer)}</span>
+        ${quote.contact_person ? `<span>Contact</span><span>${esc(quote.contact_person)}</span>` : ''}
         <span>Project</span><span>${esc(quote.project || '—')}</span>
         <span>Site</span><span>${esc(quote.site_location || '—')}</span>
       </div></div>
@@ -182,11 +186,10 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
         <span>Project Ref</span><span>${esc(version.project_ref || '—')}</span>
         <span>Date</span><span>${esc(fmtDate(version.quote_date))}</span>
         <span>Version</span><span>${esc(ver)}</span>
+        ${managerLine(quote) ? `<span>Account Mgr</span><span>${esc(managerLine(quote))}</span>` : ''}
         ${internal ? `<span>SM</span><span>${esc(version.sm)} · round to ₹${esc(version.rounding_step)}</span>` : ''}
       </div></div>
     </div>
-
-    ${sectionTables}
 
     <div class="h2">Investment Summary</div>
     <table class="summary">
@@ -196,21 +199,23 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false 
         ${internal ? '<th class="r osp">OSP Services</th>' : ''}<th class="r">Services Price</th>
         <th class="r">GST</th><th class="r">Total</th>
       </tr></thead>
-      <tbody>${summaryRows}</tbody>
-      <tfoot>
-        <tr><td colspan="2">Grand Total (Supply + Installation + PPM)</td>
+      <tbody>${summaryRows}
+        <tr class="total"><td colspan="2">Grand Total (Supply + Installation + PPM)</td>
           ${internal ? `<td class="r">${money(totals.supply_osp)}</td>` : ''}<td class="r">${money(totals.supply_price)}</td>
           ${internal ? `<td class="r">${money(totals.services_osp)}</td>` : ''}<td class="r">${money(totals.services_price)}</td>
           <td class="r">${money(totals.gst_total)}</td><td class="r">${money(totals.grand_total)}</td></tr>
         <tr class="grand"><td colspan="${summaryCols - 1}">Grand Total (All Inclusive)</td><td class="r">₹ ${money(totals.grand_total)}</td></tr>
         ${internal ? `<tr class="sm"><td colspan="${summaryCols - 1}">SM — margin over OSP (${totals.margin_pct}%)</td><td class="r">₹ ${money(totals.margin)}</td></tr>` : ''}
-      </tfoot>
+      </tbody>
     </table>
     <div class="words">Amount in words: <b>${esc(amountInWords(totals.grand_total))}</b></div>
 
-    ${version.notes ? `<div class="h2">Note</div><div class="notes">${esc(version.notes)}</div>` : ''}
+    <div class="h2">Bill of Materials</div>
+    ${sectionTables}
 
-    <div class="sign"><div><b>For ${COMPANY}</b><div class="line">Authorised Signatory</div></div></div>
+    ${version.notes ? `<div class="h2">Notes</div><div class="notes">${esc(version.notes)}</div>` : ''}
+    ${version.terms || version.delivery_timeline ? `<div class="h2">Terms &amp; Conditions</div><div class="notes">${
+      version.delivery_timeline ? `<div class="delivery"><b>Delivery:</b> ${esc(version.delivery_timeline)}</div>` : ''}${esc(version.terms || '')}</div>` : ''}
     <div class="foot">${COMPANY} · Quotation ${esc(version.project_ref || '')} · V${esc(ver)} · Generated ${esc(new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</div>
     <script>window.onload = function () { setTimeout(function () { window.print(); }, 500); };</script>
   </body></html>`;
@@ -248,7 +253,9 @@ function writeHeader(workbook, sheet, { quote, version }, lastCol, title) {
     ['Customer:', quote.customer],
     ['Date:', fmtDate(version.quote_date)],
     ['Ver:', `${version.version_no}.0`],
-    ['Project Ref:', version.project_ref || '']
+    ['Project Ref:', version.project_ref || ''],
+    ...(quote.contact_person ? [['Contact:', quote.contact_person]] : []),
+    ...(managerLine(quote) ? [['Account Manager:', managerLine(quote)]] : [])
   ];
   meta.forEach(([label, value], i) => {
     const row = sheet.getRow(i + 1);
@@ -352,6 +359,18 @@ function writeSummarySheet(workbook, data, internal) {
       sheet.getRow(r).getCell(1).alignment = { wrapText: true };
     }
   }
+  if (version.terms || version.delivery_timeline) {
+    r += 2;
+    sheet.getRow(r).getCell(1).value = 'TERMS & CONDITIONS :';
+    sheet.getRow(r).getCell(1).font = { bold: true };
+    const lines = [version.delivery_timeline && `Delivery: ${version.delivery_timeline}`, ...String(version.terms || '').split('\n')];
+    for (const line of lines.filter((l) => l != null && l !== false)) {
+      r += 1;
+      sheet.mergeCells(r, 1, r, last);
+      sheet.getRow(r).getCell(1).value = line;
+      sheet.getRow(r).getCell(1).alignment = { wrapText: true };
+    }
+  }
   sheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
 }
 
@@ -359,12 +378,12 @@ function writeBomSheet(workbook, data, internal) {
   const { computed } = data;
   const sheet = workbook.addWorksheet('Bill of Materials', { views: [{ showGridLines: false }] });
   const headers = internal
-    ? ['Sl', 'Description', 'HSN/SAC', 'UOM', 'Qty', 'OSP Unit', 'OSP Total', 'SM', 'Unit Price', 'Amount', 'GST %', 'GST', 'Total', 'Margin', 'Margin %', 'Mode']
+    ? ['Sl', 'Description', 'HSN/SAC', 'UOM', 'Qty', 'OSP Unit', 'OSP Total', 'SM', 'Unit Price', 'Amount', 'GST %', 'GST', 'Total']
     : ['Sl', 'Description', 'HSN/SAC', 'UOM', 'Qty', 'Unit Price', 'Amount', 'GST %', 'GST', 'Total'];
-  const widths = internal ? [6, 46, 12, 7, 8, 14, 15, 8, 14, 15, 8, 13, 15, 14, 10, 8] : [6, 52, 12, 7, 8, 15, 16, 8, 14, 17];
+  const widths = internal ? [6, 46, 12, 7, 8, 14, 15, 8, 14, 15, 8, 13, 15] : [6, 52, 12, 7, 8, 15, 16, 8, 14, 17];
   sheet.columns = widths.map((width) => ({ width }));
   const ospCols = internal ? [6, 7, 8] : [];
-  const moneyCols = internal ? [6, 7, 9, 10, 12, 13, 14] : [6, 7, 9, 10];
+  const moneyCols = internal ? [6, 7, 9, 10, 12, 13] : [6, 7, 9, 10];
   const last = headers.length;
   let r = writeHeader(workbook, sheet, data, last, 'Bill of Materials');
   headerCells(sheet, r, headers, ospCols);
@@ -383,8 +402,7 @@ function writeBomSheet(workbook, data, internal) {
         ? line.description
         : [lineLabel(line), line.description].filter(Boolean).join('\n');
       const values = internal
-        ? [li + 1, desc, line.hsn_code || '', line.uom || 'Nos', line.qty, line.osp_unit, c.osp_total, line.price_override != null ? '—' : c.sm, c.unit_price, c.amount, line.gst_rate / 100, c.gst, c.total, c.margin, c.margin_pct / 100,
-          line.sm_override != null || line.price_override != null ? 'Indiv' : 'Univ']
+        ? [li + 1, desc, line.hsn_code || '', line.uom || 'Nos', line.qty, line.osp_unit, c.osp_total, line.price_override != null ? '—' : c.sm, c.unit_price, c.amount, line.gst_rate / 100, c.gst, c.total]
         : [li + 1, desc, line.hsn_code || '', line.uom || 'Nos', line.qty, c.unit_price, c.amount, line.gst_rate / 100, c.gst, c.total];
       const row = sheet.getRow(r);
       values.forEach((v, ci) => {
@@ -393,7 +411,7 @@ function writeBomSheet(workbook, data, internal) {
         cell.border = BOX;
         cell.alignment = { vertical: 'top', wrapText: ci === 1, horizontal: ci === 0 || ci === 3 ? 'center' : undefined };
         if (moneyCols.includes(ci + 1)) cell.numFmt = INR_FMT;
-        if (headers[ci] === 'GST %' || headers[ci] === 'Margin %') cell.numFmt = '0.##%';
+        if (headers[ci] === 'GST %') cell.numFmt = '0.##%';
         if (ospCols.includes(ci + 1)) cell.fill = fill(OSP_FILL);
       });
     });
@@ -406,15 +424,20 @@ function writeBomSheet(workbook, data, internal) {
     sheet.getRow(r).getCell(amountCol).value = t.subtotal;
     sheet.getRow(r).getCell(totalCol - 1).value = t.gst_total;
     sheet.getRow(r).getCell(totalCol).value = t.grand_total;
-    if (internal) {
-      sheet.getRow(r).getCell(7).value = t.supply_osp + t.services_osp;
-      sheet.getRow(r).getCell(14).value = t.margin;
-    }
+    if (internal) sheet.getRow(r).getCell(7).value = t.supply_osp + t.services_osp;
     styleRange(sheet, r, 1, last, { font: { bold: true }, fill: fill('FFF8FAFC'), border: BOX });
     for (const col of moneyCols) sheet.getRow(r).getCell(col).numFmt = INR_FMT;
+
+    if (internal) {
+      r += 1;
+      sheet.getRow(r).getCell(2).value = 'Room margin (Amount − OSP Total)';
+      sheet.getRow(r).getCell(amountCol).value = t.margin;
+      sheet.getRow(r).getCell(amountCol).numFmt = INR_FMT;
+      styleRange(sheet, r, 1, last, { font: { bold: true, color: { argb: 'FF3F6212' } }, fill: fill(OSP_FILL), border: BOX });
+    }
   });
 
-  r += 2;
+  r += 1;
   sheet.mergeCells(r, 1, r, last - 1);
   sheet.getRow(r).getCell(1).value = 'GRAND TOTAL (All Inclusive)';
   sheet.getRow(r).getCell(last).value = computed.totals.grand_total;
