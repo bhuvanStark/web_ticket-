@@ -26,13 +26,49 @@ export const DEFAULT_NOTES = [
 ].map((line, i) => `${i + 1}. ${line}`).join('\n');
 
 // Starting Terms & Conditions for a new quotation; editable per version.
+// One paragraph per line. The exports lay it out by its markers: "I." /
+// "II." headings, "a)" sub-points, "•" bullets; any other line continues
+// the point above it.
 export const DEFAULT_TERMS = [
-  'Prices are in Indian Rupees (INR). GST is charged extra at the applicable rate as shown.',
-  'This quotation is valid for 30 days from the date of issue.',
-  'Payment terms: as agreed in the purchase order.',
-  'Warranty: as per the manufacturer\'s standard warranty terms.',
-  'Any work outside the quoted scope will be charged extra at actuals.'
-].map((line, i) => `${i + 1}. ${line}`).join('\n');
+  'I. Commercial Terms & Conditions',
+  'a) Price: Supply Scope - Prices are in Indian Rupees FOR - Site within city limits and Freight is extra - 2% by Road, 5% by Air for other states.',
+  'Installation & commissioning charges - Does not include the cost for Electrical / Carpentry and civil works unless otherwise specifically mentioned.',
+  'b) Taxes: Taxes are extra as per details mentioned below:',
+  'Supply Items: GST extra as applicable at the time of billing @ rate of 18% as shown.',
+  'Professional Services: GST is applicable @ 18%.',
+  'Both tax rates mentioned above are as per the current applicable rates and in the event of any change in the statutory taxes as per GST Regulations, the same shall be borne by the customer or normalised as per GST Notification.',
+  'c) Payment Terms: 50% Advance Payment along with clear PO and 45% against the Supply and balance on installation.',
+  'Professional Service payment 50% Advance for work to Commence and balance after installation.',
+  '"In the event of site not ready condition to start implementation even after 30 days from the materials delivery date at site, client should agree to release the pending payments. Tasktel is committed to take up the implementation once the client notifies / intimates the site readiness."',
+  'd) Delivery: Upon receipt of the equipment at site and release of delivery payment, installation & commissioning will start, provided the site is ready.',
+  'Special Note: Client to provide the permission for Service Lift operation to lift the Materials in high Rise Buildings. If such permission/facility is not available, then the incidental expenses towards porter services have to be paid by the Client to lift the Materials to upper floors.',
+  'e) Jurisdiction: Courts of Bengaluru.',
+  'f) Order Placement: The order is to be placed in favor of:',
+  'Tasktel Technologees Pvt. Ltd.',
+  '\'Tasktel House\', 169, 9th Cross, 5th Main, Indiranagar 1st Stage, Bengaluru – 560 038, Karnataka, India',
+  'Tel: 41126243 / 41267725 | www.taskteltechnologees.com',
+  'GST: 29AACCT8707G1Z3 | CIN: U72200KA2008PTC045083',
+  'g) Validity: Our offered price is valid for 15 days from the offer date. After the validity period is over, we reserve the right to revalidate and revise part or all of our offer.',
+  'II. General Terms & Conditions',
+  'a) Warranty: All AV Electronics Equipment shall be warranted against defective design, material and our workmanship for 12 months from the date of Installation or 13 months from the date of delivery whichever is earlier as per OEM Standard Policy and all Pro / Commercial Display gets 3 Years Warranty from OEM. Please note, Consumables items like Projector Lamps, Batteries, Display Panels are not covered under warranty.',
+  'b) Force Majeure: Tasktel shall be under no liability for failure to deliver goods within the time specified, if such failure is due to Act of God, war, fire, earthquakes, floods, strikes, lockout, transportation and other causes which are beyond control.',
+  'c) Part Order: The prices are valid subject to placing order for all the equipment and services offered herewith. If part order is placed, the same shall be subject to specific confirmation.',
+  'd) Alterations / Amendments: All items quoted are non-cancellable and non-returnable (NCNR). Any addition/deletion in scope of supply and consequent price variations in value shall be settled by mutual consent and necessary order amendment should be released subsequently. Such amendments would result changes in delivery schedule as well as prices. Goods once delivered will not be allowed to Return/Reverse as these goods are procured on your project specific. Customer has to accept and bear the cost for such materials.',
+  'e) Packing: As per supplier\'s standard packing only.',
+  'f) Storage Space: Client to provide storage space at the project site with Safety Lock and under the security surveillance to store and safe keeping of all the Equipment and tools.',
+  'III. Containments for AV Spaces',
+  'The following facilities and services are not under our scope and are to be provided by the client:',
+  '• Site preparation including carpentry, civil masonry work, provision for stable UPS Power supply 230V AC with suitable socket etc.',
+  '• Ply Back Support re-inforcement in the partition wall to mount Display/Camera & Necessary Electrical Power Points, Network Ports to be provided by client as per our Shop Drawings.',
+  '• All necessary Conduiting / Raceway / Cable Tray for laying Professional AV Cables has to be provided by client before commencement of building the AV Infrastructure work.',
+  '• AV Racks needs good Air Ventilation / proper cooling. Client to provide all necessary Air Vents / Louvers to maintain the Room Temperature.',
+  '• If the AV Rack is placed in open space, then client to provide AC Vent to cool the AV Electronics inside the AV Rack at Room Temperature which is must for safety and proper operating condition of any Electronic Devices.',
+  '• Scaffolding or Man Lift, if required at the site will be under Client\'s Scope.',
+  '• All required PC / Server Hardware / Software to be provided by client as per our technical notes / datasheet.',
+  '• Client to provide dedicated IP Backbone / Switched Ethernet Port and Copper cable infrastructure to all the user points captured as per our AV Shop Drawings.'
+].join('\n');
+
+export const DEFAULT_DELIVERY = '4 – 6 weeks from the date of receipt of technically and commercially clear order along with the advance.';
 
 // ---- field parsing ----
 
@@ -64,6 +100,20 @@ function number(value, label, { min = 0, max = Infinity, required = false, fallb
 function uuid(value, label) {
   if (!UUID.test(String(value || ''))) throw fail(400, `${label} is invalid`);
   return value;
+}
+
+// Product links print as clickable links, so only http(s). A bare
+// "www.lg.com" gets https:// rather than being refused mid-typing.
+function link(value, label) {
+  const s = text(value, label, 1000);
+  if (!s) return null;
+  const href = /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`;
+  let url;
+  try { url = new URL(href); } catch { url = null; }
+  if (!url || !['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.')) {
+    throw fail(400, `${label} must be a web address (https://…)`);
+  }
+  return href;
 }
 
 function date(value, label) {
@@ -136,7 +186,7 @@ export async function deleteCategory(id) {
 
 const ITEM_SELECT = `
   SELECT i.id, i.category_id, c.name AS category_name, i.series, i.model_name, i.hsn_code,
-         i.price, i.gst_rate, i.remark, i.created_at, i.updated_at
+         i.price, i.gst_rate, i.remark, i.product_link, i.created_at, i.updated_at
     FROM quote_items i
     JOIN quote_categories c ON c.id = i.category_id`;
 
@@ -146,16 +196,17 @@ export function parseItem(body) {
   return {
     category_id: uuid(body.category_id, 'Category'),
     series: text(body.series, 'Series', 200),
-    model_name: text(body.model_name, 'Model name', 200, { required: true }),
+    model_name: text(body.model_name, 'Description', 200, { required: true }),
     hsn_code: text(body.hsn_code, 'HSN code', 20),
     price: number(body.price, 'Price', { required: true, max: 1e11 }),
     gst_rate: number(body.gst_rate, 'GST %', { max: 100, fallback: 18 }),
-    remark: text(body.remark, 'Remark', 1000)
+    remark: text(body.remark, 'Model name / make', 1000),
+    product_link: link(body.product_link, 'Product link')
   };
 }
 
 const modelTaken = (error) => {
-  if (error.code === '23505') throw fail(400, 'An item with this model name already exists');
+  if (error.code === '23505') throw fail(400, 'An item with this description already exists');
   if (error.code === '23503') throw fail(400, 'Category not found');
   throw error;
 };
@@ -188,9 +239,9 @@ export async function listItems({ search, category_id, page = 1, limit = 50 } = 
 export async function createItem(body, userId) {
   const item = parseItem(body);
   const { rows } = await query(
-    `INSERT INTO quote_items (category_id, series, model_name, hsn_code, price, gst_rate, remark, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING id`,
-    [item.category_id, item.series, item.model_name, item.hsn_code, item.price, item.gst_rate, item.remark, userId]
+    `INSERT INTO quote_items (category_id, series, model_name, hsn_code, price, gst_rate, remark, product_link, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING id`,
+    [item.category_id, item.series, item.model_name, item.hsn_code, item.price, item.gst_rate, item.remark, item.product_link, userId]
   ).catch(modelTaken);
   return getItem(rows[0].id);
 }
@@ -205,9 +256,10 @@ export async function updateItem(id, body, userId) {
   const item = parseItem(body);
   const { rowCount } = await query(
     `UPDATE quote_items SET category_id = $2, series = $3, model_name = $4, hsn_code = $5, price = $6,
-            gst_rate = $7, remark = $8, updated_by = $9
+            gst_rate = $7, remark = $8, product_link = $9, updated_by = $10
       WHERE id = $1`,
-    [uuid(id, 'Item'), item.category_id, item.series, item.model_name, item.hsn_code, item.price, item.gst_rate, item.remark, userId]
+    [uuid(id, 'Item'), item.category_id, item.series, item.model_name, item.hsn_code, item.price, item.gst_rate, item.remark,
+      item.product_link, userId]
   ).catch(modelTaken);
   if (!rowCount) throw fail(404, 'Item not found');
   return getItem(id);
@@ -223,7 +275,7 @@ export async function deleteItems(ids) {
 }
 
 // Excel import: rows are { category, series, model_name, hsn_code, price,
-// gst_rate, remark }. Missing categories are created; an existing model
+// gst_rate, remark, product_link }. Missing categories are created; an existing model
 // name is updated in place. All-or-nothing: any invalid row rejects the
 // whole file with every row's error listed.
 export function parseImportRows(rows) {
@@ -242,7 +294,8 @@ export function parseImportRows(rows) {
         hsn_code: text(row.hsn_code, 'HSN code', 20),
         price: number(row.price, 'Price', { required: true, max: 1e11 }),
         gst_rate: number(row.gst_rate, 'GST %', { max: 100, fallback: 18 }),
-        remark: text(row.remark, 'Remark', 1000)
+        remark: text(row.remark, 'Remark', 1000),
+        product_link: link(row.product_link, 'Product link')
       });
     } catch (error) {
       errors.push({ row: rowNo, error: error.message });
@@ -276,14 +329,14 @@ export async function importItems(rows, userId) {
         if (cat[0].inserted) categoriesCreated += 1;
       }
       const { rows: result } = await client.query(
-        `INSERT INTO quote_items (category_id, series, model_name, hsn_code, price, gst_rate, remark, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+        `INSERT INTO quote_items (category_id, series, model_name, hsn_code, price, gst_rate, remark, product_link, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
          ON CONFLICT ((lower(btrim(model_name)))) DO UPDATE
             SET category_id = EXCLUDED.category_id, series = EXCLUDED.series, hsn_code = EXCLUDED.hsn_code,
                 price = EXCLUDED.price, gst_rate = EXCLUDED.gst_rate, remark = EXCLUDED.remark,
-                updated_by = EXCLUDED.updated_by
+                product_link = EXCLUDED.product_link, updated_by = EXCLUDED.updated_by
          RETURNING (xmax = 0) AS inserted`,
-        [categoryIds.get(key), row.series, row.model_name, row.hsn_code, row.price, row.gst_rate, row.remark, userId]
+        [categoryIds.get(key), row.series, row.model_name, row.hsn_code, row.price, row.gst_rate, row.remark, row.product_link, userId]
       );
       if (result[0].inserted) created += 1;
       else updated += 1;
@@ -508,9 +561,9 @@ export async function createQuote(body, userId) {
     );
     const quoteId = rows[0].id;
     const version = await client.query(
-      `INSERT INTO quote_versions (quote_id, version_no, notes, terms, created_by, updated_by)
-       VALUES ($1, 1, $2, $3, $4, $4) RETURNING id`,
-      [quoteId, DEFAULT_NOTES, DEFAULT_TERMS, userId]
+      `INSERT INTO quote_versions (quote_id, version_no, notes, terms, delivery_timeline, created_by, updated_by)
+       VALUES ($1, 1, $2, $3, $4, $5, $5) RETURNING id`,
+      [quoteId, DEFAULT_NOTES, DEFAULT_TERMS, DEFAULT_DELIVERY, userId]
     );
     await client.query(
       `INSERT INTO quote_sections (version_id, kind, name, sort_order) VALUES ($1, 'solution', '', 0)`,
@@ -568,7 +621,7 @@ async function loadVersionContent(versionId, db = { query }) {
   const { rows: lines } = await db.query(`
     SELECT ln.id, ln.section_id, ln.line_type, ln.item_id, ln.category_name, ln.series, ln.model_name,
            ln.description, ln.hsn_code, ln.uom, ln.qty, ln.osp_unit, ln.sm_override, ln.price_override,
-           ln.gst_rate, ln.sort_order
+           ln.gst_rate, ln.comment, ln.product_link, ln.sort_order
       FROM quote_lines ln
       JOIN quote_sections s ON s.id = ln.section_id
      WHERE s.version_id = $1
@@ -638,7 +691,9 @@ export function parseVersionPayload(body) {
             osp_unit: number(line.osp_unit, `${where}: OSP`, { max: 1e11, fallback: 0 }),
             sm_override: smOverride,
             price_override: number(line.price_override, `${where}: price`, { max: 1e11 }),
-            gst_rate: number(line.gst_rate, `${where}: GST %`, { max: 100, fallback: 18 })
+            gst_rate: number(line.gst_rate, `${where}: GST %`, { max: 100, fallback: 18 }),
+            comment: text(line.comment, `${where}: comment`, 500),
+            product_link: link(line.product_link, `${where}: product link`)
           };
           if (!parsed.model_name && !parsed.description) throw fail(400, `${where}: pick an item or type a description`);
           return parsed;
@@ -714,20 +769,17 @@ async function lockedCheck(client, quoteId, versionId, baseUpdatedAt, userId) {
   return { quote, versionNo: rows[0].version_no };
 }
 
-// Freezes the latest version as sent to the client, snapshotting the lead.
-// No-op when it is already issued.
-async function issueLatest(client, quote, userId, detail) {
-  const latest = await latestVersion(client, quote.id);
-  if (latest.issued_at) return latest;
+// A version that is being superseded keeps the customer / project / contact
+// it was made for, so a later lead edit doesn't change how it prints.
+// Versions issued before manual versioning already carry this snapshot.
+async function snapshotLead(client, quote, versionId) {
   await client.query(
-    `UPDATE quote_versions SET issued_at = now(), issued_by = $2, issued_customer = $3, issued_project = $4,
-            issued_site_location = $5, issued_contact_person = $6, issued_account_manager = $7,
-            issued_account_manager_phone = $8 WHERE id = $1`,
-    [latest.id, userId, quote.customer, quote.project, quote.site_location, quote.contact_person,
+    `UPDATE quote_versions SET issued_customer = $2, issued_project = $3, issued_site_location = $4,
+            issued_contact_person = $5, issued_account_manager = $6, issued_account_manager_phone = $7
+      WHERE id = $1 AND issued_customer IS NULL`,
+    [versionId, quote.customer, quote.project, quote.site_location, quote.contact_person,
       quote.account_manager_name, quote.account_manager_phone]
   );
-  await logEvent(client, quote.id, 'issued', { by: userId, versionNo: latest.version_no, detail });
-  return latest;
 }
 
 async function insertContent(client, versionId, sections) {
@@ -744,12 +796,12 @@ async function insertContent(client, versionId, sections) {
     );
     if (!section.lines.length) continue;
     const cols = ['section_id', 'line_type', 'item_id', 'category_name', 'series', 'model_name', 'description',
-      'hsn_code', 'uom', 'qty', 'osp_unit', 'sm_override', 'price_override', 'gst_rate', 'sort_order'];
+      'hsn_code', 'uom', 'qty', 'osp_unit', 'sm_override', 'price_override', 'gst_rate', 'comment', 'product_link', 'sort_order'];
     const values = [];
     const tuples = section.lines.map((line, li) => {
       const row = [rows[0].id, line.line_type, live.has(line.item_id) ? line.item_id : null, line.category_name, line.series, line.model_name,
         line.description, line.hsn_code, line.uom, line.qty, line.osp_unit, line.sm_override, line.price_override,
-        line.gst_rate, li];
+        line.gst_rate, line.comment ?? null, line.product_link ?? null, li];
       const start = values.length;
       values.push(...row);
       return `(${row.map((_, k) => `$${start + k + 1}`).join(', ')})`;
@@ -790,13 +842,15 @@ export async function saveVersion(quoteId, versionId, body, userId) {
 }
 
 // Clones the latest version into V(n+1); the previous one becomes read-only.
-// The quote keeps its status — a revision of a quote with the client is
-// still Under Process.
+// This is the only thing that locks a version (besides Won / Lost on the
+// whole quote). The quote keeps its status — a revision of a quote with the
+// client is still Under Process.
 export async function createNextVersion(quoteId, userId) {
   const newId = await withTransaction(async (client) => {
     const quote = await writeGuard(client, quoteId, userId);
     assertOpen(quote, 'make a new version');
     const latest = await latestVersion(client, quoteId);
+    await snapshotLead(client, quote, latest.id);
     const sections = await loadVersionContent(latest.id, client);
     const inserted = await client.query(
       `INSERT INTO quote_versions (quote_id, version_no, sm, rounding_step, notes, supply_osp, supply_price,
@@ -819,19 +873,6 @@ export async function createNextVersion(quoteId, userId) {
 
 const EXPORT_LABELS = { pdf: 'PDF', xlsx: 'Excel' };
 
-// Client export of the latest draft: freezes it as sent to the client.
-export async function issueVersion(quoteId, versionId, body, userId) {
-  const label = EXPORT_LABELS[body.format] ? `Client ${EXPORT_LABELS[body.format]}` : 'Issued to client';
-  await withTransaction(async (client) => {
-    const quote = await writeGuard(client, quoteId, userId);
-    assertOpen(quote, 'issue it');
-    const latest = await latestVersion(client, quoteId);
-    if (latest.id !== uuid(versionId, 'Version')) throw fail(409, 'Only the latest version can be issued.');
-    await issueLatest(client, quote, userId, label);
-  });
-  return getVersion(quoteId, versionId);
-}
-
 // Logged for the history; exporting never changes the quotation.
 export async function recordExport(quoteId, versionId, body, { by, admin }) {
   const format = EXPORT_LABELS[body.format];
@@ -840,7 +881,7 @@ export async function recordExport(quoteId, versionId, body, { by, admin }) {
     [uuid(versionId, 'Version'), uuid(quoteId, 'Quote')]);
   if (!rows[0]) throw fail(404, 'Version not found');
   await logEvent({ query }, quoteId, 'exported', {
-    by, admin, versionNo: rows[0].version_no, detail: `${body.internal ? 'Internal' : 'Client'} ${format}`
+    by, admin, versionNo: rows[0].version_no, detail: `${body.accounting ? 'Accounting' : body.internal ? 'Internal' : 'Client'} ${format}`
   });
 }
 
@@ -861,24 +902,17 @@ export function parseStatus(body) {
   return { status, po_number: null, po_date: null, lost_reason: null };
 }
 
-const STATUS_LABELS = { draft: 'Draft', sent: 'Under Process', won: 'Won', lost: 'Lost' };
-
-// Under Process and Won mean the client has the latest version, so it is
-// issued (frozen) on the way; Won also records which version won.
+// Won / Lost lock the whole quotation (assertOpen) until it is reopened;
+// Won also records which version won. Status never freezes a version.
 export async function setQuoteStatus(id, body, userId) {
   const next = parseStatus(body);
   await withTransaction(async (client) => {
-    const quote = await writeGuard(client, id, userId);
-    let wonVersionId = null;
-    if (next.status === 'sent' || next.status === 'won') {
-      const issued = await issueLatest(client, quote, userId, `Marked ${STATUS_LABELS[next.status]}`);
-      if (next.status === 'won') wonVersionId = issued.id;
-    }
+    await writeGuard(client, id, userId);
+    const latest = await latestVersion(client, id);
     await client.query(
       'UPDATE quotes SET status = $2, po_number = $3, po_date = $4, lost_reason = $5, won_version_id = $6 WHERE id = $1',
-      [id, next.status, next.po_number, next.po_date, next.lost_reason, wonVersionId]
+      [id, next.status, next.po_number, next.po_date, next.lost_reason, next.status === 'won' ? latest.id : null]
     );
-    const latest = await latestVersion(client, id);
     const detail = next.status === 'won' ? `PO ${next.po_number} · ${next.po_date}`
       : next.status === 'lost' ? next.lost_reason : null;
     await logEvent(client, id, `status_${next.status}`, { by: userId, versionNo: latest.version_no, detail });

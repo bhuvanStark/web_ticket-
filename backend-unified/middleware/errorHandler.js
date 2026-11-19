@@ -2,6 +2,20 @@
 export const errorHandler = (err, req, res, next) => {
   console.error('Error:', err);
 
+  // Anything can be thrown (a string, a pg error without .message, …); never
+  // let the error handler itself crash on it.
+  if (!err || typeof err.message !== 'string') {
+    return res.status(500).json({ success: false, error: 'Server Error', message: 'Internal server error' });
+  }
+
+  // Oversized or malformed JSON bodies are the client's fault, not ours.
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, error: 'Payload Too Large', message: 'Request body is too large' });
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, error: 'Bad Request', message: 'Request body is not valid JSON' });
+  }
+
   if (err.message.includes('Invalid or expired token')) {
     return res.status(401).json({
       success: false,

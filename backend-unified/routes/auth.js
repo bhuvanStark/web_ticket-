@@ -1,5 +1,4 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
 import { supabase } from '../config/supabaseClient.js';
 import {
   generateToken,
@@ -11,16 +10,17 @@ import {
   requireAuth,
   checkStaffSession
 } from '../middleware/auth.js';
-import {
-  validateAdminLogin,
-  validateTechnicianLogin,
-  validateAdminRegistration,
-  validateTechnicianRegistration,
-  validateLogin,
-  validateServiceRequest
-} from '../middleware/validation.js';
+import { validateLogin } from '../middleware/validation.js';
 
 const router = express.Router();
+
+// Staff portals (admin, technician, sales, back-office) sign in by emailed
+// one-time code only — see routes/passwordReset.js. The password-based
+// /admin/login, /technician/login and the unauthenticated /admin/register and
+// /technician/register routes were removed: nothing called them, and the
+// register routes let anyone create staff accounts. Admins are created by a
+// Super Admin (POST /api/admin/admins), technicians by an admin
+// (POST /api/technicians).
 
 // ============================================
 // CUSTOMER AUTHENTICATION
@@ -228,9 +228,33 @@ router.post('/login', validateLogin, async (req, res) => {
   }
 });
 
-// GET /api/auth/me - Get current user info
+// Staff profile columns for /me, by JWT role. Customers are handled below.
+const STAFF_ME_SELECT = {
+  admin: ['admins', 'id, email, full_name, department, is_super_admin, created_at'],
+  technician: ['technicians', 'id, email, full_name, phone, specialization, status, rating, created_at'],
+  sales: ['sales', 'id, email, full_name, phone, location, created_at'],
+  back_office: ['back_office', 'id, email, full_name, phone, location, created_at']
+};
+
+// GET /api/auth/me - Get current user info for any portal. (There used to be
+// a second, staff-only /me further down this file that Express never
+// reached, so admin and technician tokens always got "Customer not found".)
 router.get('/me', verifyToken, async (req, res) => {
   try {
+    const staff = STAFF_ME_SELECT[req.user?.role];
+    if (staff) {
+      const [table, columns] = staff;
+      const { data: user } = await supabase
+        .from(table)
+        .select(columns)
+        .eq('id', req.userId)
+        .maybeSingle();
+      if (!user) {
+        return res.status(404).json({ success: false, error: 'Not Found', message: 'User not found' });
+      }
+      return res.json({ success: true, data: { ...user, role: req.user.role } });
+    }
+
     const { data: customer, error } = await supabase
       .from('customers')
       .select('id, email, name, company_name, phone, address, city, created_at')
@@ -420,388 +444,6 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
-// ============================================
-// ADMIN AUTHENTICATION
-// ============================================
-
-// Admin Register
-router.post('/admin/register', validateAdminRegistration, async (req, res) => {
-  try {
-    const { email, password, full_name, department } = req.body;
-
-    // Check if admin already exists
-    const { data: existing } = await supabase
-      .from('admins')
-      .select('id')
-      .eq('email', email)
-      .single();
-
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        error: 'Conflict',
-        message: 'Admin with this email already exists'
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await hashPassword(password);
-
-    // Create admin
-    const { data: admin, error } = await supabase
-      .from('admins')
-      .insert([
-        {
-          email,
-          password_hash: hashedPassword,
-          full_name,
-          department,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
-      ])
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // Generate tokens. Audit fix P0-1 — token_version defaults to 0 for a
-    // brand-new row (migration 029), so the claim here must match that
-    // default or this token would be immediately rejected as "revoked" the
-    // first time it's used.
-    const accessToken = generateToken(admin.id, 'admin', { isSuperAdmin: false, tokenVersion: 0 });
-    const refreshToken = generateRefreshToken(admin.id, 'admin', { isSuperAdmin: false, tokenVersion: 0 });
-
-    res.status(201).json({
-      success: true,
-      message: 'Admin registered successfully',
-      data: {
-        admin: {
-          id: admin.id,
-          email: admin.email,
-          full_name: admin.full_name,
-          department: admin.department
-        },
-        accessToken,
-        refreshToken
-      }
-    });
-  } catch (error) {
-    console.error('Admin registration error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Registration failed',
-      message: error.message
-    });
-  }
-});
-
-// Admin Login
-router.post('/admin/login', validateAdminLogin, async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // Find admin
-    const { data: admin, error } = await supabase
-      .from('admins')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (error || !admin) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid email or password'
-      });
-    }
-
-    // Audit fix P0-1 — admin login never checked is_active at all, so a
-    // deactivated admin could simply log in again fresh regardless of
-    // anything a Super Admin did. Same anti-enumeration shape as the rest
-    // of this file: a deactivated account fails exactly like a wrong
-    // password, not with a distinct "this account is deactivated" message.
-    if (admin.is_active === false) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid email or password'
-      });
-    }
-
-    // Compare password
-    const passwordMatch = await comparePassword(password, admin.password_hash);
-
-    if (!passwordMatch) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid email or password'
-      });
-    }
-
-    // Admin RBAC V1 — carry the real is_super_admin value onto the JWT (as
-    // isSuperAdmin) and into the response, the same extraClaims mechanism
-    // already used for teamMemberId. requireSuperAdmin/requirePermission
-    // read this claim; nothing else about admin login changes.
-    // Audit fix P0-1 — tokenVersion is the "security stamp" requireAdmin/
-    // requireSuperAdmin/requirePermission check on every request; embedding
-    // the current value here is what lets a later deactivate/demote reject
-    // this exact token immediately instead of waiting for it to expire.
-    const isSuperAdmin = admin.is_super_admin === true;
-    const tokenVersion = admin.token_version;
-    const accessToken = generateToken(admin.id, 'admin', { isSuperAdmin, tokenVersion });
-    const refreshToken = generateRefreshToken(admin.id, 'admin', { isSuperAdmin, tokenVersion });
-
-    res.json({
-      success: true,
-      message: 'Admin login successful',
-      data: {
-        admin: {
-          id: admin.id,
-          email: admin.email,
-          full_name: admin.full_name,
-          department: admin.department,
-          is_super_admin: isSuperAdmin
-        },
-        accessToken,
-        refreshToken
-      }
-    });
-  } catch (error) {
-    console.error('Admin login error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Login failed',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// TECHNICIAN AUTHENTICATION
-// ============================================
-
-// Technician Register
-router.post('/technician/register', validateTechnicianRegistration, async (req, res) => {
-  try {
-    const { email, password, full_name, phone, specialization } = req.body;
-
-    // Check if technician already exists
-    const { data: existing } = await supabase
-      .from('technicians')
-      .select('id')
-      .eq('email', email)
-      .single();
-
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        error: 'Conflict',
-        message: 'Technician with this email already exists'
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await hashPassword(password);
-
-    // Create technician
-    const { data: technician, error } = await supabase
-      .from('technicians')
-      .insert([
-        {
-          email,
-          password_hash: hashedPassword,
-          full_name,
-          phone,
-          specialization,
-          is_active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
-      ])
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // Generate tokens
-    const accessToken = generateToken(technician.id, 'technician');
-    const refreshToken = generateRefreshToken(technician.id, 'technician');
-
-    res.status(201).json({
-      success: true,
-      message: 'Technician registered successfully',
-      data: {
-        technician: {
-          id: technician.id,
-          email: technician.email,
-          full_name: technician.full_name,
-          phone: technician.phone,
-          specialization: technician.specialization
-        },
-        accessToken,
-        refreshToken
-      }
-    });
-  } catch (error) {
-    console.error('Technician registration error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Registration failed',
-      message: error.message
-    });
-  }
-});
-
-// Technician Login
-router.post('/technician/login', validateTechnicianLogin, async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // Find technician
-    const { data: technician, error } = await supabase
-      .from('technicians')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (error || !technician) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid email or password'
-      });
-    }
-
-    // Compare password
-    const passwordMatch = await comparePassword(password, technician.password_hash);
-
-    if (!passwordMatch) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'Invalid email or password'
-      });
-    }
-
-    // Staff removal (migration 040) — a removed technician can never sign in.
-    if (technician.is_active === false) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized',
-        message: 'This account is inactive.'
-      });
-    }
-
-    // Generate tokens
-    const tokenClaims = { tokenVersion: technician.token_version ?? 0 };
-    const accessToken = generateToken(technician.id, 'technician', tokenClaims);
-    const refreshToken = generateRefreshToken(technician.id, 'technician', tokenClaims);
-
-    res.json({
-      success: true,
-      message: 'Technician login successful',
-      data: {
-        technician: {
-          id: technician.id,
-          email: technician.email,
-          full_name: technician.full_name,
-          phone: technician.phone,
-          specialization: technician.specialization
-        },
-        accessToken,
-        refreshToken
-      }
-    });
-  } catch (error) {
-    console.error('Technician login error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Login failed',
-      message: error.message
-    });
-  }
-});
-
-// ============================================
-// SHARED ENDPOINTS
-// ============================================
-
-// Refresh Token (both admin and technician)
-router.post('/refresh', async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Bad Request',
-        message: 'Refresh token is required'
-      });
-    }
-
-    const decoded = verifyRefreshToken(refreshToken);
-    const newAccessToken = generateToken(decoded.userId, decoded.role);
-
-    res.json({
-      success: true,
-      data: { accessToken: newAccessToken }
-    });
-  } catch (error) {
-    res.status(401).json({
-      success: false,
-      error: 'Unauthorized',
-      message: 'Invalid or expired refresh token'
-    });
-  }
-});
-
-// Get Current User (admin or technician)
-router.get('/me', requireAuth, async (req, res) => {
-  try {
-    const { userId, role } = req.user;
-
-    let user;
-    if (role === 'admin') {
-      const { data } = await supabase
-        .from('admins')
-        .select('id, email, full_name, department, is_super_admin, created_at')
-        .eq('id', userId)
-        .single();
-      user = data;
-    } else if (role === 'technician') {
-      const { data } = await supabase
-        .from('technicians')
-        .select('id, email, full_name, phone, specialization, status, rating, created_at')
-        .eq('id', userId)
-        .single();
-      user = data;
-    }
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'Not Found',
-        message: 'User not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        ...user,
-        role
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Error',
-      message: error.message
-    });
-  }
-});
 
 // Logout
 router.post('/logout', requireAuth, (req, res) => {
@@ -825,8 +467,23 @@ router.post('/change-password', requireAuth, async (req, res) => {
       });
     }
 
-    // Get user
-    const table = role === 'admin' ? 'admins' : 'technicians';
+    // Only admins and technicians have a password column at all. A customer
+    // token used to fall through to the technicians table here.
+    const table = role === 'admin' ? 'admins' : role === 'technician' ? 'technicians' : null;
+    if (!table) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'This account signs in with an emailed code and has no password to change'
+      });
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'newPassword must be at least 8 characters'
+      });
+    }
     const { data: user } = await supabase
       .from(table)
       .select('password_hash')

@@ -41,10 +41,10 @@ const Modal = ({ title, icon: Icon, onClose, children, wide, busy }) => (
 // ---- Add / edit item ----
 const ItemFormModal = ({ item, categories, defaultCategoryId, onClose, onSaved, onCategoryCreated, showToast }) => {
   const isEdit = Boolean(item?.id);
-  const blank = { category_id: defaultCategoryId || '', series: '', model_name: '', hsn_code: '', price: '', gst_rate: '18', remark: '' };
+  const blank = { category_id: defaultCategoryId || '', series: '', model_name: '', hsn_code: '', price: '', gst_rate: '18', remark: '', product_link: '' };
   const [form, setForm] = useState(() => (isEdit ? {
     category_id: item.category_id, series: item.series || '', model_name: item.model_name, hsn_code: item.hsn_code || '',
-    price: String(item.price), gst_rate: String(item.gst_rate), remark: item.remark || ''
+    price: String(item.price), gst_rate: String(item.gst_rate), remark: item.remark || '', product_link: item.product_link || ''
   } : blank));
   const [newCategory, setNewCategory] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -67,7 +67,7 @@ const ItemFormModal = ({ item, categories, defaultCategoryId, onClose, onSaved, 
 
   const save = async (andNew) => {
     if (!form.category_id) return setError('Choose a category first');
-    if (!form.model_name.trim()) return setError('Model name is required');
+    if (!form.model_name.trim()) return setError('Description is required');
     if (form.price === '' || !(Number(form.price) >= 0)) return setError('Enter a valid price');
     setBusy(true);
     try {
@@ -114,8 +114,8 @@ const ItemFormModal = ({ item, categories, defaultCategoryId, onClose, onSaved, 
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="form-label">Model Name *</label>
-            <input ref={modelRef} value={form.model_name} onChange={set('model_name')} placeholder="e.g. 55UL5Q" className={`${input} font-bold`} autoFocus={Boolean(form.category_id) && !isEdit} />
+            <label className="form-label">Description *</label>
+            <input ref={modelRef} value={form.model_name} onChange={set('model_name')} placeholder="e.g. 55-inch 4K UHD Commercial Display" className={`${input} font-bold`} autoFocus={Boolean(form.category_id) && !isEdit} />
           </div>
           <div>
             <label className="form-label">Series</label>
@@ -140,8 +140,12 @@ const ItemFormModal = ({ item, categories, defaultCategoryId, onClose, onSaved, 
           </div>
         </div>
         <div>
-          <label className="form-label">Remark</label>
-          <textarea value={form.remark} onChange={set('remark')} rows={2} placeholder="Specs, warranty, notes…" className={`${input} resize-none`} />
+          <label className="form-label">Model Name / Make</label>
+          <textarea value={form.remark} onChange={set('remark')} rows={2} placeholder="e.g. LG 55UL5Q" className={`${input} resize-none`} />
+        </div>
+        <div>
+          <label className="form-label">Product Link</label>
+          <input inputMode="url" value={form.product_link} onChange={set('product_link')} placeholder="https://… (optional — clickable in the quotation)" className={input} />
         </div>
         {error && <p className="text-xs font-semibold text-[#DC2626] flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />{error}</p>}
         <div className="pt-3 border-t border-[#E4E7EC] flex items-center justify-end gap-3">
@@ -545,12 +549,12 @@ export const QuoteItemsPage = ({ readOnly }) => {
               <thead className="bg-[#F8FAFC] text-[#667085] uppercase font-bold text-[10px] tracking-wider border-b border-[#E4E7EC]">
                 <tr>
                   {!readOnly && <th className="pl-4 py-3 w-8"><input type="checkbox" checked={allOnPage} onChange={toggleAll} className="accent-[#004898]" /></th>}
-                  <th className="px-4 py-3">Model / Series</th>
+                  <th className="px-4 py-3">Description / Series</th>
                   {!activeCat && <th className="px-4 py-3">Category</th>}
                   <th className="px-4 py-3">HSN</th>
                   <th className="px-4 py-3 text-right">Price (OSP)</th>
                   <th className="px-4 py-3 text-right">GST</th>
-                  <th className="px-4 py-3">Remark</th>
+                  <th className="px-4 py-3">Model Name / Make</th>
                   {!readOnly && <th className="px-4 py-3 text-right w-20" />}
                 </tr>
               </thead>

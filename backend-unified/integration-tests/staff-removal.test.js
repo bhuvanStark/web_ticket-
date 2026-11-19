@@ -201,7 +201,8 @@ test('a removed technician is locked out everywhere', async () => {
   assert.equal((await call('POST', '/auth/refresh', null, { refreshToken: tokens.techRefresh })).status, 401);
 
   const email = (await one('SELECT email FROM technicians WHERE id = $1', [ids.tech])).email;
-  assert.equal((await call('POST', '/auth/technician/login', null, { email, password: TECH_PASSWORD })).status, 401);
+  // Password login no longer exists (OTP only); the route itself is gone.
+  assert.equal((await call('POST', '/auth/technician/login', null, { email, password: TECH_PASSWORD })).status, 404);
   assert.equal((await call('POST', '/password-reset/technician/request-otp', null, { email })).status, 404);
   assert.equal((await call('POST', '/password-reset/technician/verify-otp', null, { email, otp: '1234' })).status, 400);
 

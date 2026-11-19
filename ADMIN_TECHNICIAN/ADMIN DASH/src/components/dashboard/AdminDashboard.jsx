@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Ticket,
@@ -7,13 +7,17 @@ import {
   CheckCircle2,
   ArrowRight,
   UserCheck,
-  Calendar,
   ChevronRight,
   Plus,
-  Pencil
+  Pencil,
+  Monitor
 } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from '../common/Badge';
 import { ServiceTypeToggle } from '../common/ServiceTypeToggle';
+import { OpsWallboard } from './OpsWallboard';
+
+// Time-of-day greeting; the name is the signed-in admin's.
+const greetingFor = (hour) => (hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening');
 
 export const AdminDashboard = () => {
   const {
@@ -25,10 +29,25 @@ export const AdminDashboard = () => {
     setEditingTicket,
     setActivePage,
     setPendingHistoryDate,
-    globalSearchQuery
+    globalSearchQuery,
+    currentUser
   } = useApp();
 
   const [serviceTypeFilter, setServiceTypeFilter] = useState('ALL');
+
+  // Ops Pulse wallboard: the "Wallboard" button, or W while nothing is
+  // focused for typing. Lives only on this page, so leaving it closes it.
+  const [isWallboardOpen, setIsWallboardOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable;
+      if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'w' || e.key === 'W')) setIsWallboardOpen(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const closeWallboard = useCallback(() => setIsWallboardOpen(false), []);
 
   const searchQuery = (globalSearchQuery || '').trim().toLowerCase();
 
@@ -93,19 +112,33 @@ export const AdminDashboard = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-extrabold text-[#172033] tracking-tight">Good Morning, Admin</h2>
+          <h2 className="text-2xl font-extrabold text-[#172033] tracking-tight">
+            {greetingFor(new Date().getHours())}{currentUser?.name ? `, ${currentUser.name.split(' ')[0]}` : ''}
+          </h2>
           <p className="text-xs md:text-sm text-[#667085] mt-0.5">
             Here's what's happening with your service operations today.
           </p>
         </div>
-        <button
-          onClick={() => setIsCreateTicketOpen(true)}
-          className="inline-flex items-center gap-2 bg-[#004898] hover:bg-[#003673] text-white font-bold text-xs px-4 py-2.5 rounded-lg transition-all shadow-xs cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create Service Request</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsWallboardOpen(true)}
+            title="Full-screen live view for an office display (W)"
+            className="inline-flex items-center gap-2 bg-white hover:bg-[#F8FAFC] text-[#344054] border border-[#D0D5DD] font-bold text-xs px-4 py-2.5 rounded-lg transition-all shadow-xs cursor-pointer"
+          >
+            <Monitor className="w-4 h-4" />
+            <span>Wallboard</span>
+          </button>
+          <button
+            onClick={() => setIsCreateTicketOpen(true)}
+            className="inline-flex items-center gap-2 bg-[#004898] hover:bg-[#003673] text-white font-bold text-xs px-4 py-2.5 rounded-lg transition-all shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Service Request</span>
+          </button>
+        </div>
       </div>
+
+      {isWallboardOpen && <OpsWallboard onClose={closeWallboard} />}
 
       {/* KPI Cards (4 metrics as specified) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

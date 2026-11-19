@@ -86,6 +86,17 @@ const TOGGLEABLE_MODULES = ['approvals', 'requests', 'projects', 'customers', 'r
 // pick up other users' changes.
 const POLL_INTERVAL_MS = 30000;
 
+// localStorage JSON that may be missing or corrupted: never let it throw.
+const readStoredJson = (key) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    localStorage.removeItem(key);
+    return null;
+  }
+};
+
 // Reuse the same context object across Vite hot updates. Without this, a provider
 // refresh can briefly leave already-mounted consumers attached to the old context.
 const AppContext = globalThis.__TASKTEL_APP_CONTEXT__ || createContext(null);
@@ -177,8 +188,10 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('admin_user');
-    if (saved) return JSON.parse(saved);
+    // A corrupted value here used to throw inside the state initializer and
+    // blank the whole app; fall back to the placeholder instead.
+    const saved = readStoredJson('admin_user');
+    if (saved && typeof saved === 'object') return saved;
 
     // Neutral placeholder — kept non-null because several components read
     // currentUser.* directly, but carries no fabricated name, email or photo.
@@ -325,40 +338,15 @@ export const AppProvider = ({ children }) => {
   });
 
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  // Cosmetic moments: "Signal restored" after a completed service report
+  // (components/common/SignalRestored.jsx) and "Lights out" after check-out
+  // (components/common/LightsOut.jsx). Both hold only data from this
+  // session's own view and clear themselves.
+  const [celebration, setCelebration] = useState(null);
+  const [lightsOut, setLightsOut] = useState(null);
   const [simulatedLoading, setSimulatedLoading] = useState(false);
   const [simulatedError, setSimulatedError] = useState(false);
   const [toast, setToast] = useState(null);
-
-  // Handle URL Query Params for Direct Technician Links (e.g. ?role=tech&techId=TECH-101)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roleParam = params.get('role');
-    const techIdParam = params.get('techId') || params.get('tech');
-
-    if (roleParam === 'tech') {
-      setRole('tech');
-      setActivePage('my-jobs');
-
-      if (techIdParam) {
-        const foundTech = (technicians || []).find(t => t.id === techIdParam || t.name.toLowerCase().includes(techIdParam.toLowerCase()));
-        if (foundTech) {
-          setCurrentUser({
-            name: foundTech.name,
-            email: foundTech.email || `${foundTech.name.toLowerCase().replace(/\s+/g, '.')}@tasktel-av.com`,
-            avatar: foundTech.avatar,
-            roleLabel: foundTech.role || 'Field Service Engineer'
-          });
-        }
-      } else {
-        setCurrentUser({
-          name: 'Ravi Kumar',
-          email: 'ravi.kumar@tasktel-av.com',
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          roleLabel: 'Senior AV Field Engineer'
-        });
-      }
-    }
-  }, [technicians]);
 
   // Load Data from Backend Database on Mount & Setup Realtime Sync
   useEffect(() => {
@@ -952,8 +940,8 @@ export const AppProvider = ({ children }) => {
         // with no targetUser). Restore the real admin snapshotted above rather
         // than inventing a placeholder identity that would lose a genuine
         // Super Admin's status.
-        const snapshot = localStorage.getItem('admin_identity_snapshot');
-        newUser = snapshot ? JSON.parse(snapshot) : {
+        const snapshot = readStoredJson('admin_identity_snapshot');
+        newUser = snapshot && typeof snapshot === 'object' ? snapshot : {
           name: 'Administrator',
           email: '',
           avatar: null,
@@ -975,48 +963,9 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  // Authenticates against the backend and stores the JWT the API client needs.
-  // Throws on failure so the login screen can show the real reason.
-  const handleLogin = async (userEmail, userPassword, roleType, targetUser = null) => {
-    if (roleType === 'tech') {
-      const response = await unifiedClient.technicianLogin(userEmail, userPassword);
-      const technician = response.data?.technician;
-      setBaseRole('tech');
-      localStorage.setItem('base_role', 'tech');
-      setIsLoggedIn(true);
-      localStorage.setItem('admin_auth', 'true');
-      loginAsTechnician({
-        ...(targetUser || {}),
-        id: technician?.id,
-        name: technician?.full_name,
-        email: technician?.email,
-        phone: technician?.phone
-      });
-      return response;
-    }
-
-    const response = await unifiedClient.adminLogin(userEmail, userPassword);
-    const admin = response.data?.admin;
-
-    setBaseRole('admin');
-    localStorage.setItem('base_role', 'admin');
-    setIsLoggedIn(true);
-    localStorage.setItem('admin_auth', 'true');
-    switchRole('admin', {
-      ...(targetUser || {}),
-      id: admin?.id,
-      name: admin?.full_name,
-      email: admin?.email,
-      department: admin?.department,
-      is_super_admin: admin?.is_super_admin
-    });
-
-    return response;
-  };
-
-  // Sign in with a verified email OTP (Forgot Password). role is
-  // 'admin' | 'tech' | 'sales' | 'back_office'. Mirrors handleLogin's
-  // context setup once the code checks out.
+  // Sign in with a verified email OTP. role is
+  // 'admin' | 'tech' | 'sales' | 'back_office'. This is the only sign-in
+  // path: the password-based login was removed along with its backend route.
   const handleOtpLogin = async (roleType, userEmail, otp) => {
     if (roleType === 'tech') {
       const response = await unifiedClient.verifyOtp('technician', userEmail, otp);
@@ -1356,6 +1305,11 @@ export const AppProvider = ({ children }) => {
         : `Service report for ${ticketId} submitted. Ticket completed.`,
       'success'
     );
+    // Completed only — a job left Pending has not restored anything yet.
+    // Roughly one in twenty-five gets the golden variant.
+    if (outcome === 'completed') {
+      setCelebration({ id: Date.now(), ticketId, golden: Math.random() < 0.04 });
+    }
     return true;
   };
 
@@ -1716,6 +1670,20 @@ export const AppProvider = ({ children }) => {
       const record = await checkOutInApi(myAttendanceToday.id);
       setMyAttendanceToday(record);
       showToast('Checked out.', 'success');
+      // Lights out: the employee's own day, from data already in this
+      // session. Jobs are counted only for a technician (their own tickets
+      // completed today); Sales/Back-Office just see their time on the clock.
+      const myId = (currentUser?.id || '').toLowerCase();
+      const today = new Date().toDateString();
+      const jobsCompleted = role === 'tech' && myId
+        ? (tickets || []).filter((t) =>
+            ['Completed', 'Resolved', 'Closed'].includes(t.status) &&
+            t.completedAt && new Date(t.completedAt).toDateString() === today &&
+            ((t.assignedToId || '').toLowerCase() === myId ||
+              (t.secondaryTechnicians || []).some((st) => (st.id || '').toLowerCase() === myId))
+          ).length
+        : null;
+      setLightsOut({ name: currentUser?.name || '', jobsCompleted, minutes: record?.duration_minutes ?? null });
       return true;
     } catch (err) {
       showToast(err.message || 'Check-out failed', 'error');
@@ -1810,7 +1778,6 @@ export const AppProvider = ({ children }) => {
         saveAppSettings,
         isLoggedIn,
         isRestoringSession,
-        handleLogin,
         handleOtpLogin,
         handleLogout,
         canAccessAdminPage,
@@ -1927,7 +1894,11 @@ export const AppProvider = ({ children }) => {
         simulatedError,
         setSimulatedError,
         toast,
-        showToast
+        showToast,
+        celebration,
+        setCelebration,
+        lightsOut,
+        setLightsOut
       }}
     >
       {children}

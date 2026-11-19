@@ -6,6 +6,7 @@ import path from 'node:path';
 import { checkDatabase, closeDatabase } from './config/database.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { rejectRoles } from './middleware/auth.js';
+import { authByIp } from './middleware/rateLimit.js';
 
 // Import all routes
 import authRoutes from './routes/auth.js';
@@ -46,6 +47,13 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Behind Railway's (or any) reverse proxy every request arrives from the
+// proxy's address; trusting the first X-Forwarded-For hop gives the rate
+// limiters and password_resets.requested_ip the real client address.
+// TRUST_PROXY overrides (e.g. "false" when exposed directly, "2" behind two).
+const trustProxy = process.env.TRUST_PROXY ?? (process.env.NODE_ENV === 'production' ? '1' : 'false');
+if (trustProxy !== 'false') app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
 
 // ============================================
 // MIDDLEWARE
@@ -107,7 +115,10 @@ app.get(['/health', '/health/ready'], async (req, res) => {
 // API ROUTES - AUTHENTICATION (All users)
 // ============================================
 
-app.use('/api/auth', authRoutes);
+// Both routers are reachable without a token, so they are the only place a
+// stranger can hammer the API: cap attempts per address (and, inside the
+// password-reset router, per email) before any handler runs.
+app.use('/api/auth', authByIp, authRoutes);
 app.use('/api/password-reset', passwordResetRouter);
 
 // ============================================

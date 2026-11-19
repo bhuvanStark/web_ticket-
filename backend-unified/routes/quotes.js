@@ -73,8 +73,6 @@ router.post('/:id/versions', write, handle((req) => quotes.createNextVersion(req
 router.get('/:id/versions/:versionId', handle((req) => quotes.getVersion(req.params.id, req.params.versionId)));
 router.put('/:id/versions/:versionId', write,
   handle((req) => quotes.saveVersion(req.params.id, req.params.versionId, req.body || {}, me(req))));
-router.post('/:id/versions/:versionId/issue', write,
-  handle((req) => quotes.issueVersion(req.params.id, req.params.versionId, req.body || {}, me(req))));
 // Export log only (the file is built in the browser); viewers export too.
 router.post('/:id/versions/:versionId/exported', handle((req) =>
   quotes.recordExport(req.params.id, req.params.versionId, req.body || {}, { by: me(req), admin: req.quoteMode === 'viewer' })));

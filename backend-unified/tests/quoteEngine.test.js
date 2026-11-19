@@ -82,8 +82,21 @@ test('import lists every bad row and defaults GST to 18', () => {
 
 test('item needs a category, a model name and a price', () => {
   status400(() => parseItem({ model_name: 'X', price: 1 }), /Category/);
-  status400(() => parseItem({ category_id: '00000000-0000-4000-8000-000000000000', price: 1 }), /Model/);
+  status400(() => parseItem({ category_id: '00000000-0000-4000-8000-000000000000', price: 1 }), /Description/);
   status400(() => parseItem({ category_id: '00000000-0000-4000-8000-000000000000', model_name: 'X' }), /Price/);
+});
+
+test('product links must be web addresses; a bare domain gets https://', () => {
+  const item = { category_id: '00000000-0000-4000-8000-000000000000', model_name: 'X', price: 1 };
+  assert.equal(parseItem(item).product_link, null);
+  assert.equal(parseItem({ ...item, product_link: ' www.lg.com/55UL5Q ' }).product_link, 'https://www.lg.com/55UL5Q');
+  assert.equal(parseItem({ ...item, product_link: 'http://neat.no' }).product_link, 'http://neat.no');
+  status400(() => parseItem({ ...item, product_link: 'javascript:alert(1)' }), /Product link/);
+  status400(() => parseItem({ ...item, product_link: 'not a link' }), /Product link/);
+  status400(() => parseImportRows([{ category: 'A', model_name: 'Y', price: 1, product_link: 'ftp://x.com' }]));
+  const line = parseVersionPayload({ ...validVersion, sections: [{ lines: [{ model_name: 'D', qty: 0, comment: ' Client has it ', product_link: 'lg.com' }] }] })
+    .sections[0].lines[0];
+  assert.deepEqual([line.comment, line.product_link], ['Client has it', 'https://lg.com']);
 });
 
 test('Won needs PO number and date; Lost needs a reason', () => {

@@ -99,19 +99,22 @@ class AdminAPIClient {
     // there is a real credential failure, not an expired session, and retrying
     // would replace the real error with "Token refresh failed". /auth/session and
     // /auth/me are NOT excluded: a 401 from them should trigger one refresh.
-    const isAuthEntryPoint = /^\/auth\/(login|register|refresh|logout)\b|^\/auth\/(admin|technician)\/login\b|^\/password-reset\//.test(endpoint);
+    const isAuthEntryPoint = /^\/auth\/(login|register|refresh|logout)\b|^\/password-reset\//.test(endpoint);
 
     if (response.status === 401 && !isAuthEntryPoint) {
-      try {
-        await this.refreshAccessToken();
-        headers = this.getHeaders(options.headers?.['Content-Type'] || 'application/json');
-        response = await fetch(url, { ...options, headers });
-      } catch (error) {
-        throw error;
-      }
+      await this.refreshAccessToken();
+      headers = this.getHeaders(options.headers?.['Content-Type'] || 'application/json');
+      response = await fetch(url, { ...options, headers });
     }
 
-    const data = await response.json();
+    // A proxy error page or an empty 429/5xx body is not JSON; surface the
+    // status instead of a confusing "Unexpected token" parse error.
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = { error: response.ok ? undefined : `Request failed (${response.status})` };
+    }
 
     if (!response.ok) {
       throw new APIError(data.error || data.message || 'API error', response.status, data);
@@ -263,45 +266,8 @@ class AdminAPIClient {
     });
   }
 
-  async technicianLogin(email, password) {
-    const response = await this.fetch('/auth/technician/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password })
-    });
-
-    if (response.success && response.data) {
-      this.userRole = 'technician';
-      this.setTokens(response.data.accessToken, response.data.refreshToken);
-    }
-
-    return response;
-  }
-
-  async adminLogin(email, password) {
-    const response = await this.fetch('/auth/admin/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password })
-    });
-
-    if (response.data?.accessToken && response.data?.refreshToken) {
-      this.setTokens(response.data.accessToken, response.data.refreshToken);
-    }
-
-    return response;
-  }
-
-  async adminRegister(email, password, full_name, department) {
-    const response = await this.fetch('/auth/admin/register', {
-      method: 'POST',
-      body: JSON.stringify({ email, password, full_name, department })
-    });
-
-    if (response.data?.accessToken && response.data?.refreshToken) {
-      this.setTokens(response.data.accessToken, response.data.refreshToken);
-    }
-
-    return response;
-  }
+  // Staff sign-in is OTP only (requestOtp/verifyOtp above). The password
+  // login and self-registration calls were removed with their backend routes.
 
   async logout() {
     try {

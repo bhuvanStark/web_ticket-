@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { supabase } from '../config/supabaseClient.js';
 import { hashPassword, requireAdmin, requirePermission, generateToken, generateRefreshToken } from '../middleware/auth.js';
 import { sendResetApprovalEmail, sendResetLinkEmail, sendLoginOtpEmail } from '../services/emailService.js';
+import { otpRequestLimiter, otpVerifyLimiter, otpVerifyByIp } from '../middleware/rateLimit.js';
 
 const router = express.Router();
 
@@ -191,14 +192,17 @@ const backOfficeOtp = buildOtpFlow({
   selectFields: 'full_name, phone, location'
 });
 
-router.post('/admin/request-otp', adminOtp.requestOtp);
-router.post('/admin/verify-otp', adminOtp.verifyOtp);
-router.post('/technician/request-otp', technicianOtp.requestOtp);
-router.post('/technician/verify-otp', technicianOtp.verifyOtp);
-router.post('/sales/request-otp', salesOtp.requestOtp);
-router.post('/sales/verify-otp', salesOtp.verifyOtp);
-router.post('/back-office/request-otp', backOfficeOtp.requestOtp);
-router.post('/back-office/verify-otp', backOfficeOtp.verifyOtp);
+// Every sign-in endpoint is rate limited per address and per email (see
+// middleware/rateLimit.js): a 4-digit code with 5 guesses is only safe when
+// a caller cannot keep requesting fresh codes.
+router.post('/admin/request-otp', ...otpRequestLimiter, adminOtp.requestOtp);
+router.post('/admin/verify-otp', ...otpVerifyLimiter, adminOtp.verifyOtp);
+router.post('/technician/request-otp', ...otpRequestLimiter, technicianOtp.requestOtp);
+router.post('/technician/verify-otp', ...otpVerifyLimiter, technicianOtp.verifyOtp);
+router.post('/sales/request-otp', ...otpRequestLimiter, salesOtp.requestOtp);
+router.post('/sales/verify-otp', ...otpVerifyLimiter, salesOtp.verifyOtp);
+router.post('/back-office/request-otp', ...otpRequestLimiter, backOfficeOtp.requestOtp);
+router.post('/back-office/verify-otp', ...otpVerifyLimiter, backOfficeOtp.verifyOtp);
 
 const appUrl = () => process.env.FRONTEND_URL || 'http://localhost:3000';
 // The admin dashboard is a separate app on its own port.
@@ -272,7 +276,7 @@ const ownerIdFor = (resolved) =>
   resolved.kind === 'customer' ? resolved.account.id : resolved.member.id;
 
 // STAGE 1: email a 4-digit sign-in code.
-router.post('/request', async (req, res) => {
+router.post('/request', ...otpRequestLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -328,7 +332,7 @@ router.post('/request', async (req, res) => {
 });
 
 // STAGE 2: verify the code and sign the user in.
-router.post('/verify-otp', async (req, res) => {
+router.post('/verify-otp', ...otpVerifyLimiter, async (req, res) => {
   try {
     const { email, otp } = req.body;
 
@@ -695,7 +699,7 @@ router.post('/admin/pending/:id/reject', requireAdmin, requirePermission('approv
 // Admins are the approvers, so there is nobody above them to approve; the
 // reset link is emailed straight to the admin's own address.
 // ============================================
-router.post('/admin/request', async (req, res) => {
+router.post('/admin/request', ...otpRequestLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -764,7 +768,7 @@ router.post('/admin/request', async (req, res) => {
 // TECHNICIAN RESET — direct, no approval step.
 // The link is emailed to the technician's own address only.
 // ============================================
-router.post('/technician/request', async (req, res) => {
+router.post('/technician/request', ...otpRequestLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -858,7 +862,7 @@ router.get('/verify/:token', async (req, res) => {
   }
 });
 
-router.post('/confirm/:token', async (req, res) => {
+router.post('/confirm/:token', otpVerifyByIp, async (req, res) => {
   try {
     const { token } = req.params;
     const { password } = req.body;

@@ -6,17 +6,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Save, Plus, Trash2, Copy, ChevronUp, ChevronDown, Search, Package, Wrench, Layers,
   FileDown, FileSpreadsheet, GitBranch, CheckCircle2, XCircle, Send, RotateCcw, Lock, Eye, EyeOff, Loader2,
-  ClipboardList, AlertTriangle, Undo2, MoreHorizontal, Check, History, UserCheck, ShieldCheck, X, ScrollText
+  ClipboardList, AlertTriangle, Undo2, MoreHorizontal, Check, History, UserCheck, ShieldCheck, X, ScrollText, Link2
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
   fetchQuote, fetchQuoteVersion, saveQuoteVersion, createQuoteVersion, setQuoteStatus, fetchQuoteItems, fetchQuoteCategories,
-  issueQuoteVersion, recordQuoteExport, fetchQuoteEvents, acquireQuoteLock, releaseQuoteLock, releaseQuoteLockOnUnload,
+  recordQuoteExport, fetchQuoteEvents, acquireQuoteLock, releaseQuoteLock, releaseQuoteLockOnUnload,
   requestQuoteDelete, cancelQuoteDeleteRequest, approveQuoteDelete, rejectQuoteDelete
 } from '../../services/quoteApiService';
 import { computeVersion, hasOverride, round2, ROUNDING_STEPS } from './quoteEngine';
 import { formatINR, formatNum, formatDate, formatDateTime, QUOTE_STATUS, smToMarginPct, marginTone, todayKey } from './quoteShared';
-import { exportQuotePdf, exportQuoteXlsx } from '../../utils/quoteExport';
+import { exportQuotePdf, exportQuoteXlsx, exportQuoteAccountingXlsx } from '../../utils/quoteExport';
 
 // Edit lease (backend LOCK_SECONDS = 120): renewed every RENEW_MS while the
 // person has touched the page within IDLE_MS, so an abandoned tab frees the
@@ -29,8 +29,9 @@ const AUTOSAVE_MS = 3000;
 // autosave waits until a freshly added blank line is filled in.
 const hasBlankLine = (doc) => doc.sections.some((s) => s.lines.some((l) => !l.model_name && !String(l.description || '').trim()));
 
-// Issued versions print the customer details they went out with.
-const asIssued = (quote, version) => (version.issued_at ? {
+// A superseded (or, before manual versioning, issued) version prints the
+// customer details it was made for; the backend snapshots them.
+const asIssued = (quote, version) => (version.issued_customer ? {
   ...quote,
   customer: version.issued_customer,
   project: version.issued_project,
@@ -83,7 +84,7 @@ const toDoc = (version, quote) => ({
 });
 
 const LINE_FIELDS = ['line_type', 'item_id', 'category_name', 'series', 'model_name', 'description', 'hsn_code',
-  'uom', 'qty', 'osp_unit', 'sm_override', 'price_override', 'gst_rate'];
+  'uom', 'qty', 'osp_unit', 'sm_override', 'price_override', 'gst_rate', 'comment', 'product_link'];
 
 const toPayload = (doc) => ({
   project_ref: doc.project_ref,
@@ -334,7 +335,7 @@ const TermsDialog = ({ doc, readOnly, onChange, onClose }) => (
       <div className="p-5 border-b border-[#E4E7EC] flex items-center justify-between">
         <div>
           <h3 className="font-extrabold text-lg text-[#172033]">Terms &amp; Conditions</h3>
-          <p className="text-xs text-[#667085]">Printed at the end of the quotation. Saved with this version.</p>
+          <p className="text-xs text-[#667085]">Printed on its own page at the end. Saved with this version.</p>
         </div>
         <button onClick={onClose} className="p-1 text-[#667085] hover:text-[#172033] rounded-lg hover:bg-[#F2F4F7]"><X className="w-5 h-5" /></button>
       </div>
@@ -346,6 +347,7 @@ const TermsDialog = ({ doc, readOnly, onChange, onClose }) => (
         </div>
         <div>
           <label className="form-label">Terms</label>
+          <p className="text-[11px] text-[#667085] -mt-1 mb-1.5">Start a line with <b>I.</b> for a heading, <b>a)</b> for a point or <b>•</b> for a bullet — the PDF / Excel line them up in columns. Other lines continue the point above.</p>
           <textarea value={doc.terms} disabled={readOnly} onChange={(e) => onChange({ terms: e.target.value })} rows={12}
             className="form-input text-[13px] leading-relaxed resize-y disabled:bg-[#F8FAFC]" />
         </div>
@@ -420,6 +422,9 @@ const MenuItem = ({ icon: Icon, children, onClick, tone = 'text-[#344054]', hint
   </button>
 );
 
+// Small inline inputs under a line's description (comment, product link).
+const lineNoteCls = 'w-full mt-0.5 bg-transparent text-[11px] italic text-[#475467] outline-none border-b border-transparent hover:border-[#E4E7EC] focus:border-[#004898] placeholder:text-[#C0C6D0] placeholder:not-italic';
+
 // ---- Line row ----
 const LineRow = ({ line, calc, index, globalSm, showCosting, readOnly, onChange, onRemove, onMove, isFirst, isLast }) => {
   const set = (patch) => onChange({ ...line, ...patch });
@@ -429,14 +434,20 @@ const LineRow = ({ line, calc, index, globalSm, showCosting, readOnly, onChange,
     <tr className="group align-top hover:bg-[#FAFCFF]">
       <td className="pl-4 pr-1 py-2 text-[11px] text-[#98A2B3] tabular-nums pt-3.5">{index}</td>
       <td className="px-2 py-2 min-w-[260px]">
-        {service ? (
+        {service ? (<>
           <textarea
             value={line.description || ''} disabled={readOnly} rows={1} placeholder="Service description (e.g. Installation, cabling & commissioning)"
             onChange={(e) => set({ description: e.target.value })}
             style={{ fieldSizing: 'content' }}
             className="w-full resize-none min-h-[34px] bg-transparent px-2 py-1.5 rounded-md text-[13px] font-semibold text-[#172033] outline-none border border-transparent hover:border-[#E4E7EC] focus:border-[#004898] focus:bg-white disabled:hover:border-transparent"
           />
-        ) : (
+          {(!readOnly || line.comment) && (
+            <div className="px-2">
+              <input value={line.comment || ''} disabled={readOnly} placeholder="Add comment (optional)"
+                onChange={(e) => set({ comment: e.target.value })} className={lineNoteCls} />
+            </div>
+          )}
+        </>) : (
           <div className="px-2 py-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-extrabold text-[13px] text-[#172033]">{line.model_name || '—'}</span>
@@ -448,6 +459,17 @@ const LineRow = ({ line, calc, index, globalSm, showCosting, readOnly, onChange,
               onChange={(e) => set({ description: e.target.value })}
               className="w-full mt-0.5 bg-transparent text-[11px] text-[#667085] outline-none border-b border-transparent hover:border-[#E4E7EC] focus:border-[#004898] placeholder:text-[#C0C6D0]"
             />
+            {(!readOnly || line.comment) && (
+              <input value={line.comment || ''} disabled={readOnly} placeholder="Add comment (optional)"
+                onChange={(e) => set({ comment: e.target.value })} className={lineNoteCls} />
+            )}
+            {(!readOnly || line.product_link) && (
+              <div className="flex items-center gap-1 mt-0.5">
+                <Link2 className="w-3 h-3 text-[#98A2B3] shrink-0" />
+                <input value={line.product_link || ''} disabled={readOnly} placeholder="Product link (optional)" inputMode="url"
+                  onChange={(e) => set({ product_link: e.target.value })} className={`${lineNoteCls} !mt-0 !not-italic text-[#004898]`} />
+              </div>
+            )}
           </div>
         )}
       </td>
@@ -742,6 +764,21 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   const update = (patch) => { setDoc((d) => ({ ...d, ...patch })); setDirty(true); };
   const updateSection = (key, next) => update({ sections: doc.sections.map((s) => (s.key === key ? next : s)) });
 
+  // The settings card scrolls away normally; once it is out of view a slim
+  // totals bar pins to the top. Observed against <main>, the page's scroller.
+  const settingsRef = useRef(null);
+  const [pinTotals, setPinTotals] = useState(false);
+  const hasDoc = Boolean(doc);
+  useEffect(() => {
+    const el = settingsRef.current;
+    if (!el) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      setPinTotals(!entry.isIntersecting && entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0));
+    }, { root: el.closest('main') });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loading, hasDoc]);
+
   const computed = useMemo(() => {
     if (!doc) return null;
     const result = computeVersion(doc);
@@ -815,10 +852,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
 
   const newVersion = async () => {
     const n = quote.versions[0].version_no;
-    const message = quote.versions[0].issued_at
-      ? `Start V${n + 1}.0? It begins as a copy of V${n}.0, which stays frozen as issued to the client.`
-      : `Create V${n + 1}.0? V${n}.0 will be frozen (view-only) and editing continues in the new version.`;
-    if (!window.confirm(message)) return;
+    if (!window.confirm(`Create V${n + 1}.0? It starts as a copy of V${n}.0, which is then locked (view-only) for good.`)) return;
     setBusy(true);
     try {
       if (!(await flush())) return;
@@ -832,11 +866,8 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
     }
   };
 
-  // Under Process / Won issue the latest version if it isn't already.
+  // Won / Lost lock the quotation until reopened; no status freezes a version.
   const changeStatus = async (body) => {
-    const head = quote.versions[0];
-    if ((body.status === 'sent' || body.status === 'won') && !head.issued_at
-      && !window.confirm(`This issues V${head.version_no}.0 to the client and freezes it. Continue?`)) return;
     try {
       if (!(await flush())) return;
       const q = await setQuoteStatus(quoteId, body);
@@ -888,37 +919,17 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   });
 
   // ---- exports ----
-  // A client copy of the editable draft is what goes to the client, so it
-  // issues (freezes) the version first. Internal copies never freeze.
-  const doExport = async (format, internal) => {
-    const issuing = !internal && editableVersion;
-    if (issuing) {
-      const n = versionMeta.version_no;
-      if (!window.confirm(`Issue V${n}.0 to the client?\n\nIt will be frozen as sent and can't be edited again — later changes go into V${n + 1}.0.\n\nTo preview without issuing, use an Internal export.`)) return;
-    } else if (dirty && !window.confirm('This version has unsaved changes. Export what is on screen anyway?')) {
-      return;
-    }
-    // Opened during the click: popup blockers refuse window.open after an await.
-    const win = format === 'pdf' && issuing ? window.open('', '_blank') : null;
+  // Exporting never changes the quotation; only "New version" locks one.
+  const doExport = async (format, internal, accounting = false) => {
+    if (dirty && !window.confirm('This version has unsaved changes. Export what is on screen anyway?')) return;
     try {
-      let version = { ...versionMeta, ...doc };
-      let q = quote;
-      if (issuing) {
-        if (!(await flush())) { win?.close(); return; }
-        const issuedVersion = (await issueQuoteVersion(quoteId, versionMeta.id, format)).version;
-        setVersionMeta(issuedVersion);
-        q = await fetchQuote(quoteId);
-        setQuote(q);
-        version = { ...issuedVersion, ...latest.current.doc };
-        showToast(`V${issuedVersion.version_no}.0 issued to the client and frozen`, 'success');
-      } else {
-        recordQuoteExport(quoteId, versionMeta.id, format, internal).catch(() => {});
-      }
-      const data = { quote: asIssued(q, version), version, computed };
-      if (format === 'pdf') exportQuotePdf(data, { internal, win });
+      recordQuoteExport(quoteId, versionMeta.id, format, internal, accounting).catch(() => {});
+      const version = { ...versionMeta, ...doc };
+      const data = { quote: asIssued(quote, version), version, computed };
+      if (accounting) await exportQuoteAccountingXlsx(data);
+      else if (format === 'pdf') exportQuotePdf(data, { internal });
       else await exportQuoteXlsx(data, { internal });
     } catch (err) {
-      win?.close();
       showToast(err.message || 'Export failed', 'error');
     }
   };
@@ -932,7 +943,8 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
           const line = {
             key: newKey(), line_type: 'supply', item_id: item.id, category_name: item.category_name, series: item.series,
             model_name: item.model_name, description: item.remark || '', hsn_code: item.hsn_code, uom: 'Nos', qty: 1,
-            osp_unit: Number(item.price), gst_rate: Number(item.gst_rate), sm_override: null, price_override: null
+            osp_unit: Number(item.price), gst_rate: Number(item.gst_rate), sm_override: null, price_override: null,
+            comment: '', product_link: item.product_link || null
           };
           const firstService = s.lines.findIndex((l) => l.line_type === 'service');
           if (firstService === -1) return [...s.lines, line];
@@ -962,6 +974,14 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   }
 
   const totals = computed.totals;
+  const kpis = [
+    ['OSP Cost', formatINR(totals.supply_osp + totals.services_osp), 'text-[#475467]', showCosting],
+    ['Supply Price', formatINR(totals.supply_price), 'text-[#172033]', true],
+    ['Services Price', formatINR(totals.services_price), 'text-[#172033]', true],
+    ['GST', formatINR(totals.gst_total), 'text-[#475467]', true],
+    ['Margin', `${formatINR(totals.margin)} · ${totals.margin_pct}%`, marginTone(totals.margin_pct), showCosting],
+    ['Grand Total', formatINR(totals.grand_total), 'text-[#004898]', true]
+  ].filter((k) => k[3]);
   const status = QUOTE_STATUS[quote.status];
   const hasPpm = doc.sections.some((s) => s.kind === 'ppm');
   let solutionNo = 0;
@@ -1043,7 +1063,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
               </div>
             </Menu>
             {canNewVersion && (
-              <button onClick={newVersion} disabled={busy} title="Freeze this version and continue in a new copy"
+              <button onClick={newVersion} disabled={busy} title="Lock this version and continue in a new copy"
                 className="h-[34px] px-3 border-l border-[#E4E7EC] rounded-r-xl text-xs font-bold text-[#004898] hover:bg-[#EFF5FC] inline-flex items-center gap-1 disabled:opacity-60">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}New version
               </button>
@@ -1054,12 +1074,15 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
             <button onClick={toggle} className="btn btn-secondary text-xs !py-2"><FileDown className="w-4 h-4" />Export</button>
           )}>
             <p className="px-3.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#98A2B3]">Client copy · no cost/margin</p>
-            <MenuItem icon={FileDown} onClick={() => doExport('pdf', false)} hint={editableVersion ? 'issues & freezes' : null}>Client PDF</MenuItem>
-            <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', false)} hint={editableVersion ? 'issues & freezes' : null}>Client Excel</MenuItem>
+            <MenuItem icon={FileDown} onClick={() => doExport('pdf', false)}>Client PDF</MenuItem>
+            <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', false)}>Client Excel</MenuItem>
             <div className="my-1.5 border-t border-[#F2F4F7]" />
             <p className="px-3.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#98A2B3]">Internal · with OSP & SM</p>
             <MenuItem icon={FileDown} onClick={() => doExport('pdf', true)}>Internal PDF</MenuItem>
             <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', true)}>Internal Excel</MenuItem>
+            <div className="my-1.5 border-t border-[#F2F4F7]" />
+            <p className="px-3.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-[#98A2B3]">Accounting · category & model only</p>
+            <MenuItem icon={FileSpreadsheet} onClick={() => doExport('xlsx', false, true)}>Accounting Excel</MenuItem>
           </Menu>
 
           <button onClick={() => setShowHistory(true)} className="btn btn-secondary text-xs !py-2" title="Who did what, and when"><History className="w-4 h-4" />History</button>
@@ -1138,7 +1161,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
       )}
 
       {/* Settings + KPIs */}
-      <div className="card bg-white border border-[#E4E7EC] shadow-xs p-4 sticky top-0 z-20">
+      <div ref={settingsRef} className="card bg-white border border-[#E4E7EC] shadow-xs p-4">
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-[1.6fr_1fr_0.8fr_0.9fr_auto] gap-3 items-end">
           <div className="col-span-2 md:col-span-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-[#667085]">Project Ref</label>
@@ -1172,19 +1195,29 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
         </div>
 
         <div className="mt-4 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-          {[
-            ['OSP Cost', formatINR(totals.supply_osp + totals.services_osp), 'text-[#475467]', showCosting],
-            ['Supply Price', formatINR(totals.supply_price), 'text-[#172033]', true],
-            ['Services Price', formatINR(totals.services_price), 'text-[#172033]', true],
-            ['GST', formatINR(totals.gst_total), 'text-[#475467]', true],
-            ['Margin', `${formatINR(totals.margin)} · ${totals.margin_pct}%`, marginTone(totals.margin_pct), showCosting],
-            ['Grand Total', formatINR(totals.grand_total), 'text-[#004898]', true]
-          ].filter((k) => k[3]).map(([label, value, tone]) => (
+          {kpis.map(([label, value, tone]) => (
             <div key={label} className={`rounded-xl px-3 py-2 ${label === 'Grand Total' ? 'bg-[#EFF5FC] border border-[#B3D1F2]' : 'bg-[#F8FAFC]'}`}>
               <p className="text-[9.5px] font-bold uppercase tracking-wider text-[#667085]">{label}</p>
               <p className={`text-[15px] font-extrabold tabular-nums truncate ${tone}`}>{value}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Slim totals bar, pinned once the card above scrolls away. The sticky
+          wrapper is zero-height so it never shifts the page; its negative top
+          cancels <main>'s padding so nothing shows through above it. */}
+      <div className="sticky -top-4 md:-top-6 lg:-top-8 z-20 h-0 !mt-0">
+        <div className={`pt-2 transition-opacity duration-150 ${pinTotals ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} aria-hidden={!pinTotals}>
+          <div className="bg-white/95 backdrop-blur border border-[#E4E7EC] shadow-md rounded-xl px-4 py-2 flex items-center gap-x-5 gap-y-1 flex-wrap">
+            <span className="text-xs font-extrabold text-[#172033] truncate max-w-[200px]">{quote.customer} <span className="text-[#98A2B3] font-bold">V{versionMeta.version_no}.0</span></span>
+            {kpis.map(([label, value, tone]) => (
+              <span key={label} className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+                <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#667085]">{label}</span>
+                <span className={`text-[13px] font-extrabold tabular-nums ${tone}`}>{value}</span>
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 

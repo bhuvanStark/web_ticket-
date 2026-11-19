@@ -1,5 +1,6 @@
 // Quotation sharing rules (migration 049): unique customer + project leads,
-// one quotation per lead, one editor at a time, issue-to-client freezing,
+// one quotation per lead, one editor at a time, manual versions (a new
+// version locks the old one),
 // Super Admin approved deletes and the activity log. Real HTTP server, real
 // PostgreSQL, no mocks — same pattern as project-workspace.test.js.
 import test from 'node:test';
@@ -67,7 +68,8 @@ test.after(async () => {
   await pool.query('DELETE FROM back_office WHERE id = ANY($1)', [[ids.a, ids.b, ids.plain]]);
   await pool.query('DELETE FROM admins WHERE id = $1', [ids.superAdmin.id]);
   if (ids.sales) await pool.query('DELETE FROM sales WHERE id = $1', [ids.sales]);
-  await pool.end();
+  // The pool is shared by every file under --test-isolation=none (see
+  // api.test.js); ending it here crashed whichever file ran next.
 });
 
 const customer = `QS Acme ${suffix}`;
@@ -137,15 +139,17 @@ test('one editor at a time: the lease blocks others until it is taken over', asy
   assert.equal(lostLease.json.details?.code, 'LOCKED');
 });
 
-test('issuing to the client freezes the version and snapshots the lead', async () => {
-  const issued = await call('POST', `/${state.quoteId}/versions/${state.v1}/issue`, tokens.b, { format: 'pdf' });
-  assert.equal(issued.status, 200);
-  assert.ok(issued.json.data.version.issued_at);
-  assert.equal(issued.json.data.version.issued_customer, customer);
+test('a new version locks the previous one and keeps the lead it was made for', async () => {
+  const next = await call('POST', `/${state.quoteId}/versions`, tokens.b);
+  assert.equal(next.status, 201);
+  state.v2 = next.json.data.version_id;
 
-  const edit = await call('PUT', `/${state.quoteId}/versions/${state.v1}`, tokens.b, payload(issued.json.data.version.updated_at));
+  const old = (await call('GET', `/${state.quoteId}/versions/${state.v1}`, tokens.b)).json.data.version;
+  assert.equal(old.issued_at, null);
+  assert.equal(old.issued_customer, customer);
+  const edit = await call('PUT', `/${state.quoteId}/versions/${state.v1}`, tokens.b, payload(old.updated_at));
   assert.equal(edit.status, 409);
-  assert.match(edit.json.error, /issued to the client/);
+  assert.match(edit.json.error, /Older versions are read-only/);
 
   await call('PATCH', `/leads/${state.leadId}`, tokens.b, { customer: `QS Renamed ${suffix}`, project: 'Board Room' });
   const reread = (await call('GET', `/${state.quoteId}/versions/${state.v1}`, tokens.b)).json.data;
@@ -153,25 +157,26 @@ test('issuing to the client freezes the version and snapshots the lead', async (
   assert.equal(reread.quote.customer, `QS Renamed ${suffix}`);
 });
 
-test('a new version is editable, keeps the status, and Under Process / Won issue it', async () => {
-  await call('PATCH', `/${state.quoteId}/status`, tokens.b, { status: 'sent' });
-  const next = await call('POST', `/${state.quoteId}/versions`, tokens.b);
-  assert.equal(next.status, 201);
-  state.v2 = next.json.data.version_id;
-  const quote = (await call('GET', `/${state.quoteId}`, tokens.b)).json.data;
-  assert.equal(quote.status, 'sent');
-  assert.equal(quote.versions[0].issued_at, null);
-
+test('Under Process and Won never freeze a version; Won / Lost lock the quotation', async () => {
+  const sent = await call('PATCH', `/${state.quoteId}/status`, tokens.b, { status: 'sent' });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.json.data.versions[0].issued_at, null);
   const v2 = (await call('GET', `/${state.quoteId}/versions/${state.v2}`, tokens.b)).json.data.version;
-  assert.equal((await call('PUT', `/${state.quoteId}/versions/${state.v2}`, tokens.b, payload(v2.updated_at))).status, 200);
+  const saved = await call('PUT', `/${state.quoteId}/versions/${state.v2}`, tokens.b, payload(v2.updated_at));
+  assert.equal(saved.status, 200, 'still editable while Under Process');
 
   const won = await call('PATCH', `/${state.quoteId}/status`, tokens.b, { status: 'won', po_number: 'PO-9', po_date: '2026-11-11' });
   assert.equal(won.status, 200);
   assert.equal(won.json.data.won_version_id, state.v2);
-  assert.ok(won.json.data.versions[0].issued_at);
+  assert.equal(won.json.data.versions[0].issued_at, null);
+  const blocked = await call('PUT', `/${state.quoteId}/versions/${state.v2}`, tokens.b, payload(saved.json.data.version.updated_at));
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.json.error, /marked WON/);
 
   const reopened = await call('PATCH', `/${state.quoteId}/status`, tokens.b, { status: 'sent' });
   assert.equal(reopened.json.data.won_version_id, null);
+  assert.equal((await call('POST', `/${state.quoteId}/versions/${state.v2}/issue`, tokens.b, { format: 'pdf' })).status, 404,
+    'exporting no longer has an issue step');
 });
 
 test('deleting needs Super Admin approval; the trail outlives the quotation', async () => {
@@ -197,7 +202,7 @@ test('deleting needs Super Admin approval; the trail outlives the quotation', as
   const { rows } = await pool.query('SELECT action, actor_name FROM quote_events WHERE quote_id = $1 ORDER BY id', [state.quoteId]);
   const actions = rows.map((r) => r.action);
   assert.deepEqual(actions.filter((a) => a === 'saved').length, 2, 'consecutive saves by one person collapse');
-  for (const a of ['created', 'lock_taken_over', 'issued', 'version_created', 'status_won', 'delete_requested', 'delete_rejected', 'deleted']) {
+  for (const a of ['created', 'lock_taken_over', 'version_created', 'status_won', 'delete_requested', 'delete_rejected', 'deleted']) {
     assert.ok(actions.includes(a), `missing ${a}`);
   }
   assert.equal(rows.at(-1).actor_name, 'QS Super');
@@ -212,7 +217,7 @@ test('the Super Admin stays read-only for quotation content', async () => {
   assert.equal((await call('POST', `/${[...quoteIds].at(-1)}/lock`, tokens.superAdmin, {})).status, 403);
 });
 
-test('contact person, account manager and Terms & Conditions print as issued', async () => {
+test('contact person, account manager and Terms & Conditions stay with a superseded version', async () => {
   const { rows } = await pool.query(
     'INSERT INTO sales(full_name, email, phone) VALUES ($1, $2, $3) RETURNING id', ['QS Ravi', `qs-sales-${suffix}@example.com`, '9876543210']
   );
@@ -226,22 +231,51 @@ test('contact person, account manager and Terms & Conditions print as issued', a
   assert.equal(lead.status, 201);
   const created = (await call('POST', '/', tokens.a, { lead_id: lead.json.data.id })).json.data;
   quoteIds.add(created.id);
+  state.termsQuote = created;
 
   const v1 = (await call('GET', `/${created.id}/versions/${created.version_id}`, tokens.a)).json.data.version;
-  assert.match(v1.terms, /valid for 30 days/);
+  assert.match(v1.terms, /^I\. Commercial Terms & Conditions/);
+  assert.match(v1.terms, /valid for 15 days/);
+  assert.match(v1.delivery_timeline, /^4 – 6 weeks/);
   assert.match(v1.notes, /DTH connectivity/);
   await call('POST', `/${created.id}/lock`, tokens.a, {});
   const saved = await call('PUT', `/${created.id}/versions/${created.version_id}`, tokens.a,
     { ...payload(v1.updated_at), terms: 'Custom terms', delivery_timeline: '3 weeks from PO' });
   assert.equal(saved.json.data.version.delivery_timeline, '3 weeks from PO');
 
-  const issued = (await call('POST', `/${created.id}/versions/${created.version_id}/issue`, tokens.a, { format: 'pdf' })).json.data.version;
-  assert.equal(issued.issued_contact_person, 'Meena');
-  assert.equal(issued.issued_account_manager, 'QS Ravi');
-  assert.equal(issued.issued_account_manager_phone, '9876543210');
-
   const next = (await call('POST', `/${created.id}/versions`, tokens.a)).json.data;
+  const old = (await call('GET', `/${created.id}/versions/${created.version_id}`, tokens.a)).json.data.version;
+  assert.equal(old.issued_contact_person, 'Meena');
+  assert.equal(old.issued_account_manager, 'QS Ravi');
+  assert.equal(old.issued_account_manager_phone, '9876543210');
+
   const v2 = (await call('GET', `/${created.id}/versions/${next.version_id}`, tokens.a)).json.data.version;
   assert.equal(v2.terms, 'Custom terms');
   assert.equal(v2.delivery_timeline, '3 weeks from PO');
+  state.termsV2 = v2;
+});
+
+test('line comment and product link save, copy to the next version, and links must be web addresses', async () => {
+  const { id } = state.termsQuote;
+  const v2 = state.termsV2;
+  const withLine = (base, line) => ({
+    ...payload(base),
+    sections: [{ kind: 'solution', name: 'Room', lines: [{ line_type: 'supply', model_name: 'Display', qty: 0, osp_unit: 850, ...line }] }]
+  });
+  const bad = await call('PUT', `/${id}/versions/${v2.id}`, tokens.a, withLine(v2.updated_at, { product_link: 'javascript:alert(1)' }));
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /product link/);
+
+  const saved = await call('PUT', `/${id}/versions/${v2.id}`, tokens.a,
+    withLine(v2.updated_at, { comment: 'Already with the client', product_link: 'www.lg.com/display' }));
+  assert.equal(saved.status, 200);
+  const line = saved.json.data.version.sections[0].lines[0];
+  assert.equal(line.comment, 'Already with the client');
+  assert.equal(line.product_link, 'https://www.lg.com/display');
+  assert.equal(saved.json.data.version.grand_total, 0, 'a qty 0 (client scope) line adds nothing');
+
+  const next = (await call('POST', `/${id}/versions`, tokens.a)).json.data;
+  const v3 = (await call('GET', `/${id}/versions/${next.version_id}`, tokens.a)).json.data.version;
+  assert.equal(v3.sections[0].lines[0].comment, 'Already with the client');
+  assert.equal(v3.sections[0].lines[0].product_link, 'https://www.lg.com/display');
 });

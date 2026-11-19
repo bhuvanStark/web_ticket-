@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Search, X, Ticket, Users, MapPin, Tv, Wrench, ArrowRight } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from './Badge';
+import { Avatar } from './Avatar';
 
 export const GlobalSearchModal = () => {
   const {
@@ -180,7 +181,7 @@ export const GlobalSearchModal = () => {
                     }}
                     className="p-2.5 rounded-lg border border-[#E4E7EC] hover:border-[#004898] hover:bg-[#EFF5FC] cursor-pointer transition-all flex items-center gap-3"
                   >
-                    <img src={c.avatar} alt={c.name} className="w-8 h-8 rounded-lg object-cover" />
+                    <Avatar src={c.avatar} name={c.name} className="w-8 h-8" />
                     <div>
                       <h4 className="font-bold text-xs text-[#172033]">{c.name}</h4>
                       <p className="text-[10px] text-[#667085]">{c.totalRooms} Rooms • {c.headquarters}</p>
@@ -242,7 +243,7 @@ export const GlobalSearchModal = () => {
                     }}
                     className="p-2.5 rounded-lg border border-[#E4E7EC] hover:border-[#004898] hover:bg-[#EFF5FC] cursor-pointer transition-all flex items-center gap-3"
                   >
-                    <img src={tech.avatar} alt={tech.name} className="w-8 h-8 rounded-full object-cover" />
+                    <Avatar src={tech.avatar} name={tech.name} className="w-8 h-8" />
                     <div>
                       <h4 className="font-bold text-xs text-[#172033]">{tech.name}</h4>
                       <p className="text-[10px] text-[#667085]">{tech.role} • {tech.location}</p>

@@ -66,14 +66,35 @@ async function ensureCanActOnRequest(req, res, requestId) {
   return false;
 }
 
+// Ticket ids a technician may read: primary assignments plus the tickets
+// they were added to as an additional technician. Null for every other role
+// (no read restriction).
+async function technicianVisibleRequestIds(req) {
+  if (req.user?.role !== 'technician') return null;
+  const [primary, secondary] = await Promise.all([
+    supabase.from('service_requests').select('id').eq('assigned_technician_id', req.userId),
+    supabase.from('service_request_technicians').select('service_request_id').eq('technician_id', req.userId)
+  ]);
+  if (primary.error) throw primary.error;
+  if (secondary.error) throw secondary.error;
+  return [...new Set([
+    ...(primary.data || []).map((row) => row.id),
+    ...(secondary.data || []).map((row) => row.service_request_id)
+  ])];
+}
+
 // GET all service requests (for admin) or filtered by customer
 router.get('/', async (req, res) => {
   try {
     // A customer session may only ever see its own tickets — the customerId
     // query param is client-supplied and must never be trusted to scope a
     // customer's own request, or any customer could read another company's
-    // tickets by changing the value. Admin/technician sessions are unaffected.
+    // tickets by changing the value. Admin sessions are unaffected.
     const customerId = req.user?.role === 'customer' ? req.userId : req.query.customerId;
+    // A technician session only ever sees the tickets assigned to them. The
+    // technician portal already shows nothing else; this stops the full
+    // customer ticket history from being readable with a technician token.
+    const technicianIds = await technicianVisibleRequestIds(req);
 
     let query = supabase
       .from('service_requests')
@@ -91,6 +112,10 @@ router.get('/', async (req, res) => {
 
     if (customerId) {
       query = query.eq('customer_id', customerId);
+    }
+    if (technicianIds) {
+      if (!technicianIds.length) return res.json({ success: true, data: [] });
+      query = query.in('id', technicianIds);
     }
 
     const { data, error } = await query;
@@ -127,10 +152,12 @@ router.get('/:id', validateUUID, async (req, res) => {
     if (error) throw error;
     if (!data) return res.status(404).json({ success: false, error: 'Service request not found' });
 
-    // A customer session may only fetch its own ticket by id.
+    // A customer session may only fetch its own ticket by id; a technician
+    // only one assigned to them.
     if (req.user?.role === 'customer' && data.customer_id !== req.userId) {
       return res.status(404).json({ success: false, error: 'Service request not found' });
     }
+    if (req.user?.role === 'technician' && !(await ensureCanActOnRequest(req, res, id))) return;
 
     res.json({ success: true, data });
   } catch (error) {
@@ -563,6 +590,8 @@ router.patch('/:id/complete', validateUUID, async (req, res) => {
 // GET the field service report for a request (or null if none yet)
 router.get('/:id/report', validateUUID, async (req, res) => {
   try {
+    // Any technician may read a filed report (previous visits inform the
+    // next one); customers only their own.
     if (!(await ensureCustomerOwnsRequest(req, res, req.params.id))) return;
 
     const { data, error } = await supabase
@@ -688,6 +717,11 @@ router.post('/:id/updates', async (req, res) => {
 router.delete('/:id', validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Scope first: a customer may only delete its own ticket, a technician
+    // one assigned to them, an admin any. Without this, any signed-in
+    // customer could delete another company's unassigned ticket by id.
+    if (!(await ensureCanActOnRequest(req, res, id))) return;
 
     // Check if request exists
     const { data: existing, error: checkError } = await supabase

@@ -63,10 +63,8 @@ export const createQuoteVersion = (id) => call(`/${id}/versions`, { method: 'POS
 export const fetchQuoteVersion = (id, versionId) => call(`/${id}/versions/${versionId}`, { operation: 'load version' });
 export const saveQuoteVersion = (id, versionId, body) =>
   call(`/${id}/versions/${versionId}`, { method: 'PUT', body, operation: 'save quotation' });
-export const issueQuoteVersion = (id, versionId, format) =>
-  call(`/${id}/versions/${versionId}/issue`, { method: 'POST', body: { format }, operation: 'issue version' });
-export const recordQuoteExport = (id, versionId, format, internal) =>
-  call(`/${id}/versions/${versionId}/exported`, { method: 'POST', body: { format, internal }, operation: 'log export' });
+export const recordQuoteExport = (id, versionId, format, internal, accounting = false) =>
+  call(`/${id}/versions/${versionId}/exported`, { method: 'POST', body: { format, internal, accounting }, operation: 'log export' });
 export const fetchQuoteEvents = (id) => call(`/${id}/events`, { operation: 'load history' });
 
 // Edit lease — one editor per quotation. `takeover` replaces someone else's.

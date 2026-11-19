@@ -89,11 +89,26 @@ test('P0-1: a deactivated admin cannot log in again', async (t) => {
     method: 'PATCH', headers: await adminHeaders(accessTokenFor(superAdmin, true))
   });
 
-  const login = await fetch(`${baseUrl}/api/auth/admin/login`, {
+  // Admins sign in by emailed code only (the password login endpoint was
+  // removed); a deactivated admin must not even be sent a code.
+  const login = await fetch(`${baseUrl}/api/password-reset/admin/request-otp`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email })
+  });
+  assert.equal(login.status, 404);
+
+  // The password-based routes are gone for good: a bogus role/registration
+  // attempt must 404 rather than mint an account or a token.
+  const register = await fetch(`${baseUrl}/api/auth/admin/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: `rogue-${suffix()}@example.com`, password: 'TestPassword123!', full_name: 'Rogue', department: 'x' })
+  });
+  assert.equal(register.status, 404);
+  const passwordLogin = await fetch(`${baseUrl}/api/auth/admin/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password: 'TestPassword123!' })
   });
-  assert.equal(login.status, 401);
+  assert.equal(passwordLogin.status, 404);
 });
 
 test('P0-1: a deleted admin\'s existing token is rejected immediately (not just its /session check)', async (t) => {

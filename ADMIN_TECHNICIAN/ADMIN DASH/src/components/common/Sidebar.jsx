@@ -1,46 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import unifiedClient from '../../api/unifiedClient';
 import { Avatar } from './Avatar';
 import { CountBadge } from './CountBadge';
 import { useTechWorkload } from '../../hooks/useTechWorkload';
 import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems, filterForViewAs } from '../../config/employeeNavItems';
+import { adminNavItems, filterAdminNavItems, groupAdminNavItems } from '../../config/adminNavItems';
 import { quoteNavItems, useQuoteAccess } from '../quotes/quoteShared';
 import {
-  LayoutDashboard,
-  Ticket,
-  Briefcase,
-  Users,
-  MapPin,
-  Tv,
-  Wrench,
-  Calendar,
-  History,
-  BarChart3,
-  Settings,
-  User,
   LogOut,
   ShieldAlert,
-  BellRing,
   HardHat,
-  Layers,
-  Package,
-  Sparkles,
   ChevronRight,
   ChevronLeft,
   Eye,
   EyeOff,
-  ArrowLeft,
-  Clock3,
-  TrendingUp,
-  ClipboardList,
-  FileText
+  ArrowLeft
 } from 'lucide-react';
 
 export const Sidebar = () => {
   const {
     role, baseRole, switchRole, activePage, setActivePage, currentUser, handleLogout,
     isSidebarCollapsed, setIsSidebarCollapsed, enabledModules, rolePermissions, canAccessAdminPage,
-    tickets, customers, rooms, technicians, verifyTechnicianPassword,
+    tickets, technicians, verifyTechnicianPassword, pollTick,
     setSelectedTicketId, setSelectedCustomerId, setSelectedRoomId, setSelectedTechId,
     setSelectedProjectId, isViewingAsSales
   } = useApp();
@@ -105,60 +87,47 @@ export const Sidebar = () => {
     setActivePage(pageId);
   };
 
-  const adminNavItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'approvals', label: 'Approvals & Alerts', icon: BellRing, module: 'approvals' },
-    { id: 'requests', label: 'Service Requests', icon: Ticket, module: 'requests' },
-    { id: 'projects', label: 'Projects', icon: Briefcase, module: 'projects' },
-    { id: 'customers', label: 'Customers', icon: Users, module: 'customers' },
-    { id: 'rooms', label: 'Rooms & Equipment', icon: Tv, module: 'rooms' },
-    { id: 'technicians', label: 'Technicians', icon: Wrench, module: 'technicians' },
-    // Sales & Back-Office Roles V1 — Admin management pages for the two new
-    // employee types (plan §4/§5/§13). No module toggle, same as
-    // Attendance below — always shown.
-    { id: 'sales', label: 'Sales', icon: TrendingUp },
-    { id: 'back-office', label: 'Back-Office', icon: ClipboardList },
-    // Quotation module — Super Admin only (read-only view).
-    { id: 'quotations', label: 'Quotations', icon: FileText },
-    // Attendance Category (V1) — separate page from Service Tickets and
-    // Projects, no module toggle (no Settings UI asked for one; always shown).
-    { id: 'attendance', label: 'Attendance', icon: Clock3 },
-    { id: 'installations', label: 'Onsite Installations', icon: Layers, module: 'installations' },
-    { id: 'inventory', label: 'Spare Parts Stock', icon: Package, module: 'inventory' },
-    { id: 'demos', label: 'Demo Management', icon: Sparkles, module: 'demos' },
-    { id: 'calendar', label: 'Service Calendar', icon: Calendar, module: 'calendar' },
-    { id: 'history', label: 'Service History', icon: History, module: 'history' },
-    { id: 'reports', label: 'Reports', icon: BarChart3, module: 'reports' },
-    { id: 'staff', label: 'Admin Roles', icon: ShieldAlert },
-    { id: 'settings', label: 'Settings', icon: Settings },
-  ];
-
-  // Technician/Sales/Back-Office Nav Parity fix — these three lists now
-  // live in config/employeeNavItems.js, shared with BottomNav.jsx, so
-  // desktop and mobile can never drift into showing a different page set
-  // for the same role again. Includes the new 'my-attendance' entry.
+  // Admin pages come from config/adminNavItems.js (also used by the mobile
+  // bottom bar and More sheet), the employee lists from
+  // config/employeeNavItems.js — one definition per role for every surface.
   const techNavItems = sharedTechNavItems;
 
   const allNavItems = role === 'admin' ? adminNavItems
     : role === 'sales' ? filterForViewAs(salesNavItems, isViewingAsSales)
     : role === 'back_office' ? [...backOfficeNavItems, ...(quoteAccess.mode === 'manager' ? quoteNavItems : [])]
     : techNavItems;
-  const navItems = allNavItems.filter(item => {
-    // 1. Module enabled check
-    if (item.module && !enabledModules[item.module]) return false;
+  const navItems = role === 'admin'
+    ? filterAdminNavItems(allNavItems, enabledModules, rolePermissions, currentUser, canAccessAdminPage)
+    : allNavItems.filter((item) => !item.module || enabledModules[item.module]);
 
-    // 2. Role permission check (only for admins)
-    if (role === 'admin' && rolePermissions && currentUser && currentUser.role) {
-      const userPerms = rolePermissions[currentUser.role];
-      if (userPerms && item.id in userPerms && !userPerms[item.id]) {
-        return false;
-      }
-    }
+  // Admin: grouped under section headings. Other roles: one flat group, as
+  // before. Only the visual grouping differs; the item set is identical.
+  const navGroups = role === 'admin' ? groupAdminNavItems(navItems) : [{ id: 'all', label: null, items: navItems }];
 
-    // 3. The admin's own module permissions (same rules the backend enforces)
-    if (role === 'admin' && !canAccessAdminPage(item.id)) return false;
-    return true;
-  });
+  // Triage pills. Unassigned open tickets mirrors the Dashboard's
+  // "Unassigned" KPI; pending customer password resets come from the same
+  // endpoint the Approvals page lists, and are only requested when this
+  // admin can actually open that page (same gate the backend enforces).
+  const unassignedOpen = role === 'admin'
+    ? (tickets || []).filter((t) => !['Resolved', 'Closed', 'Completed'].includes(t.status) && (t.status === 'Unassigned' || !t.assignedTo)).length
+    : 0;
+  const [pendingResets, setPendingResets] = useState(0);
+  const canSeeApprovals = role === 'admin' && canAccessAdminPage('approvals');
+  useEffect(() => {
+    if (!canSeeApprovals) { setPendingResets(0); return; }
+    let cancelled = false;
+    unifiedClient.getPendingPasswordResets()
+      .then((res) => { if (!cancelled) setPendingResets(res?.count ?? (res?.data || []).length); })
+      .catch(() => { /* the pill simply stays at its last value */ });
+    return () => { cancelled = true; };
+  }, [canSeeApprovals, pollTick]);
+
+  const navCountFor = (itemId) => {
+    if (role === 'tech' && itemId === 'my-jobs') return techOpenJobs;
+    if (role === 'admin' && itemId === 'requests') return unassignedOpen;
+    if (role === 'admin' && itemId === 'approvals') return pendingResets;
+    return 0;
+  };
 
   return (
     <aside className={`bg-white border-r border-[#E4E7EC] flex flex-col h-screen sticky top-0 z-40 select-none shadow-xs transition-all duration-300 relative ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
@@ -234,44 +203,55 @@ export const Sidebar = () => {
 
       {/* SCROLLABLE MIDDLE: Navigation Links */}
       <div className="flex-1 overflow-y-auto">
-        <nav className={`px-3 py-2 space-y-1 ${isSidebarCollapsed ? 'mt-4' : ''}`}>
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activePage === item.id;
-            const workloadCount = role === 'tech' && item.id === 'my-jobs' ? techOpenJobs : 0;
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleNavigation(item.id)}
-                title={isSidebarCollapsed ? item.label : ''}
-                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center py-3' : 'justify-between px-3 py-2.5'} rounded-lg text-sm font-medium transition-all ${
-                  isActive
-                    ? 'bg-[#EFF5FC] text-[#004898] font-bold shadow-xs border-l-4 border-[#004898]'
-                    : 'text-[#475467] hover:bg-[#F8FAFC] hover:text-[#172033] border-l-4 border-transparent'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="relative">
-                    <Icon className={`w-5 h-5 ${isActive ? 'text-[#004898]' : 'text-[#667085]'}`} />
-                    {isSidebarCollapsed && <CountBadge count={workloadCount} className="absolute -top-2 -right-2.5" />}
-                  </span>
-                  {!isSidebarCollapsed && <span>{item.label}</span>}
-                </div>
-                {!isSidebarCollapsed && <CountBadge count={workloadCount} />}
-                {!isSidebarCollapsed && item.badge && (
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                      isActive
-                        ? 'bg-[#004898] text-white'
-                        : 'bg-[#F2F4F7] text-[#475467]'
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        <nav className={`px-3 py-2 ${isSidebarCollapsed ? 'mt-4' : ''}`}>
+          {navGroups.map((group, groupIndex) => (
+            <div key={group.id} className={groupIndex > 0 ? 'mt-2' : ''}>
+              {group.label && (
+                isSidebarCollapsed
+                  ? <div className="mx-3 my-2 border-t border-[#F2F4F7]" aria-hidden="true" />
+                  : <div className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#98A2B3]">{group.label}</div>
+              )}
+              <div className="space-y-1">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activePage === item.id;
+                  const count = navCountFor(item.id);
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleNavigation(item.id)}
+                      title={isSidebarCollapsed ? item.label : ''}
+                      className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center py-3' : 'justify-between px-3 py-2.5'} rounded-lg text-sm font-medium transition-all ${
+                        isActive
+                          ? 'bg-[#EFF5FC] text-[#004898] font-bold shadow-xs border-l-4 border-[#004898]'
+                          : 'text-[#475467] hover:bg-[#F8FAFC] hover:text-[#172033] border-l-4 border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="relative">
+                          <Icon className={`w-5 h-5 ${isActive ? 'text-[#004898]' : 'text-[#667085]'}`} />
+                          {isSidebarCollapsed && <CountBadge count={count} className="absolute -top-2 -right-2.5" />}
+                        </span>
+                        {!isSidebarCollapsed && <span>{item.label}</span>}
+                      </div>
+                      {!isSidebarCollapsed && <CountBadge count={count} />}
+                      {!isSidebarCollapsed && item.badge && (
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                            isActive
+                              ? 'bg-[#004898] text-white'
+                              : 'bg-[#F2F4F7] text-[#475467]'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
       </div>
 

@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { supabase } from '../config/supabaseClient.js';
 import { query, withTransaction } from '../config/database.js';
@@ -722,10 +723,13 @@ router.put('/settings', requireAdmin, requirePermission('settings'), async (req,
 // ADMIN ROSTER (Admin Roles page — "Add Admin" / "Admin Roster")
 // ============================================
 
-// Admins onboarded through the dashboard get this password until they change
-// it; it is hashed like any other, never stored in plain text. Mirrors
-// technicians.js's DEFAULT_TECHNICIAN_PASSWORD pattern.
-const DEFAULT_ADMIN_PASSWORD = '123456';
+// Admins sign in by emailed code only, but admins.password_hash is NOT NULL.
+// Every dashboard-created admin used to get the same well-known default
+// ('123456'), which — combined with the password login endpoint that has
+// since been removed — let anyone who knew an admin's email sign in as them.
+// A fresh random secret per account keeps the column satisfied while making
+// the password unusable until the admin deliberately sets one.
+const unguessablePassword = () => crypto.randomBytes(32).toString('hex');
 
 // Admin RBAC V1 (TaskPro_Sales_RBAC_plan.md) — canonical module keys a
 // normal admin's access can be toggled on/off for. Mirrors the `module`
@@ -808,9 +812,7 @@ router.post('/admins', requireSuperAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Admin with this email already exists' });
     }
 
-    // Always store a real bcrypt hash — an empty/plaintext value would make
-    // the account impossible to log into.
-    const passwordHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+    const passwordHash = await hashPassword(unguessablePassword());
 
     // New admins are never created as Super Admin through this endpoint —
     // promotion is its own explicit, separate action (PATCH .../super-admin)

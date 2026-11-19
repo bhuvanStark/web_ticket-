@@ -5,7 +5,8 @@ import {
   adminNavItems,
   adminPrimaryNavIds,
   adminProfileNavItem,
-  filterAdminNavItems
+  filterAdminNavItems,
+  groupAdminNavItems
 } from '../../config/adminNavItems';
 
 // Admin Mobile Navigation fix — slide-up sheet for every Admin page that
@@ -70,19 +71,27 @@ export const AdminMoreSheet = ({ isOpen, onClose }) => {
             <span>{adminProfileNavItem.label}</span>
           </button>
 
-          {moreItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => goTo(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors ${
-                activePage === item.id
-                  ? 'text-[#004898] bg-[#F0F7FF]'
-                  : 'text-[#344054] hover:bg-[#F8FAFC]'
-              }`}
-            >
-              <item.icon className="w-5 h-5" />
-              <span>{item.label}</span>
-            </button>
+          {/* Same section grouping as the desktop Sidebar. */}
+          {groupAdminNavItems(moreItems).map((group) => (
+            <div key={group.id}>
+              {group.label && (
+                <div className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#98A2B3]">{group.label}</div>
+              )}
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => goTo(item.id)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors ${
+                    activePage === item.id
+                      ? 'text-[#004898] bg-[#F0F7FF]'
+                      : 'text-[#344054] hover:bg-[#F8FAFC]'
+                  }`}
+                >
+                  <item.icon className="w-5 h-5" />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
           ))}
         </div>
 

@@ -157,7 +157,8 @@ export const LoginScreen = () => {
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-[#E4E7EC] relative z-10 overflow-hidden">
         {/* Top Brand Header */}
         <div className="p-6 text-center bg-white border-b border-[#F2F4F7]">
-          <div className="w-12 h-12 rounded-2xl bg-[#004898] text-white flex items-center justify-center mx-auto mb-3 shadow-md">
+          {/* Warms up like a projector lamp on first paint (index.css .tt-lamp). */}
+          <div className="w-12 h-12 rounded-2xl bg-[#004898] text-white flex items-center justify-center mx-auto mb-3 shadow-md tt-lamp">
             <Tv className="w-6 h-6" />
           </div>
           <h2 className="text-xl font-extrabold text-[#172033] tracking-tight">TaskTel AV Service Operations</h2>
@@ -171,22 +172,33 @@ export const LoginScreen = () => {
           <label className="block text-xs font-bold text-[#667085] uppercase tracking-wider mb-2">
             Select Login Portal View
           </label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-[#F6F8FB] p-1.5 rounded-xl border border-[#E4E7EC]">
-            {ROLE_TABS.map(({ key, label, icon: Icon }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => handleQuickRoleSelect(key)}
-                className={`py-2.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                  selectedRole === key
-                    ? 'bg-[#004898] text-white shadow-xs'
-                    : 'text-[#667085] hover:text-[#172033]'
-                }`}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span className="truncate">{label}</span>
-              </button>
-            ))}
+          {/* Styled like the input selector on an AV switcher: one labelled
+              input per portal, the active one lit. Same four roles, same
+              handler as before. */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-[#1B2430] p-1.5 rounded-xl border border-[#2A3545]" role="tablist" aria-label="Login portal">
+            {ROLE_TABS.map(({ key, label, icon: Icon }, index) => {
+              const active = selectedRole === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => handleQuickRoleSelect(key)}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    active
+                      ? 'bg-[#004898] text-white shadow-[0_0_0_1px_#2E90FA,0_0_14px_rgba(46,144,250,0.45)]'
+                      : 'bg-[#242F3E] text-[#98A2B3] hover:text-white hover:bg-[#2A3545]'
+                  }`}
+                >
+                  <span className={`text-[9px] font-bold tracking-[0.12em] ${active ? 'text-[#B3D1F2]' : 'text-[#667085]'}`}>INPUT {index + 1}</span>
+                  <span className="flex items-center gap-1.5">
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{label}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

@@ -66,6 +66,8 @@ import { NewProjectModal } from './components/projects/NewProjectModal';
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
 import { ToastContainer } from './components/common/ToastContainer';
+import { SignalRestored } from './components/common/SignalRestored';
+import { LightsOut } from './components/common/LightsOut';
 import { EmptyState } from './components/common/EmptyState';
 import { TableSkeleton } from './components/common/SkeletonLoader';
 
@@ -257,6 +259,8 @@ const MainLayout = () => {
       <GlobalSearchModal />
       <NotificationsDrawer />
       <ToastContainer />
+      <SignalRestored />
+      <LightsOut />
     </div>
   );
 };

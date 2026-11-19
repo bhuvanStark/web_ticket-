@@ -9,7 +9,7 @@ import { ReassignModal } from './ReassignModal';
 import { Avatar } from '../common/Avatar';
 
 export const ServiceCalendarPage = () => {
-  const { tickets, technicians, role, simulatedLoading } = useApp();
+  const { tickets, technicians, role, currentUser, simulatedLoading } = useApp();
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState("17 Aug 2026");
@@ -20,7 +20,10 @@ export const ServiceCalendarPage = () => {
 
   if (simulatedLoading) return <TableSkeleton rows={4} />;
 
-  const displayedTechs = role === 'admin' ? technicians : technicians.filter(t => t.id === 'TECH-01');
+  // A technician sees only their own row. This used to filter on a mock id
+  // ('TECH-01') from before the backend existed, so every technician's
+  // calendar rendered empty.
+  const displayedTechs = role === 'admin' ? technicians : technicians.filter(t => t.id === currentUser?.id);
   const timeSlots = ["09:00 AM", "11:00 AM", "01:30 PM", "03:30 PM", "05:00 PM"];
 
   // Helper to determine event block colors based on status
