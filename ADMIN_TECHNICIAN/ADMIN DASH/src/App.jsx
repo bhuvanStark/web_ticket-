@@ -30,6 +30,8 @@ import { UserManagementPage } from './components/users/UserManagementPage';
 import { ReportsPage } from './components/reports/ReportsPage';
 // Attendance Category (V1) — separate Admin page. Additive.
 import { AttendancePage } from './components/attendance/AttendancePage';
+import { BroadcastsPage } from './components/broadcasts/BroadcastsPage';
+import { BroadcastGate } from './components/broadcasts/BroadcastGate';
 // Technician/Sales/Back-Office Nav Parity fix — personal attendance page,
 // shared unchanged by all three employee roles. Additive.
 import { MyAttendancePage } from './components/attendance/MyAttendancePage';
@@ -154,6 +156,8 @@ const MainLayout = () => {
           return <QuoteWorkspace />;
         case 'attendance':
           return <AttendancePage />;
+        case 'broadcasts':
+          return <BroadcastsPage />;
         case 'installations':
           return <InstallationsPage />;
         case 'inventory':
@@ -224,6 +228,7 @@ const MainLayout = () => {
   };
 
   return (
+    <BroadcastGate>
     <div className="flex min-h-screen bg-[#F8FAFC]">
       {/* Desktop Sidebar - Hidden on Mobile */}
       <div className="hidden md:block">
@@ -262,6 +267,7 @@ const MainLayout = () => {
       <SignalRestored />
       <LightsOut />
     </div>
+    </BroadcastGate>
   );
 };
 

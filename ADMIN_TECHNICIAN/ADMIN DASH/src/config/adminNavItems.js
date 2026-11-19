@@ -24,7 +24,8 @@ import {
   Clock3,
   TrendingUp,
   ClipboardList,
-  FileText
+  FileText,
+  Megaphone
 } from 'lucide-react';
 
 // Display order of the sidebar groups. `label: null` renders no heading.
@@ -53,6 +54,7 @@ export const adminNavItems = [
   { id: 'sales', label: 'Sales', icon: TrendingUp, section: 'people' },
   { id: 'back-office', label: 'Back-Office', icon: ClipboardList, section: 'people' },
   { id: 'attendance', label: 'Attendance', icon: Clock3, section: 'people' },
+  { id: 'broadcasts', label: 'Broadcasts', icon: Megaphone, section: 'people' },
   { id: 'staff', label: 'Admin Roles', icon: ShieldAlert, section: 'people' },
   { id: 'quotations', label: 'Quotations', icon: FileText, section: 'revenue' },
   { id: 'installations', label: 'Onsite Installations', icon: Layers, module: 'installations', section: 'field' },

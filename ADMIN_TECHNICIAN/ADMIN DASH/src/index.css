@@ -461,3 +461,41 @@ body {
   .tt-led { animation-duration: 1ms; }
   .tt-ticker { animation: none; padding-left: 0; }
 }
+
+/* ── Broadcast popup (components/broadcasts/BroadcastPopup.jsx) ──────────
+   Phones: bottom sheet slides up. Desktop: a short pop. The rings pulse
+   only while the button is locked; the shake runs on an inner wrapper so
+   it never replays the entrance. Colours come from --bx-* set inline. */
+@keyframes bx-fade { from { opacity: 0; } }
+@keyframes bx-sheet-up { from { transform: translateY(100%); } }
+@keyframes bx-pop-in { from { opacity: 0; transform: translateY(14px) scale(0.94); } }
+@keyframes bx-emoji-pop { 0% { transform: scale(0) rotate(-20deg); } 70% { transform: scale(1.18) rotate(6deg); } 100% { transform: none; } }
+@keyframes bx-wobble { 0%, 100% { rotate: 0deg; } 25% { rotate: -10deg; } 50% { rotate: 8deg; } 75% { rotate: -4deg; } }
+@keyframes bx-ring { from { transform: scale(0.75); opacity: 0.55; } to { transform: scale(1.35); opacity: 0; } }
+@keyframes bx-highlight { to { background-size: 100% 100%; } }
+@keyframes bx-ready { 0% { transform: scale(0.96); } 60% { transform: scale(1.03); } 100% { transform: none; } }
+@keyframes bx-shake { 15%, 85% { translate: -2px 0; } 30%, 70% { translate: 5px 0; } 45%, 55% { translate: -7px 0; } }
+
+.bx-overlay { animation: bx-fade 250ms ease-out both; }
+.bx-panel { animation: bx-sheet-up 420ms cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+@media (min-width: 640px) {
+  .bx-panel { animation: bx-pop-in 480ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
+}
+.bx-shake { animation: bx-shake 420ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+.bx-emoji { animation: bx-emoji-pop 600ms cubic-bezier(0.2, 0.9, 0.3, 1.4) 180ms both, bx-wobble 700ms ease-in-out 1s both; }
+.bx-ring { border: 2px solid var(--bx-color); opacity: 0; }
+.bx-locked .bx-ring { animation: bx-ring 1.8s ease-out infinite; }
+.bx-locked .bx-ring + .bx-ring { animation-delay: 0.9s; }
+.bx-mark {
+  color: inherit;
+  padding: 0 2px;
+  background: linear-gradient(transparent 58%, var(--bx-soft) 58%, var(--bx-soft) 92%, transparent 92%) no-repeat;
+  background-size: 0% 100%;
+  animation: bx-highlight 700ms ease-out 550ms forwards;
+}
+.bx-ready { animation: bx-ready 400ms cubic-bezier(0.2, 0.9, 0.3, 1.5); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-overlay, .bx-panel, .bx-shake, .bx-emoji, .bx-ready, .bx-locked .bx-ring { animation: none; }
+  .bx-mark { animation: none; background-size: 100% 100%; }
+}

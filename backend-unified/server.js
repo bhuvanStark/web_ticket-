@@ -41,6 +41,9 @@ import salesDailyReportsRouter from './routes/salesDailyReports.js';
 import techReportsRouter from './routes/techReports.js';
 // Quotation module (Back-Office Quote Managers). Additive.
 import quotesRouter from './routes/quotes.js';
+// Broadcasts — admin announcement popups for employees.
+import broadcastsRouter from './routes/broadcasts.js';
+import adminBroadcastsRouter from './routes/adminBroadcasts.js';
 
 // Load environment variables
 dotenv.config();
@@ -152,12 +155,14 @@ app.use('/api/back-office', backOfficeRouter);
 app.use('/api/sales-leads', leadsRouter);
 app.use('/api/sales-daily-reports', salesDailyReportsRouter);
 app.use('/api/quotes', quotesRouter);
+app.use('/api/broadcasts', broadcastsRouter);
 
 // ============================================
 // API ROUTES - ADMIN ENDPOINTS (Requires admin role)
 // ============================================
 
 app.use('/api/admin/tech-reports', techReportsRouter);
+app.use('/api/admin/broadcasts', adminBroadcastsRouter);
 app.use('/api/admin', adminRoutes);
 
 // ============================================

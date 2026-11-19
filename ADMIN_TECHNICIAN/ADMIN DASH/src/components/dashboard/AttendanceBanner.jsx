@@ -20,6 +20,7 @@ import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { LogIn, LogOut, MapPin, Clock, ShieldAlert, History, CalendarOff, CalendarMinus, UserCheck } from 'lucide-react';
 import { fetchAttendanceHistoryInApi } from '../../services/attendanceApiService';
+import { useBroadcastGate } from '../broadcasts/BroadcastGate';
 
 const LOCATION_LABELS = {
   gps_captured: 'Location captured',
@@ -127,6 +128,7 @@ const EMPLOYEE_ROLES = ['tech', 'sales', 'back_office'];
 
 export const AttendanceBanner = () => {
   const { baseRole, role, currentUser, myAttendanceToday, checkIn, checkOut } = useApp();
+  const { ensureBroadcastSeen } = useBroadcastGate();
   const [isWorking, setIsWorking] = useState(false);
 
   if (!EMPLOYEE_ROLES.includes(role)) return null;
@@ -141,6 +143,8 @@ export const AttendanceBanner = () => {
   const handleCheckIn = async () => {
     setIsWorking(true);
     try {
+      // An unread admin broadcast is shown first; check-in continues after "Got it".
+      await ensureBroadcastSeen();
       const location = await captureLocation();
       await checkIn(location);
     } finally {
