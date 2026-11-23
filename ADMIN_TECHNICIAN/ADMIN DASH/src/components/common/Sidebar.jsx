@@ -7,6 +7,7 @@ import { useTechWorkload } from '../../hooks/useTechWorkload';
 import { techNavItems as sharedTechNavItems, salesNavItems, backOfficeNavItems, filterForViewAs } from '../../config/employeeNavItems';
 import { adminNavItems, filterAdminNavItems, groupAdminNavItems } from '../../config/adminNavItems';
 import { quoteNavItems, useQuoteAccess } from '../quotes/quoteShared';
+import { tallyNavItems, useTallyAccess } from '../tally/tallyShared';
 import {
   LogOut,
   ShieldAlert,
@@ -31,6 +32,8 @@ export const Sidebar = () => {
   const { total: techOpenJobs } = useTechWorkload();
   // Back-Office employees tagged Quote Manager also get the quotation pages.
   const quoteAccess = useQuoteAccess(role === 'back_office');
+  // …and those tagged Tally Maker get Tally Desk.
+  const tallyAccess = useTallyAccess(role === 'back_office');
 
   const [showTechSelector, setShowTechSelector] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -94,7 +97,8 @@ export const Sidebar = () => {
 
   const allNavItems = role === 'admin' ? adminNavItems
     : role === 'sales' ? filterForViewAs(salesNavItems, isViewingAsSales)
-    : role === 'back_office' ? [...backOfficeNavItems, ...(quoteAccess.mode === 'manager' ? quoteNavItems : [])]
+    : role === 'back_office' ? [...backOfficeNavItems, ...(quoteAccess.mode === 'manager' ? quoteNavItems : []),
+      ...(tallyAccess.canAccess ? tallyNavItems : [])]
     : techNavItems;
   const navItems = role === 'admin'
     ? filterAdminNavItems(allNavItems, enabledModules, rolePermissions, currentUser, canAccessAdminPage)

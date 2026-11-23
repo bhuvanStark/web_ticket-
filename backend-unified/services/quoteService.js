@@ -1142,6 +1142,24 @@ async function insertContent(client, versionId, sections) {
   }
 }
 
+// An HSN/SAC typed on a quote line fills in its catalog item when the item
+// has none yet, so the Clean-up "no HSN" count drops as quotes are worked
+// on. An item that already has a code is never overwritten from a quote.
+async function fillCatalogHsn(client, sections, userId) {
+  const codes = new Map();
+  for (const line of sections.flatMap((s) => s.lines)) {
+    const code = String(line.hsn_code || '').trim();
+    if (line.item_id && code && !codes.has(line.item_id)) codes.set(line.item_id, code);
+  }
+  if (!codes.size) return;
+  await client.query(
+    `UPDATE quote_items i SET hsn_code = v.code, updated_by = $3
+       FROM unnest($1::uuid[], $2::text[]) AS v(id, code)
+      WHERE i.id = v.id AND (i.hsn_code IS NULL OR btrim(i.hsn_code) = '')`,
+    [[...codes.keys()], [...codes.values()], userId]
+  );
+}
+
 // numeric(16,2) tops out below 1e14; stop well short with a readable error.
 const MAX_TOTAL = 1e13;
 const totalsParams = (payload) => {
@@ -1166,6 +1184,7 @@ export async function saveVersion(quoteId, versionId, body, userId) {
     );
     await client.query('DELETE FROM quote_sections WHERE version_id = $1', [versionId]);
     await insertContent(client, versionId, payload.sections);
+    await fillCatalogHsn(client, payload.sections, userId);
     // Saving is editing: the saver holds (or renews) the lease.
     await holdLock(client, quoteId, userId);
     await logEvent(client, quoteId, 'saved', { by: userId, versionNo });

@@ -12,6 +12,7 @@ import { validateForm, required, email as emailRule, phone as phoneRule, minLeng
 import { fetchBackOfficeInApi, createBackOfficeInApi, updateBackOfficeInApi } from '../../services/backOfficeApiService';
 import { RemoveStaffDialog } from '../common/RemoveStaffDialog';
 import { useQuoteManagers, QuoteManagerToggle } from '../quotes/QuoteManagerToggle';
+import { useTallyMakers, TallyMakerToggle } from '../tally/TallyMakerToggle';
 
 const FieldError = ({ children }) =>
   children ? <p className="mt-1 text-[11px] font-semibold text-[#DC2626]">{children}</p> : null;
@@ -144,6 +145,7 @@ export const BackOfficePage = () => {
   // Quotation module — only the Super Admin assigns the Quote Manager tag.
   const isSuperAdmin = currentUser?.isSuperAdmin === true;
   const quoteManagers = useQuoteManagers(isSuperAdmin);
+  const tallyMakers = useTallyMakers(isSuperAdmin);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -221,12 +223,13 @@ export const BackOfficePage = () => {
                 <th className="px-6 py-4 text-left">Phone</th>
                 <th className="px-6 py-4 text-left">Branch</th>
                 {isSuperAdmin && <th className="px-6 py-4 text-left">Quotations</th>}
+                {isSuperAdmin && <th className="px-6 py-4 text-left">Tally</th>}
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F2F4F7]">
               {filtered.length === 0 ? (
-                <tr><td colSpan={isSuperAdmin ? 5 : 4} className="p-8 text-center text-[#667085]">No Back-Office employees match the selected filters.</td></tr>
+                <tr><td colSpan={isSuperAdmin ? 6 : 4} className="p-8 text-center text-[#667085]">No Back-Office employees match the selected filters.</td></tr>
               ) : (
                 filtered.map((e) => (
                   <tr key={e.id} className="hover:bg-[#F8FAFC] transition-all">
@@ -238,6 +241,9 @@ export const BackOfficePage = () => {
                     <td className="px-6 py-4 align-middle text-[#475467] font-medium">{e.location || '—'}</td>
                     {isSuperAdmin && (
                       <td className="px-6 py-4 align-middle"><QuoteManagerToggle employee={e} managers={quoteManagers} showToast={showToast} /></td>
+                    )}
+                    {isSuperAdmin && (
+                      <td className="px-6 py-4 align-middle"><TallyMakerToggle employee={e} makers={tallyMakers} showToast={showToast} /></td>
                     )}
                     <td className="px-6 py-4 align-middle">
                       <div className="flex items-center justify-end gap-2">

@@ -41,6 +41,7 @@ import salesDailyReportsRouter from './routes/salesDailyReports.js';
 import techReportsRouter from './routes/techReports.js';
 // Quotation module (Back-Office Quote Managers). Additive.
 import quotesRouter from './routes/quotes.js';
+import tallyRouter from './routes/tally.js';
 // Broadcasts — admin announcement popups for employees.
 import broadcastsRouter from './routes/broadcasts.js';
 import adminBroadcastsRouter from './routes/adminBroadcasts.js';
@@ -155,6 +156,7 @@ app.use('/api/back-office', backOfficeRouter);
 app.use('/api/sales-leads', leadsRouter);
 app.use('/api/sales-daily-reports', salesDailyReportsRouter);
 app.use('/api/quotes', quotesRouter);
+app.use('/api/tally', tallyRouter);
 app.use('/api/broadcasts', broadcastsRouter);
 
 // ============================================

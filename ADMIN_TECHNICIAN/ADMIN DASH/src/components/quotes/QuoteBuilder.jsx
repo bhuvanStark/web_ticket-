@@ -29,7 +29,8 @@ const AUTOSAVE_MS = 3000;
 // autosave waits until a freshly added blank line is filled in.
 const hasBlankLine = (doc) => doc.sections.some((s) => s.lines.some((l) => !l.model_name && !String(l.description || '').trim()));
 // Every line needs HSN (goods) or SAC (services) before the quote is issued
-// or exported; Tally and the DC print it per item. Drafts save without it.
+// or marked Won; Tally and the DC print it per item. Drafts save and export
+// without it (export only warns).
 const countMissingHsn = (doc) => doc.sections.reduce((n, s) => n + s.lines.filter((l) => !String(l.hsn_code || '').trim()).length, 0);
 
 // A superseded (or, before manual versioning, issued) version prints the
@@ -935,7 +936,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   // ---- exports ----
   // Exporting never changes the quotation; only "New version" locks one.
   const doExport = async (format, internal, accounting = false) => {
-    if (missingHsn) { showToast(hsnBlockMessage, 'error'); return; }
+    if (missingHsn && !window.confirm(`${missingHsn} line(s) have no HSN/SAC code, so that column will be blank. Export anyway?`)) return;
     if (dirty && !window.confirm('This version has unsaved changes. Export what is on screen anyway?')) return;
     try {
       recordQuoteExport(quoteId, versionMeta.id, format, internal, accounting).catch(() => {});
@@ -1241,7 +1242,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
           <AlertTriangle className="w-4 h-4 text-[#D92D20] shrink-0 mt-0.5" />
           <p>
             <b className="text-[#B42318]">{missingHsn} line{missingHsn === 1 ? '' : 's'} without an HSN/SAC code.</b>{' '}
-            Products need an HSN and services a SAC. You can keep editing, but the quotation can't be exported, marked Under Process or Won until every line has one.
+            Products need an HSN and services a SAC. You can keep editing and exporting, but the quotation can't be marked Under Process or Won until every line has one. A code typed here is also saved to the item in Quote Items if it has none.
           </p>
         </div>
       )}

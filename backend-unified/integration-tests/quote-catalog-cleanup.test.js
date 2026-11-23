@@ -56,6 +56,8 @@ test.before(async () => {
 
 test.after(async () => {
   await new Promise((resolve) => server.close(resolve));
+  await pool.query(`DELETE FROM quotes WHERE lead_id IN (SELECT id FROM quote_leads WHERE customer LIKE $1)`, [`%${suffix}`]);
+  await pool.query('DELETE FROM quote_leads WHERE customer LIKE $1', [`%${suffix}`]);
   await pool.query('DELETE FROM quote_items WHERE model_name LIKE $1', [`%${suffix}`]);
   await pool.query('DELETE FROM quote_groups WHERE name LIKE $1', [`%${suffix}`]);
   await pool.query('DELETE FROM quote_group_categories WHERE category_id IN (SELECT id FROM quote_categories WHERE name LIKE $1)', [`%${suffix}`]);
@@ -199,6 +201,22 @@ test('Excel import updates by brand + model no, else by description, and rejects
   assert.equal(bad.status, 400);
   assert.equal(bad.json.details[0].row, 3);
   assert.equal((await item(state.k1)).price, 5, 'nothing saved');
+});
+
+test('an HSN typed on a quote line fills in its catalog item, but never overwrites one', async () => {
+  const blank = await oldItem(state.kramer.id, 'Quote fill', { hsn: null });
+  const lead = await call('POST', '/leads', { customer: tag('Customer'), project: 'Room' });
+  assert.equal(lead.status, 201);
+  const quote = (await call('POST', '/', { lead_id: lead.data.id })).data;
+  const version = (await call('GET', `/${quote.id}/versions/${quote.version_id}`)).data.version;
+  const line = (itemId, hsn) => ({ line_type: 'supply', item_id: itemId, model_name: 'X', hsn_code: hsn, qty: 1, osp_unit: 100 });
+  const saved = await call('PUT', `/${quote.id}/versions/${quote.version_id}`, {
+    sm: 0.85, rounding_step: 100, quote_date: '2026-11-23', notes: '', project_ref: '', base_updated_at: version.updated_at,
+    sections: [{ kind: 'solution', name: 'Room', lines: [line(blank, ' 85287219 '), line(state.a1, '11111111')] }]
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.json));
+  assert.equal((await item(blank)).hsn_code, '85287219', 'empty catalog HSN filled from the quote');
+  assert.equal((await item(state.a1)).hsn_code, '85437099', 'existing catalog HSN kept');
 });
 
 test('an empty brand can be removed; one with items cannot', async () => {

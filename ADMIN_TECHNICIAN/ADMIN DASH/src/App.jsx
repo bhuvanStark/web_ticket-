@@ -52,6 +52,8 @@ import { SalesDailyReportPage } from './components/sales/SalesDailyReportPage';
 // Quotation module — Back-Office Quote Managers + Super Admin (read-only). Additive.
 import { QuoteWorkspace } from './components/quotes/QuoteWorkspace';
 import { QUOTE_PAGE_IDS } from './components/quotes/quoteShared';
+import { TallyDesk } from './components/tally/TallyDesk';
+import { TALLY_PAGE_IDS } from './components/tally/tallyShared';
 
 // Modals & Panels
 import { TicketDetailsModal } from './components/requests/TicketDetailsModal';
@@ -198,6 +200,7 @@ const MainLayout = () => {
     }
     if (role === 'back_office') {
       if (QUOTE_PAGE_IDS.includes(activePage)) return <QuoteWorkspace section={activePage} onNavigate={setActivePage} />;
+      if (TALLY_PAGE_IDS.includes(activePage)) return <TallyDesk />;
       return activePage === 'my-attendance' ? <MyAttendancePage /> : <BackOfficeDashboard />;
     }
 
