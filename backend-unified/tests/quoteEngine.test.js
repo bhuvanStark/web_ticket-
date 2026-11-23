@@ -71,23 +71,38 @@ test('PPM lines are always services and a line needs an item or description', ()
 });
 
 test('import lists every bad row and defaults GST to 18', () => {
-  const ok = parseImportRows([{ category: 'Displays', model_name: '55UL5Q', price: '42,000' }]);
+  const row = { group: 'LG', category: 'Display', model_no: '55UL5Q', model_name: '55-inch 4K UHD Display', hsn_code: '85287219', price: '42,000' };
+  const ok = parseImportRows([row]);
   assert.equal(ok[0].price, 42000);
   assert.equal(ok[0].gst_rate, 18);
   assert.throws(
-    () => parseImportRows([{ category: '', model_name: 'X', price: 1 }, { category: 'A', model_name: 'Y', price: 'abc' }]),
+    () => parseImportRows([{ ...row, group: '' }, { ...row, price: 'abc' }]),
     (err) => err.status === 400 && err.details.length === 2 && err.details[0].row === 2
   );
 });
 
-test('item needs a category, a model name and a price', () => {
-  status400(() => parseItem({ model_name: 'X', price: 1 }), /Category/);
-  status400(() => parseItem({ category_id: '00000000-0000-4000-8000-000000000000', price: 1 }), /Description/);
-  status400(() => parseItem({ category_id: '00000000-0000-4000-8000-000000000000', model_name: 'X' }), /Price/);
+test('import keeps the last row for the same brand + model no', () => {
+  const row = { group: 'LG', category: 'Display', model_no: '55UL5Q', model_name: 'A', hsn_code: '85287219', price: 1 };
+  const out = parseImportRows([row, { ...row, group: 'lg', model_no: '55ul5q', model_name: 'B' }, { ...row, group: 'Samsung' }]);
+  assert.deepEqual(out.map((r) => r.model_name), ['B', 'A']);
+  assert.throws(() => parseImportRows([{ ...row, model_no: '' }]), (err) => /Model no/.test(err.details[0].error));
+  assert.throws(() => parseImportRows([{ ...row, hsn_code: ' ' }]), (err) => /HSN\/SAC/.test(err.details[0].error));
+});
+
+test('item needs a brand, a category, a model no, a description, an HSN/SAC and a price', () => {
+  const id = '00000000-0000-4000-8000-000000000000';
+  const full = { group_id: id, category_id: id, model_no: '55UL5Q', model_name: 'X', hsn_code: '85287219', price: 1 };
+  status400(() => parseItem({ ...full, group_id: undefined }), /Brand/);
+  status400(() => parseItem({ ...full, category_id: undefined }), /Category/);
+  status400(() => parseItem({ ...full, model_no: ' ' }), /Model no/);
+  status400(() => parseItem({ ...full, model_name: '' }), /Description/);
+  status400(() => parseItem({ ...full, price: undefined }), /Price/);
+  status400(() => parseItem({ ...full, hsn_code: '' }), /HSN\/SAC/);
 });
 
 test('product links must be web addresses; a bare domain gets https://', () => {
-  const item = { category_id: '00000000-0000-4000-8000-000000000000', model_name: 'X', price: 1 };
+  const id = '00000000-0000-4000-8000-000000000000';
+  const item = { group_id: id, category_id: id, model_no: 'M1', model_name: 'X', hsn_code: '998739', price: 1 };
   assert.equal(parseItem(item).product_link, null);
   assert.equal(parseItem({ ...item, product_link: ' www.lg.com/55UL5Q ' }).product_link, 'https://www.lg.com/55UL5Q');
   assert.equal(parseItem({ ...item, product_link: 'http://neat.no' }).product_link, 'http://neat.no');
@@ -126,15 +141,6 @@ test('values are rounded to what the database stores', () => {
 test('an SM that would store as zero is rejected', () => {
   status400(() => parseVersionPayload({ ...validVersion, sm: 0.00001 }), /SM/);
   status400(() => parseVersionPayload({ ...validVersion, sections: [{ lines: [{ description: 'x', sm_override: 0.001 }] }] }), /SM/);
-});
-
-test('a model repeated in one import file keeps the last row', () => {
-  const rows = parseImportRows([
-    { category: 'A', model_name: '55UL5Q', price: 1 },
-    { category: 'A', model_name: '55ul5q', price: 2 }
-  ]);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].price, 2);
 });
 
 test('a quote lead needs a customer and a project', () => {

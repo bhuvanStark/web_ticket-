@@ -32,7 +32,7 @@ async function call(method, path, token, body) {
 
 const payload = (base, description = 'Install') => ({
   sm: 0.85, rounding_step: 100, quote_date: '2026-11-11', notes: 'n', project_ref: 'REF-1', base_updated_at: base,
-  sections: [{ kind: 'solution', name: 'Room', lines: [{ line_type: 'service', description, qty: 1, osp_unit: 850 }] }]
+  sections: [{ kind: 'solution', name: 'Room', lines: [{ line_type: 'service', description, hsn_code: '998739', qty: 1, osp_unit: 850 }] }]
 });
 
 test.before(async () => {
@@ -278,4 +278,22 @@ test('line comment and product link save, copy to the next version, and links mu
   const v3 = (await call('GET', `/${id}/versions/${next.version_id}`, tokens.a)).json.data.version;
   assert.equal(v3.sections[0].lines[0].comment, 'Already with the client');
   assert.equal(v3.sections[0].lines[0].product_link, 'https://www.lg.com/display');
+  state.termsV3 = v3;
+});
+
+test('a draft saves without HSN/SAC, but cannot go Under Process or Won until every line has one', async () => {
+  const { id } = state.termsQuote;
+  const v3 = state.termsV3;
+  const sent = await call('PATCH', `/${id}/status`, tokens.a, { status: 'sent' });
+  assert.equal(sent.status, 400);
+  assert.match(sent.json.error, /1 line\(s\) have no HSN\/SAC/);
+  const won = await call('PATCH', `/${id}/status`, tokens.a, { status: 'won', po_number: 'PO-1', po_date: '2026-11-11' });
+  assert.equal(won.status, 400);
+
+  const fixed = await call('PUT', `/${id}/versions/${v3.id}`, tokens.a, {
+    ...payload(v3.updated_at),
+    sections: [{ kind: 'solution', name: 'Room', lines: [{ line_type: 'supply', model_name: 'Display', hsn_code: '85287219', qty: 0, osp_unit: 850 }] }]
+  });
+  assert.equal(fixed.status, 200);
+  assert.equal((await call('PATCH', `/${id}/status`, tokens.a, { status: 'sent' })).status, 200);
 });

@@ -34,13 +34,32 @@ export const fetchQuoteManagerIds = () => call('/managers', { operation: 'load Q
 export const setQuoteManager = (backOfficeId, enabled) =>
   call(`/managers/${backOfficeId}`, { method: 'PUT', body: { enabled }, operation: 'update Quote Manager' });
 
-// Catalog
+// Catalog: brands (groups) > shared categories > items
+export const fetchQuoteGroups = () => call('/groups', { operation: 'load brands' });
+export const createQuoteGroup = (name) => call('/groups', { method: 'POST', body: { name }, operation: 'create brand' });
+export const renameQuoteGroup = (id, name) => call(`/groups/${id}`, { method: 'PATCH', body: { name }, operation: 'rename brand' });
+export const deleteQuoteGroup = (id) => call(`/groups/${id}`, { method: 'DELETE', operation: 'delete brand' });
+export const mergeQuoteGroup = (id, intoGroupId) =>
+  call(`/groups/${id}/merge`, { method: 'POST', body: { into_group_id: intoGroupId }, operation: 'merge brands' });
+export const convertQuoteGroupToCategory = (id, intoGroupId) =>
+  call(`/groups/${id}/to-category`, { method: 'POST', body: { into_group_id: intoGroupId || null }, operation: 'turn brand into category' });
+export const linkQuoteGroupCategory = (groupId, categoryId) =>
+  call(`/groups/${groupId}/categories/${categoryId}`, { method: 'PUT', operation: 'add category to brand' });
+export const unlinkQuoteGroupCategory = (groupId, categoryId) =>
+  call(`/groups/${groupId}/categories/${categoryId}`, { method: 'DELETE', operation: 'remove category from brand' });
+
 export const fetchQuoteCategories = () => call('/categories', { operation: 'load categories' });
-export const createQuoteCategory = (name) => call('/categories', { method: 'POST', body: { name }, operation: 'create category' });
+export const createQuoteCategory = (name, groupId) =>
+  call('/categories', { method: 'POST', body: { name, group_id: groupId || undefined }, operation: 'create category' });
 export const renameQuoteCategory = (id, name) => call(`/categories/${id}`, { method: 'PATCH', body: { name }, operation: 'rename category' });
 export const deleteQuoteCategory = (id) => call(`/categories/${id}`, { method: 'DELETE', operation: 'delete category' });
 
 export const fetchQuoteItems = (params) => call(`/items${qs(params)}`, { operation: 'load items' });
+export const fetchQuoteCatalogSummary = () => call('/items/summary', { operation: 'load catalog summary' });
+export const bulkSetQuoteItems = (ids, { groupId, categoryId }) =>
+  call('/items/bulk-set', { method: 'POST', body: { ids, group_id: groupId, category_id: categoryId }, operation: 'update items' });
+export const setQuoteItemModelNos = (items) => call('/items/model-nos', { method: 'POST', body: { items }, operation: 'save model nos' });
+export const setQuoteItemHsnCodes = (items) => call('/items/hsn-codes', { method: 'POST', body: { items }, operation: 'save HSN/SAC codes' });
 export const createQuoteItem = (item) => call('/items', { method: 'POST', body: item, operation: 'create item' });
 export const updateQuoteItem = (id, item) => call(`/items/${id}`, { method: 'PATCH', body: item, operation: 'update item' });
 export const deleteQuoteItems = (ids) => call('/items/delete', { method: 'POST', body: { ids }, operation: 'delete items' });

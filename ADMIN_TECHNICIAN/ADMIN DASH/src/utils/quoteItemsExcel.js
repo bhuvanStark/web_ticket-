@@ -1,15 +1,19 @@
-// Quotation Items catalog ⇄ Excel. Columns: Category, Series, Model Name,
-// HSN Code, Price, GST %, Remark, Product Link. Headers are matched by name (any order,
-// case/spacing ignored). ExcelJS is loaded only when used.
+// Quotation Items catalog ⇄ Excel. Columns: Brand, Category, Model No,
+// Description, Series, HSN/SAC, Price, GST %, Model Name / Make, Product Link.
+// Headers are matched by name (any order, case/spacing ignored). ExcelJS is
+// loaded only when used. An export can be filled in and imported back: rows
+// match on Brand + Model No, else on Description.
 
 export const ITEM_COLUMNS = [
-  { key: 'category', header: 'Category', width: 22, aliases: ['category', 'basket', 'categoryname'] },
+  { key: 'group', header: 'Brand', width: 18, aliases: ['brand', 'group', 'make', 'oem'] },
+  { key: 'category', header: 'Category', width: 20, aliases: ['category', 'categoryname', 'type'] },
+  { key: 'model_no', header: 'Model No', width: 18, aliases: ['modelno', 'modelnumber', 'partno', 'sku'] },
+  { key: 'model_name', header: 'Description', width: 40, aliases: ['description', 'modelname', 'item', 'itemname', 'product'] },
   { key: 'series', header: 'Series', width: 18, aliases: ['series'] },
-  { key: 'model_name', header: 'Model Name', width: 26, aliases: ['modelname', 'model', 'item', 'itemname', 'product'] },
-  { key: 'hsn_code', header: 'HSN Code', width: 14, aliases: ['hsncode', 'hsn', 'hsnsac', 'sac'] },
+  { key: 'hsn_code', header: 'HSN/SAC', width: 14, aliases: ['hsncode', 'hsn', 'hsnsac', 'sac'] },
   { key: 'price', header: 'Price', width: 14, aliases: ['price', 'osp', 'cost', 'unitprice', 'ospunit'] },
   { key: 'gst_rate', header: 'GST %', width: 9, aliases: ['gst', 'gstrate', 'gstpercent', 'tax'] },
-  { key: 'remark', header: 'Remark', width: 32, aliases: ['remark', 'remarks', 'notes', 'note'] },
+  { key: 'remark', header: 'Model Name / Make', width: 28, aliases: ['modelnamemake', 'remark', 'remarks', 'notes', 'note'] },
   { key: 'product_link', header: 'Product Link', width: 36, aliases: ['productlink', 'link', 'url', 'producturl', 'website'] }
 ];
 
@@ -46,7 +50,7 @@ function styleHeader(sheet) {
   header.height = 22;
 }
 
-// Returns [{ row, category, series, model_name, hsn_code, price, gst_rate, remark, product_link }].
+// Returns [{ row, group, category, model_no, model_name, series, hsn_code, price, gst_rate, remark, product_link }].
 export async function parseItemsWorkbook(file) {
   const ExcelJS = (await import('exceljs')).default;
   const workbook = new ExcelJS.Workbook();
@@ -54,13 +58,13 @@ export async function parseItemsWorkbook(file) {
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error('No sheet found in this file');
 
-  // The header is the first row that names a Model column (lets a title row sit above it).
+  // The header is the first row that names a Description column (lets a title row sit above it).
   let headerRowNo = 0;
   const colFor = {};
   for (let r = 1; r <= Math.min(sheet.rowCount, 10) && !headerRowNo; r += 1) {
     const names = {};
     sheet.getRow(r).eachCell((cell, col) => { names[norm(cellValue(cell.value))] = col; });
-    if (ITEM_COLUMNS[2].aliases.some((a) => names[a])) {
+    if (ITEM_COLUMNS.find((c) => c.key === 'model_name').aliases.some((a) => names[a])) {
       headerRowNo = r;
       for (const column of ITEM_COLUMNS) {
         const hit = column.aliases.find((a) => names[a]);
@@ -68,8 +72,8 @@ export async function parseItemsWorkbook(file) {
       }
     }
   }
-  if (!headerRowNo) throw new Error('Could not find the header row. Use the template: Category, Series, Model Name, HSN Code, Price, GST %, Remark, Product Link.');
-  for (const key of ['category', 'price']) {
+  if (!headerRowNo) throw new Error('Could not find the header row. Use the template: Brand, Category, Model No, Description, Series, HSN/SAC, Price, GST %, Model Name / Make, Product Link.');
+  for (const key of ['group', 'category', 'model_no', 'hsn_code', 'price']) {
     if (!colFor[key]) throw new Error(`The "${ITEM_COLUMNS.find((c) => c.key === key).header}" column is missing.`);
   }
 
@@ -92,8 +96,11 @@ export async function parseItemsWorkbook(file) {
 // Same rules the backend applies, so the preview can flag rows up front.
 export function validateItemRow(row) {
   const problems = [];
+  if (!String(row.group ?? '').trim()) problems.push('Brand missing');
   if (!String(row.category ?? '').trim()) problems.push('Category missing');
-  if (!String(row.model_name ?? '').trim()) problems.push('Model name missing');
+  if (!String(row.model_no ?? '').trim()) problems.push('Model No missing');
+  if (!String(row.model_name ?? '').trim()) problems.push('Description missing');
+  if (!String(row.hsn_code ?? '').trim()) problems.push('HSN/SAC missing');
   const price = typeof row.price === 'number' ? row.price : Number(String(row.price ?? '').replace(/[,₹\s]/g, ''));
   if (row.price === '' || row.price == null || !Number.isFinite(price) || price < 0) problems.push('Price invalid');
   if (row.gst_rate !== '' && row.gst_rate != null) {
@@ -109,8 +116,8 @@ export async function downloadItemsTemplate() {
   const sheet = workbook.addWorksheet('Items', { views: [{ state: 'frozen', ySplit: 1 }] });
   sheet.columns = ITEM_COLUMNS.map(({ header, key, width }) => ({ header, key, width }));
   styleHeader(sheet);
-  sheet.addRow({ category: 'LG Displays', series: 'UL Series', model_name: '55UL5Q', hsn_code: '85287219', price: 42000, gst_rate: 18, remark: '55" UHD, 24/7', product_link: 'https://www.lg.com/' });
-  sheet.addRow({ category: 'Installation', series: '', model_name: 'SVC-INSTALL', hsn_code: '998739', price: 10000, gst_rate: 18, remark: 'On-site installation & handover' });
+  sheet.addRow({ group: 'LG', category: 'Display', model_no: '55UL5Q', model_name: '55-inch 4K UHD Commercial Display', series: 'UL Series', hsn_code: '85287219', price: 42000, gst_rate: 18, remark: 'LG 55UL5Q', product_link: 'https://www.lg.com/' });
+  sheet.addRow({ group: 'Samsung', category: 'Display', model_no: 'QM55C', model_name: '55-inch 4K UHD Smart Signage', series: 'QMC Series', hsn_code: '85287219', price: 45000, gst_rate: 18, remark: 'Samsung QM55C' });
   sheet.getColumn('price').numFmt = '#,##0.00';
   download(await workbook.xlsx.writeBuffer(), 'quote-items-template.xlsx');
 }
@@ -123,7 +130,8 @@ export async function exportItemsWorkbook(items) {
   styleHeader(sheet);
   for (const item of items) {
     sheet.addRow({
-      category: item.category_name, series: item.series || '', model_name: item.model_name, hsn_code: item.hsn_code || '',
+      group: item.group_name || '', category: item.category_name || '', model_no: item.model_no || '',
+      model_name: item.model_name, series: item.series || '', hsn_code: item.hsn_code || '',
       price: Number(item.price), gst_rate: Number(item.gst_rate), remark: item.remark || '', product_link: item.product_link || ''
     });
   }

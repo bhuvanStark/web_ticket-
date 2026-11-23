@@ -1,4 +1,4 @@
-// Quotation module — catalog (categories + items), quote leads, and quotes
+// Quotation module — catalog (brands, categories, items), quote leads, and quotes
 // with versions. Talks to Postgres directly through the pool; the module's
 // tables are deliberately not in config/databaseClient.js's allowlist so
 // nothing outside this module can reach them through the shared builder.
@@ -132,52 +132,229 @@ const toNum = (row, fields) => {
 };
 
 // ============================================
-// CATEGORIES
+// CATALOG: GROUPS (brands) > CATEGORIES > ITEMS
 // ============================================
+// Rules (migration 053): a group is a brand; categories are one shared list
+// a group links to; an item is identified by group + model no. New and
+// edited items need all three, plus an HSN (goods) or SAC (services) code. Items imported before 053 have no category
+// or model no yet; the clean-up actions below exist to sort them.
+
+const nameTaken = (what) => (error) => {
+  if (error.code === '23505') throw fail(400, `A ${what} with this name already exists`);
+  throw error;
+};
+
+// After items move, make sure each group links to the categories its items use.
+async function linkUsedCategories(db, groupIds) {
+  await db.query(
+    `INSERT INTO quote_group_categories (group_id, category_id)
+     SELECT DISTINCT group_id, category_id FROM quote_items
+      WHERE group_id = ANY($1::uuid[]) AND category_id IS NOT NULL
+     ON CONFLICT DO NOTHING`,
+    [groupIds]
+  );
+}
+
+// Model nos that would collide if `itemIds` moved into `groupId`.
+async function modelNoClashes(db, itemIds, groupId) {
+  const { rows } = await db.query(
+    `SELECT DISTINCT m.model_no FROM quote_items m
+       JOIN quote_items o ON o.group_id = $2 AND o.id <> m.id
+                         AND lower(btrim(o.model_no)) = lower(btrim(m.model_no))
+      WHERE m.id = ANY($1::uuid[]) AND m.model_no IS NOT NULL AND NOT (o.id = ANY($1::uuid[]))`,
+    [itemIds, groupId]
+  );
+  // Two of the moving items (from different brands, or with none) may share one.
+  const { rows: among } = await db.query(
+    `SELECT min(model_no) AS model_no FROM quote_items
+      WHERE id = ANY($1::uuid[]) AND model_no IS NOT NULL
+      GROUP BY lower(btrim(model_no)) HAVING count(*) > 1`,
+    [itemIds]
+  );
+  return [...new Set([...rows, ...among].map((r) => r.model_no))];
+}
+
+const clashError = (models) =>
+  fail(400, `Model no ${models.slice(0, 5).join(', ')}${models.length > 5 ? '…' : ''} would then appear twice in the same brand. Change or delete the duplicate first.`);
+
+export async function listGroups() {
+  const { rows } = await query(`
+    SELECT g.id, g.name, g.created_at, g.updated_at,
+           (SELECT count(*)::int FROM quote_items i WHERE i.group_id = g.id) AS item_count,
+           (SELECT count(*)::int FROM quote_items i
+             WHERE i.group_id = g.id AND (i.category_id IS NULL OR i.model_no IS NULL OR i.hsn_code IS NULL)) AS to_fix_count,
+           COALESCE((
+             SELECT json_agg(json_build_object(
+                      'id', c.id, 'name', c.name,
+                      'item_count', (SELECT count(*) FROM quote_items i WHERE i.group_id = g.id AND i.category_id = c.id)
+                    ) ORDER BY lower(c.name))
+               FROM quote_group_categories gc JOIN quote_categories c ON c.id = gc.category_id
+              WHERE gc.group_id = g.id), '[]') AS categories
+      FROM quote_groups g
+     ORDER BY lower(g.name)`);
+  return rows;
+}
+
+export async function createGroup(body, userId) {
+  const name = text(body.name, 'Brand name', 120, { required: true });
+  const { rows } = await query(
+    'INSERT INTO quote_groups (name, created_by) VALUES ($1, $2) RETURNING id, name, created_at, updated_at',
+    [name, userId]
+  ).catch(nameTaken('brand'));
+  return { ...rows[0], item_count: 0, to_fix_count: 0, categories: [] };
+}
+
+export async function renameGroup(id, body) {
+  const name = text(body.name, 'Brand name', 120, { required: true });
+  const { rows } = await query(
+    'UPDATE quote_groups SET name = $2 WHERE id = $1 RETURNING id, name, created_at, updated_at',
+    [uuid(id, 'Brand'), name]
+  ).catch(nameTaken('brand'));
+  if (!rows[0]) throw fail(404, 'Brand not found');
+  return rows[0];
+}
+
+export async function deleteGroup(id) {
+  const { rows } = await query('SELECT count(*)::int AS n FROM quote_items WHERE group_id = $1', [uuid(id, 'Brand')]);
+  if (rows[0].n > 0) throw fail(400, `This brand still has ${rows[0].n} item(s). Move them first.`);
+  const { rowCount } = await query('DELETE FROM quote_groups WHERE id = $1', [id]).catch((error) => {
+    if (error.code === '23503') throw fail(400, 'This brand still has items. Move them first.');
+    throw error;
+  });
+  if (!rowCount) throw fail(404, 'Brand not found');
+}
+
+// Clean-up: move every item of one brand into another (e.g. "Krammer" →
+// "Kramer"), keep its categories, and remove the now-empty brand.
+export async function mergeGroup(id, body) {
+  const from = uuid(id, 'Brand');
+  const into = uuid(body.into_group_id, 'Target brand');
+  if (from === into) throw fail(400, 'Pick a different brand to merge into');
+  return withTransaction(async (client) => {
+    const { rows: found } = await client.query('SELECT id FROM quote_groups WHERE id = ANY($1::uuid[]) FOR UPDATE', [[from, into]]);
+    if (found.length !== 2) throw fail(404, 'Brand not found');
+    const { rows: items } = await client.query('SELECT id FROM quote_items WHERE group_id = $1', [from]);
+    const ids = items.map((r) => r.id);
+    const clashes = await modelNoClashes(client, ids, into);
+    if (clashes.length) throw clashError(clashes);
+    await client.query('UPDATE quote_items SET group_id = $2 WHERE group_id = $1', [from, into]);
+    await client.query(
+      `INSERT INTO quote_group_categories (group_id, category_id)
+       SELECT $2, category_id FROM quote_group_categories WHERE group_id = $1 ON CONFLICT DO NOTHING`,
+      [from, into]
+    );
+    await client.query('DELETE FROM quote_groups WHERE id = $1', [from]);
+    return { moved: ids.length };
+  });
+}
+
+// Clean-up: a "brand" that is really a product type (e.g. "AV Switching").
+// Its items get that category (unless already sorted) and move to the chosen
+// brand, or to no brand for the team to set one by one. The brand is removed.
+export async function groupToCategory(id, body, userId) {
+  const from = uuid(id, 'Brand');
+  const into = body.into_group_id ? uuid(body.into_group_id, 'Target brand') : null;
+  if (into === from) throw fail(400, 'Pick a different brand for these items');
+  return withTransaction(async (client) => {
+    const { rows: groups } = await client.query('SELECT id, name FROM quote_groups WHERE id = $1 FOR UPDATE', [from]);
+    if (!groups[0]) throw fail(404, 'Brand not found');
+    if (into) {
+      const { rows } = await client.query('SELECT id FROM quote_groups WHERE id = $1', [into]);
+      if (!rows[0]) throw fail(404, 'Target brand not found');
+    }
+    const { rows: cat } = await client.query(
+      `INSERT INTO quote_categories (name, created_by) VALUES ($1, $2)
+       ON CONFLICT ((lower(btrim(name)))) DO UPDATE SET name = quote_categories.name
+       RETURNING id, name`,
+      [groups[0].name, userId]
+    );
+    const { rows: items } = await client.query('SELECT id FROM quote_items WHERE group_id = $1', [from]);
+    const ids = items.map((r) => r.id);
+    // Model nos are kept even with no brand (the unique rule only bites once
+    // a brand is set, and setting one checks for clashes first).
+    if (into) {
+      const clashes = await modelNoClashes(client, ids, into);
+      if (clashes.length) throw clashError(clashes);
+    }
+    await client.query(
+      'UPDATE quote_items SET category_id = COALESCE(category_id, $2), group_id = $3 WHERE group_id = $1',
+      [from, cat[0].id, into]
+    );
+    if (into) await linkUsedCategories(client, [into]);
+    await client.query('DELETE FROM quote_groups WHERE id = $1', [from]);
+    return { moved: ids.length, category: cat[0] };
+  });
+}
+
+// ---- shared categories ----
 
 export async function listCategories() {
   const { rows } = await query(`
-    SELECT c.id, c.name, c.created_at, c.updated_at, count(i.id)::int AS item_count
+    SELECT c.id, c.name, c.created_at, c.updated_at,
+           (SELECT count(*)::int FROM quote_items i WHERE i.category_id = c.id) AS item_count,
+           (SELECT count(*)::int FROM quote_group_categories gc WHERE gc.category_id = c.id) AS group_count
       FROM quote_categories c
-      LEFT JOIN quote_items i ON i.category_id = c.id
-     GROUP BY c.id
      ORDER BY lower(c.name)`);
   return rows;
 }
 
-const categoryNameTaken = (error) => {
-  if (error.code === '23505') throw fail(400, 'A category with this name already exists');
-  throw error;
-};
-
+// Optionally linked straight into a brand (the usual way to add one).
 export async function createCategory(body, userId) {
   const name = text(body.name, 'Category name', 120, { required: true });
-  const { rows } = await query(
-    'INSERT INTO quote_categories (name, created_by) VALUES ($1, $2) RETURNING id, name, created_at, updated_at',
-    [name, userId]
-  ).catch(categoryNameTaken);
-  return { ...rows[0], item_count: 0 };
+  const groupId = body.group_id ? uuid(body.group_id, 'Brand') : null;
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'INSERT INTO quote_categories (name, created_by) VALUES ($1, $2) RETURNING id, name, created_at, updated_at',
+      [name, userId]
+    ).catch(nameTaken('category'));
+    if (groupId) {
+      await client.query('INSERT INTO quote_group_categories (group_id, category_id) VALUES ($1, $2)', [groupId, rows[0].id])
+        .catch((error) => { if (error.code === '23503') throw fail(404, 'Brand not found'); throw error; });
+    }
+    return { ...rows[0], item_count: 0, group_count: groupId ? 1 : 0 };
+  });
 }
 
+// Renames it for every brand that uses it.
 export async function renameCategory(id, body) {
   const name = text(body.name, 'Category name', 120, { required: true });
   const { rows } = await query(
     'UPDATE quote_categories SET name = $2 WHERE id = $1 RETURNING id, name, created_at, updated_at',
     [uuid(id, 'Category'), name]
-  ).catch(categoryNameTaken);
+  ).catch(nameTaken('category'));
   if (!rows[0]) throw fail(404, 'Category not found');
   return rows[0];
 }
 
 export async function deleteCategory(id) {
-  const { rows } = await query('SELECT count(*)::int AS n FROM quote_items WHERE category_id = $1', [uuid(id, 'Category')]);
-  if (rows[0].n > 0) throw fail(400, `This category still has ${rows[0].n} item(s). Move or delete them first.`);
-  // FK RESTRICT still guards an item added between the count and the delete.
+  const { rows } = await query(
+    `SELECT (SELECT count(*)::int FROM quote_items WHERE category_id = $1) AS items,
+            (SELECT count(*)::int FROM quote_group_categories WHERE category_id = $1) AS groups`,
+    [uuid(id, 'Category')]
+  );
+  if (rows[0].items > 0) throw fail(400, `This category still has ${rows[0].items} item(s). Move them first.`);
+  if (rows[0].groups > 0) throw fail(400, `${rows[0].groups} brand(s) still use this category. Remove it from them first.`);
   const { rowCount } = await query('DELETE FROM quote_categories WHERE id = $1', [id]).catch((error) => {
-    if (error.code === '23503') throw fail(400, 'This category still has items. Move or delete them first.');
+    if (error.code === '23503') throw fail(400, 'This category is still in use.');
     throw error;
   });
   if (!rowCount) throw fail(404, 'Category not found');
+}
+
+export async function linkCategory(groupId, categoryId) {
+  await query(
+    'INSERT INTO quote_group_categories (group_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [uuid(groupId, 'Brand'), uuid(categoryId, 'Category')]
+  ).catch((error) => { if (error.code === '23503') throw fail(404, 'Brand or category not found'); throw error; });
+}
+
+export async function unlinkCategory(groupId, categoryId) {
+  const { rows } = await query(
+    'SELECT count(*)::int AS n FROM quote_items WHERE group_id = $1 AND category_id = $2',
+    [uuid(groupId, 'Brand'), uuid(categoryId, 'Category')]
+  );
+  if (rows[0].n > 0) throw fail(400, `${rows[0].n} item(s) of this brand are in this category. Move them first.`);
+  await query('DELETE FROM quote_group_categories WHERE group_id = $1 AND category_id = $2', [groupId, categoryId]);
 }
 
 // ============================================
@@ -185,19 +362,24 @@ export async function deleteCategory(id) {
 // ============================================
 
 const ITEM_SELECT = `
-  SELECT i.id, i.category_id, c.name AS category_name, i.series, i.model_name, i.hsn_code,
-         i.price, i.gst_rate, i.remark, i.product_link, i.created_at, i.updated_at
+  SELECT i.id, i.group_id, g.name AS group_name, i.category_id, c.name AS category_name, i.model_no,
+         i.series, i.model_name, i.hsn_code, i.price, i.gst_rate, i.remark, i.product_link,
+         (i.group_id IS NULL OR i.category_id IS NULL OR i.model_no IS NULL OR i.hsn_code IS NULL) AS needs_fix,
+         i.created_at, i.updated_at
     FROM quote_items i
-    JOIN quote_categories c ON c.id = i.category_id`;
+    LEFT JOIN quote_groups g ON g.id = i.group_id
+    LEFT JOIN quote_categories c ON c.id = i.category_id`;
 
 const itemRow = (row) => toNum(row, ['price', 'gst_rate']);
 
 export function parseItem(body) {
   return {
+    group_id: uuid(body.group_id, 'Brand'),
     category_id: uuid(body.category_id, 'Category'),
+    model_no: text(body.model_no, 'Model no', 100, { required: true }),
     series: text(body.series, 'Series', 200),
     model_name: text(body.model_name, 'Description', 200, { required: true }),
-    hsn_code: text(body.hsn_code, 'HSN code', 20),
+    hsn_code: text(body.hsn_code, 'HSN/SAC code', 20, { required: true }),
     price: number(body.price, 'Price', { required: true, max: 1e11 }),
     gst_rate: number(body.gst_rate, 'GST %', { max: 100, fallback: 18 }),
     remark: text(body.remark, 'Model name / make', 1000),
@@ -205,45 +387,74 @@ export function parseItem(body) {
   };
 }
 
-const modelTaken = (error) => {
-  if (error.code === '23505') throw fail(400, 'An item with this description already exists');
-  if (error.code === '23503') throw fail(400, 'Category not found');
+const itemTaken = (error) => {
+  if (error.code === '23505') {
+    if (error.constraint === 'quote_items_group_model_no_unique') throw fail(400, 'This brand already has an item with this model no');
+    throw fail(400, 'An item with this description already exists');
+  }
+  if (error.code === '23503') throw fail(400, 'Brand or category not found');
   throw error;
 };
 
-export async function listItems({ search, category_id, page = 1, limit = 50 } = {}) {
+const NEEDS = {
+  any: '(i.group_id IS NULL OR i.category_id IS NULL OR i.model_no IS NULL OR i.hsn_code IS NULL)',
+  group: 'i.group_id IS NULL',
+  category: 'i.category_id IS NULL',
+  model_no: 'i.model_no IS NULL',
+  hsn: 'i.hsn_code IS NULL',
+  done: '(i.group_id IS NOT NULL AND i.category_id IS NOT NULL AND i.model_no IS NOT NULL AND i.hsn_code IS NOT NULL)'
+};
+
+// group_id may be 'none' (items with no brand). needs_fix: any | group |
+// category | model_no | hsn | done.
+export async function listItems({ search, group_id, category_id, needs_fix, page = 1, limit = 50 } = {}) {
   const where = [];
   const values = [];
+  if (group_id === 'none') where.push('i.group_id IS NULL');
+  else if (group_id) {
+    values.push(uuid(group_id, 'Brand'));
+    where.push(`i.group_id = $${values.length}`);
+  }
   if (category_id) {
     values.push(uuid(category_id, 'Category'));
     where.push(`i.category_id = $${values.length}`);
+  }
+  if (needs_fix) {
+    if (!NEEDS[needs_fix]) throw fail(400, 'Unknown clean-up filter');
+    where.push(NEEDS[needs_fix]);
   }
   const term = String(search || '').trim();
   if (term) {
     values.push(`%${term.replace(/[%_\\]/g, '\\$&')}%`);
     const p = `$${values.length}`;
-    where.push(`(i.model_name ILIKE ${p} OR i.series ILIKE ${p} OR i.hsn_code ILIKE ${p} OR i.remark ILIKE ${p} OR c.name ILIKE ${p})`);
+    where.push(`(i.model_name ILIKE ${p} OR i.model_no ILIKE ${p} OR i.series ILIKE ${p} OR i.hsn_code ILIKE ${p}
+                 OR i.remark ILIKE ${p} OR g.name ILIKE ${p} OR c.name ILIKE ${p})`);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const size = Math.min(Math.max(Number.parseInt(limit, 10) || 50, 1), 200);
   const offset = (Math.max(Number.parseInt(page, 10) || 1, 1) - 1) * size;
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    query(`${ITEM_SELECT} ${whereSql} ORDER BY lower(c.name), lower(i.series) NULLS FIRST, lower(i.model_name)
+    query(`${ITEM_SELECT} ${whereSql}
+           ORDER BY lower(g.name) NULLS FIRST, lower(c.name) NULLS FIRST, lower(i.series) NULLS FIRST, lower(i.model_name)
            LIMIT ${size} OFFSET ${offset}`, values),
-    query(`SELECT count(*)::int AS n FROM quote_items i JOIN quote_categories c ON c.id = i.category_id ${whereSql}`, values)
+    query(`SELECT count(*)::int AS n FROM quote_items i
+             LEFT JOIN quote_groups g ON g.id = i.group_id
+             LEFT JOIN quote_categories c ON c.id = i.category_id ${whereSql}`, values)
   ]);
   return { rows: rows.map(itemRow), total: countRows[0].n, page: offset / size + 1, limit: size };
 }
 
-export async function createItem(body, userId) {
-  const item = parseItem(body);
-  const { rows } = await query(
-    `INSERT INTO quote_items (category_id, series, model_name, hsn_code, price, gst_rate, remark, product_link, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING id`,
-    [item.category_id, item.series, item.model_name, item.hsn_code, item.price, item.gst_rate, item.remark, item.product_link, userId]
-  ).catch(modelTaken);
-  return getItem(rows[0].id);
+export async function catalogSummary() {
+  const { rows } = await query(`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE ${NEEDS.any})::int AS to_fix,
+           count(*) FILTER (WHERE ${NEEDS.group})::int AS no_group,
+           count(*) FILTER (WHERE ${NEEDS.category})::int AS no_category,
+           count(*) FILTER (WHERE ${NEEDS.model_no})::int AS no_model_no,
+           count(*) FILTER (WHERE ${NEEDS.hsn})::int AS no_hsn
+      FROM quote_items i`);
+  return rows[0];
 }
 
 async function getItem(id) {
@@ -252,17 +463,107 @@ async function getItem(id) {
   return itemRow(rows[0]);
 }
 
+export async function createItem(body, userId) {
+  const item = parseItem(body);
+  const id = await withTransaction(async (client) => {
+    await client.query('INSERT INTO quote_group_categories (group_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [item.group_id, item.category_id]).catch(itemTaken);
+    const { rows } = await client.query(
+      `INSERT INTO quote_items (group_id, category_id, model_no, series, model_name, hsn_code, price, gst_rate, remark,
+                                product_link, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11) RETURNING id`,
+      [item.group_id, item.category_id, item.model_no, item.series, item.model_name, item.hsn_code, item.price,
+        item.gst_rate, item.remark, item.product_link, userId]
+    ).catch(itemTaken);
+    return rows[0].id;
+  });
+  return getItem(id);
+}
+
 export async function updateItem(id, body, userId) {
   const item = parseItem(body);
-  const { rowCount } = await query(
-    `UPDATE quote_items SET category_id = $2, series = $3, model_name = $4, hsn_code = $5, price = $6,
-            gst_rate = $7, remark = $8, product_link = $9, updated_by = $10
-      WHERE id = $1`,
-    [uuid(id, 'Item'), item.category_id, item.series, item.model_name, item.hsn_code, item.price, item.gst_rate, item.remark,
-      item.product_link, userId]
-  ).catch(modelTaken);
-  if (!rowCount) throw fail(404, 'Item not found');
+  await withTransaction(async (client) => {
+    await client.query('INSERT INTO quote_group_categories (group_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [item.group_id, item.category_id]).catch(itemTaken);
+    const { rowCount } = await client.query(
+      `UPDATE quote_items SET group_id = $2, category_id = $3, model_no = $4, series = $5, model_name = $6, hsn_code = $7,
+              price = $8, gst_rate = $9, remark = $10, product_link = $11, updated_by = $12
+        WHERE id = $1`,
+      [uuid(id, 'Item'), item.group_id, item.category_id, item.model_no, item.series, item.model_name, item.hsn_code,
+        item.price, item.gst_rate, item.remark, item.product_link, userId]
+    ).catch(itemTaken);
+    if (!rowCount) throw fail(404, 'Item not found');
+  });
   return getItem(id);
+}
+
+// Clean-up: set brand and/or category on many items at once. Only the keys
+// present in the body change.
+export async function bulkSetItems(body, userId) {
+  const ids = Array.isArray(body.ids) ? body.ids : [];
+  if (!ids.length) throw fail(400, 'No items selected');
+  if (ids.length > 1000) throw fail(400, 'Change at most 1000 items at a time');
+  ids.forEach((id) => uuid(id, 'Item'));
+  const groupId = body.group_id ? uuid(body.group_id, 'Brand') : null;
+  const categoryId = body.category_id ? uuid(body.category_id, 'Category') : null;
+  if (!groupId && !categoryId) throw fail(400, 'Choose a brand or a category');
+  return withTransaction(async (client) => {
+    if (groupId) {
+      const clashes = await modelNoClashes(client, ids, groupId);
+      if (clashes.length) throw clashError(clashes);
+    }
+    const { rowCount } = await client.query(
+      `UPDATE quote_items SET group_id = COALESCE($2, group_id), category_id = COALESCE($3, category_id), updated_by = $4
+        WHERE id = ANY($1::uuid[])`,
+      [ids, groupId, categoryId, userId]
+    ).catch(itemTaken);
+    const { rows } = await client.query(
+      'SELECT DISTINCT group_id FROM quote_items WHERE id = ANY($1::uuid[]) AND group_id IS NOT NULL', [ids]);
+    await linkUsedCategories(client, rows.map((r) => r.group_id));
+    return { updated: rowCount };
+  });
+}
+
+// Clean-up: set model nos ([{ id, model_no }]). One already used in the same
+// brand is skipped and reported, the rest are saved.
+export async function setModelNos(body, userId) {
+  const list = Array.isArray(body.items) ? body.items : [];
+  if (!list.length) throw fail(400, 'Nothing to save');
+  if (list.length > 1000) throw fail(400, 'Save at most 1000 at a time');
+  const parsed = list.map((row) => ({ id: uuid(row?.id, 'Item'), model_no: text(row.model_no, 'Model no', 100) }));
+  return withTransaction(async (client) => {
+    let updated = 0;
+    const skipped = [];
+    for (const row of parsed) {
+      const { rowCount } = await client.query(
+        `UPDATE quote_items i SET model_no = $2, updated_by = $3
+          WHERE i.id = $1 AND ($2::text IS NULL OR NOT EXISTS (
+                SELECT 1 FROM quote_items o
+                 WHERE o.id <> i.id AND o.group_id = i.group_id AND lower(btrim(o.model_no)) = lower(btrim($2))))`,
+        [row.id, row.model_no, userId]
+      );
+      if (rowCount) updated += 1;
+      else skipped.push({ id: row.id, model_no: row.model_no });
+    }
+    return { updated, skipped };
+  });
+}
+
+// Clean-up: fill in HSN/SAC codes ([{ id, hsn_code }]).
+export async function setHsnCodes(body, userId) {
+  const list = Array.isArray(body.items) ? body.items : [];
+  if (!list.length) throw fail(400, 'Nothing to save');
+  if (list.length > 1000) throw fail(400, 'Save at most 1000 at a time');
+  const parsed = list.map((row) => ({ id: uuid(row?.id, 'Item'), hsn_code: text(row.hsn_code, 'HSN/SAC code', 20) }));
+  return withTransaction(async (client) => {
+    let updated = 0;
+    for (const row of parsed) {
+      const { rowCount } = await client.query('UPDATE quote_items SET hsn_code = $2, updated_by = $3 WHERE id = $1',
+        [row.id, row.hsn_code, userId]);
+      updated += rowCount;
+    }
+    return { updated };
+  });
 }
 
 export async function deleteItems(ids) {
@@ -274,10 +575,13 @@ export async function deleteItems(ids) {
   return { deleted: rowCount };
 }
 
-// Excel import: rows are { category, series, model_name, hsn_code, price,
-// gst_rate, remark, product_link }. Missing categories are created; an existing model
-// name is updated in place. All-or-nothing: any invalid row rejects the
-// whole file with every row's error listed.
+// Excel import: rows are { group, category, model_no, model_name, series,
+// hsn_code, price, gst_rate, remark, product_link }. Missing brands and
+// categories are created. A row updates the item with the same brand + model
+// no, else the item with the same description (this is how an exported,
+// filled-in clean-up sheet is read back), else adds a new item.
+// All-or-nothing: any invalid row rejects the whole file with every row's
+// error listed.
 export function parseImportRows(rows) {
   if (!Array.isArray(rows) || rows.length === 0) throw fail(400, 'The file has no item rows');
   if (rows.length > MAX_IMPORT_ROWS) throw fail(400, `Import at most ${MAX_IMPORT_ROWS} rows at a time`);
@@ -288,10 +592,12 @@ export function parseImportRows(rows) {
     try {
       parsed.push({
         row: rowNo,
+        group: text(row.group, 'Brand', 120, { required: true }),
         category: text(row.category, 'Category', 120, { required: true }),
+        model_no: text(row.model_no, 'Model no', 100, { required: true }),
         series: text(row.series, 'Series', 200),
-        model_name: text(row.model_name, 'Model name', 200, { required: true }),
-        hsn_code: text(row.hsn_code, 'HSN code', 20),
+        model_name: text(row.model_name, 'Description', 200, { required: true }),
+        hsn_code: text(row.hsn_code, 'HSN/SAC code', 20, { required: true }),
         price: number(row.price, 'Price', { required: true, max: 1e11 }),
         gst_rate: number(row.gst_rate, 'GST %', { max: 100, fallback: 18 }),
         remark: text(row.remark, 'Remark', 1000),
@@ -302,46 +608,72 @@ export function parseImportRows(rows) {
     }
   });
   if (errors.length) throw Object.assign(fail(400, `${errors.length} row(s) have errors`), { details: errors });
-  // A model listed twice in one file: the later row wins (same as importing twice).
-  const byModel = new Map();
-  for (const row of parsed) byModel.set(row.model_name.toLowerCase(), row);
-  return [...byModel.values()];
+  // Brand + model no listed twice in one file: the later row wins.
+  const byKey = new Map();
+  for (const row of parsed) byKey.set(`${row.group.toLowerCase()}\u0000${row.model_no.toLowerCase()}`, row);
+  return [...byKey.values()];
 }
 
 export async function importItems(rows, userId) {
   const parsed = parseImportRows(rows);
   return withTransaction(async (client) => {
-    const categoryIds = new Map();
-    let categoriesCreated = 0;
+    const ensure = async (table, name, cache) => {
+      const key = name.toLowerCase();
+      if (!cache.ids.has(key)) {
+        // Upsert so one created concurrently can't fail the import.
+        const { rows: found } = await client.query(
+          `INSERT INTO ${table} (name, created_by) VALUES ($1, $2)
+           ON CONFLICT ((lower(btrim(name)))) DO UPDATE SET name = ${table}.name
+           RETURNING id, (xmax = 0) AS inserted`,
+          [name, userId]
+        );
+        cache.ids.set(key, found[0].id);
+        if (found[0].inserted) cache.created += 1;
+      }
+      return cache.ids.get(key);
+    };
+    const groups = { ids: new Map(), created: 0 };
+    const categories = { ids: new Map(), created: 0 };
     let created = 0;
     let updated = 0;
     for (const row of parsed) {
-      const key = row.category.toLowerCase();
-      if (!categoryIds.has(key)) {
-        // Upsert so a category created concurrently can't fail the import.
-        const { rows: cat } = await client.query(
-          `INSERT INTO quote_categories (name, created_by) VALUES ($1, $2)
-           ON CONFLICT ((lower(btrim(name)))) DO UPDATE SET name = quote_categories.name
-           RETURNING id, (xmax = 0) AS inserted`,
-          [row.category, userId]
-        );
-        categoryIds.set(key, cat[0].id);
-        if (cat[0].inserted) categoriesCreated += 1;
-      }
-      const { rows: result } = await client.query(
-        `INSERT INTO quote_items (category_id, series, model_name, hsn_code, price, gst_rate, remark, product_link, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-         ON CONFLICT ((lower(btrim(model_name)))) DO UPDATE
-            SET category_id = EXCLUDED.category_id, series = EXCLUDED.series, hsn_code = EXCLUDED.hsn_code,
-                price = EXCLUDED.price, gst_rate = EXCLUDED.gst_rate, remark = EXCLUDED.remark,
-                product_link = EXCLUDED.product_link, updated_by = EXCLUDED.updated_by
-         RETURNING (xmax = 0) AS inserted`,
-        [categoryIds.get(key), row.series, row.model_name, row.hsn_code, row.price, row.gst_rate, row.remark, row.product_link, userId]
+      const fail400 = (error) => {
+        if (error.code === '23505') throw fail(400, `Row ${row.row}: ${error.constraint === 'quote_items_group_model_no_unique'
+          ? 'this brand already has another item with this model no' : 'another item already has this description'}`);
+        throw error;
+      };
+      const groupId = await ensure('quote_groups', row.group, groups);
+      const categoryId = await ensure('quote_categories', row.category, categories);
+      await client.query('INSERT INTO quote_group_categories (group_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [groupId, categoryId]);
+      const { rows: match } = await client.query(
+        `SELECT id FROM quote_items
+          WHERE (group_id = $1 AND lower(btrim(model_no)) = lower($2)) OR lower(btrim(model_name)) = lower($3)
+          ORDER BY (group_id = $1 AND lower(btrim(model_no)) = lower($2)) DESC NULLS LAST
+          LIMIT 1`,
+        [groupId, row.model_no, row.model_name]
       );
-      if (result[0].inserted) created += 1;
-      else updated += 1;
+      const values = [groupId, categoryId, row.model_no, row.series, row.model_name, row.hsn_code, row.price, row.gst_rate,
+        row.remark, row.product_link, userId];
+      if (match[0]) {
+        await client.query(
+          `UPDATE quote_items SET group_id = $1, category_id = $2, model_no = $3, series = $4, model_name = $5, hsn_code = $6,
+                  price = $7, gst_rate = $8, remark = $9, product_link = $10, updated_by = $11
+            WHERE id = $12`,
+          [...values, match[0].id]
+        ).catch(fail400);
+        updated += 1;
+      } else {
+        await client.query(
+          `INSERT INTO quote_items (group_id, category_id, model_no, series, model_name, hsn_code, price, gst_rate, remark,
+                                    product_link, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+          values
+        ).catch(fail400);
+        created += 1;
+      }
     }
-    return { created, updated, categoriesCreated };
+    return { created, updated, groupsCreated: groups.created, categoriesCreated: categories.created };
   });
 }
 
@@ -904,11 +1236,22 @@ export function parseStatus(body) {
 
 // Won / Lost lock the whole quotation (assertOpen) until it is reopened;
 // Won also records which version won. Status never freezes a version.
+// Issuing (Draft → Under Process) and Won need HSN (goods) or SAC (services)
+// on every line of the latest version: Tally and the DC print it per item.
+// Reopening a Won / Lost quote is never blocked, so it can be fixed.
 export async function setQuoteStatus(id, body, userId) {
   const next = parseStatus(body);
   await withTransaction(async (client) => {
-    await writeGuard(client, id, userId);
+    const quote = await writeGuard(client, id, userId);
     const latest = await latestVersion(client, id);
+    if (next.status === 'won' || (next.status === 'sent' && quote.status === 'draft')) {
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM quote_lines ln JOIN quote_sections s ON s.id = ln.section_id
+          WHERE s.version_id = $1 AND (ln.hsn_code IS NULL OR btrim(ln.hsn_code) = '')`,
+        [latest.id]
+      );
+      if (rows[0].n > 0) throw fail(400, `${rows[0].n} line(s) have no HSN/SAC code. Fill them in and save first.`);
+    }
     await client.query(
       'UPDATE quotes SET status = $2, po_number = $3, po_date = $4, lost_reason = $5, won_version_id = $6 WHERE id = $1',
       [id, next.status, next.po_number, next.po_date, next.lost_reason, next.status === 'won' ? latest.id : null]

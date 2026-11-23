@@ -30,16 +30,29 @@ router.use(requireQuoteAccess);
 const write = requireQuoteManager;
 const me = (req) => req.user.userId;
 
-// Catalog
+// Catalog: brands (groups) > shared categories > items
+router.get('/groups', handle(() => quotes.listGroups()));
+router.post('/groups', write, handle((req) => quotes.createGroup(req.body || {}, me(req)), 201));
+router.patch('/groups/:id', write, handle((req) => quotes.renameGroup(req.params.id, req.body || {})));
+router.delete('/groups/:id', write, handle((req) => quotes.deleteGroup(req.params.id)));
+router.post('/groups/:id/merge', write, handle((req) => quotes.mergeGroup(req.params.id, req.body || {})));
+router.post('/groups/:id/to-category', write, handle((req) => quotes.groupToCategory(req.params.id, req.body || {}, me(req))));
+router.put('/groups/:id/categories/:categoryId', write, handle((req) => quotes.linkCategory(req.params.id, req.params.categoryId)));
+router.delete('/groups/:id/categories/:categoryId', write, handle((req) => quotes.unlinkCategory(req.params.id, req.params.categoryId)));
+
 router.get('/categories', handle(() => quotes.listCategories()));
 router.post('/categories', write, handle((req) => quotes.createCategory(req.body || {}, me(req)), 201));
 router.patch('/categories/:id', write, handle((req) => quotes.renameCategory(req.params.id, req.body || {})));
 router.delete('/categories/:id', write, handle((req) => quotes.deleteCategory(req.params.id)));
 
 router.get('/items', handle((req) => quotes.listItems(req.query)));
+router.get('/items/summary', handle(() => quotes.catalogSummary()));
 router.post('/items', write, handle((req) => quotes.createItem(req.body || {}, me(req)), 201));
 router.post('/items/import', write, handle((req) => quotes.importItems(req.body?.rows, me(req))));
 router.post('/items/delete', write, handle((req) => quotes.deleteItems(req.body?.ids)));
+router.post('/items/bulk-set', write, handle((req) => quotes.bulkSetItems(req.body || {}, me(req))));
+router.post('/items/model-nos', write, handle((req) => quotes.setModelNos(req.body || {}, me(req))));
+router.post('/items/hsn-codes', write, handle((req) => quotes.setHsnCodes(req.body || {}, me(req))));
 router.patch('/items/:id', write, handle((req) => quotes.updateItem(req.params.id, req.body || {}, me(req))));
 
 // Quote leads (separate from Sales leads)

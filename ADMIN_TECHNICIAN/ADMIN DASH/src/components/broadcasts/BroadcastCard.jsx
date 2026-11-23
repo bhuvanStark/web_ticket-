@@ -1,7 +1,7 @@
 import React from 'react';
-import { BROADCAST_TONES, splitHighlight, fmtClock } from './broadcastShared';
+import { BROADCAST_TONES, splitHighlight } from './broadcastShared';
 
-// The broadcast's content: sender, tone label, emoji, greeting, headline
+// The broadcast's content: TASKTEL label, tone label, emoji, greeting, headline
 // with its highlight, message and steps. Rendered by the employee popup and
 // by the admin composer's live preview, so both always look the same.
 // `children` is the action area (the popup's button; a stand-in in preview).
@@ -9,7 +9,6 @@ export const BroadcastCard = ({ broadcast, greeting, locked = false, children })
   const tone = BROADCAST_TONES[broadcast.tone] || BROADCAST_TONES.info;
   const { before, match, after } = splitHighlight(broadcast.headline, broadcast.highlight);
   const steps = (broadcast.steps || []).filter((step) => step && step.trim());
-  const sentAt = fmtClock(broadcast.created_at);
 
   return (
     <div
@@ -25,7 +24,7 @@ export const BroadcastCard = ({ broadcast, greeting, locked = false, children })
       <div className="relative w-full flex items-center justify-between gap-3 mb-3.5">
         <span className="flex items-center gap-2 min-w-0 text-xs font-semibold text-[#667085]">
           <span className="w-[22px] h-[22px] rounded-md bg-[#004898] text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">T</span>
-          <span className="truncate">From {broadcast.created_by_name || 'Admin'}{sentAt ? ` · ${sentAt}` : ''}</span>
+          <span className="truncate">TASKTEL</span>
         </span>
         <span
           className="shrink-0 text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full"

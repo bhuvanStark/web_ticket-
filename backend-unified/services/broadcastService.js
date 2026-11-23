@@ -292,7 +292,7 @@ export async function getPendingForEmployee(employeeType, employeeId) {
   const column = ownerColumn(employeeType);
   const { rows } = await query(
     `SELECT b.id, b.tone, b.emoji, b.headline, b.highlight, b.message, b.steps,
-            b.created_at, b.expires_at, b.created_by_name, r.seen_at
+            b.created_at, b.expires_at, r.seen_at
        FROM broadcast_recipients r
        JOIN broadcasts b ON b.id = r.broadcast_id
       WHERE r.${column} = $1 AND r.acknowledged_at IS NULL AND ${LIVE}

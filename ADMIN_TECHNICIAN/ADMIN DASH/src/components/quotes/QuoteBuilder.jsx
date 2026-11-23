@@ -1,6 +1,6 @@
 // Quotation builder — one version of a quote: solutions (free-text name)
 // holding catalog items and service lines, plus an optional Pre-Installation
-// & PPM block. Price = OSP ÷ SM rounded up (quoteEngine.js); SM is set for
+// & PMC block. Price = OSP ÷ SM rounded up (quoteEngine.js); SM is set for
 // the whole quote and can be overridden per line, as can the unit price.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -28,6 +28,9 @@ const AUTOSAVE_MS = 3000;
 // The backend refuses a line with neither an item nor a description, so
 // autosave waits until a freshly added blank line is filled in.
 const hasBlankLine = (doc) => doc.sections.some((s) => s.lines.some((l) => !l.model_name && !String(l.description || '').trim()));
+// Every line needs HSN (goods) or SAC (services) before the quote is issued
+// or exported; Tally and the DC print it per item. Drafts save without it.
+const countMissingHsn = (doc) => doc.sections.reduce((n, s) => n + s.lines.filter((l) => !String(l.hsn_code || '').trim()).length, 0);
 
 // A superseded (or, before manual versioning, issued) version prints the
 // customer details it was made for; the backend snapshots them.
@@ -101,7 +104,7 @@ const toPayload = (doc) => ({
   }))
 });
 
-const blankService = () => ({ key: newKey(), line_type: 'service', description: '', qty: 1, osp_unit: 0, gst_rate: 18, uom: 'Nos', sm_override: null, price_override: null });
+const blankService = () => ({ key: newKey(), line_type: 'service', description: 'Installation and Commissioning Charges', qty: 1, osp_unit: 0, gst_rate: 18, uom: 'Nos', sm_override: null, price_override: null });
 
 const LOST_REASONS = ['Competitor price', 'Budget cancelled', 'Timeline mismatch', 'Scope changed', 'No response'];
 
@@ -180,7 +183,7 @@ const ItemPicker = ({ sectionName, onAdd, onClose }) => {
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-[#98A2B3] absolute left-3 top-1/2 -translate-y-1/2" />
               <input ref={inputRef} value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={onKey}
-                placeholder="Search model, series, HSN…  (↑↓ to move, Enter to add)"
+                placeholder="Search brand, model no, description, HSN…  (↑↓ to move, Enter to add)"
                 className="w-full pl-9 pr-3 py-2.5 text-sm border border-[#E4E7EC] rounded-xl outline-none focus:border-[#004898] focus:ring-2 focus:ring-[#004898]/10" />
             </div>
             <select value={category} onChange={(e) => setCategory(e.target.value)}
@@ -205,7 +208,9 @@ const ItemPicker = ({ sectionName, onAdd, onClose }) => {
                   {item.series && <span className="text-[11px] text-[#667085] truncate">{item.series}</span>}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[#98A2B3]">
-                  <span className="font-semibold text-[#475467] bg-[#F2F4F7] px-1.5 rounded">{item.category_name}</span>
+                  {item.group_name && <span className="font-bold text-[#344054]">{item.group_name}</span>}
+                  {item.model_no && <span className="font-mono text-[#475467]">{item.model_no}</span>}
+                  {item.category_name && <span className="font-semibold text-[#475467] bg-[#F2F4F7] px-1.5 rounded">{item.category_name}</span>}
                   {item.hsn_code && <span className="font-mono">HSN {item.hsn_code}</span>}
                   {item.remark && <span className="truncate">{item.remark}</span>}
                 </div>
@@ -474,8 +479,11 @@ const LineRow = ({ line, calc, index, globalSm, showCosting, readOnly, onChange,
         )}
       </td>
       <td className="px-1 py-2 w-24">
-        <input value={line.hsn_code || ''} disabled={readOnly} onChange={(e) => set({ hsn_code: e.target.value })} placeholder="HSN"
-          className="w-full bg-transparent px-2 py-1.5 rounded-md text-[11px] font-mono text-[#475467] outline-none border border-transparent hover:border-[#E4E7EC] focus:border-[#004898] focus:bg-white disabled:hover:border-transparent" />
+        <input value={line.hsn_code || ''} disabled={readOnly} onChange={(e) => set({ hsn_code: e.target.value })}
+          placeholder={line.line_type === 'service' ? 'SAC *' : 'HSN *'} title={line.line_type === 'service' ? 'SAC code (required)' : 'HSN code (required)'}
+          className={`w-full px-2 py-1.5 rounded-md text-[11px] font-mono outline-none border focus:border-[#004898] focus:bg-white disabled:hover:border-transparent ${String(line.hsn_code || '').trim()
+            ? 'bg-transparent text-[#475467] border-transparent hover:border-[#E4E7EC]'
+            : 'bg-[#FEF3F2] text-[#B42318] border-[#FDA29B] placeholder:text-[#F97066] placeholder:font-bold'}`} />
       </td>
       <td className="px-1 py-2 w-20 min-w-[64px]"><NumCell value={line.qty} grouped={false} disabled={readOnly} onChange={(v) => set({ qty: round2(v ?? 0) })} className="font-bold text-[13px]" /></td>
       {showCosting && (
@@ -821,6 +829,8 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   const saveRef = useRef(save);
   saveRef.current = save;
   const blankLine = doc ? hasBlankLine(doc) : false;
+  const missingHsn = doc ? countMissingHsn(doc) : 0;
+  const hsnBlockMessage = `${missingHsn} line(s) have no HSN/SAC code. Fill in the boxes marked red first.`;
   useEffect(() => {
     if (!dirty || readOnly || saving || blankLine || saveError?.doc === doc) return undefined;
     const t = setTimeout(() => saveRef.current({ silent: true }), AUTOSAVE_MS);
@@ -868,6 +878,10 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
 
   // Won / Lost lock the quotation until reopened; no status freezes a version.
   const changeStatus = async (body) => {
+    if (missingHsn && (body.status === 'won' || (body.status === 'sent' && quote.status === 'draft'))) {
+      showToast(hsnBlockMessage, 'error');
+      return;
+    }
     try {
       if (!(await flush())) return;
       const q = await setQuoteStatus(quoteId, body);
@@ -921,6 +935,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
   // ---- exports ----
   // Exporting never changes the quotation; only "New version" locks one.
   const doExport = async (format, internal, accounting = false) => {
+    if (missingHsn) { showToast(hsnBlockMessage, 'error'); return; }
     if (dirty && !window.confirm('This version has unsaved changes. Export what is on screen anyway?')) return;
     try {
       recordQuoteExport(quoteId, versionMeta.id, format, internal, accounting).catch(() => {});
@@ -941,7 +956,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
         ...s,
         lines: (() => {
           const line = {
-            key: newKey(), line_type: 'supply', item_id: item.id, category_name: item.category_name, series: item.series,
+            key: newKey(), line_type: 'supply', item_id: item.id, category_name: item.category_name || item.group_name, series: item.series,
             model_name: item.model_name, description: item.remark || '', hsn_code: item.hsn_code, uom: 'Nos', qty: 1,
             osp_unit: Number(item.price), gst_rate: Number(item.gst_rate), sm_override: null, price_override: null,
             comment: '', product_link: item.product_link || null
@@ -1221,6 +1236,16 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
         </div>
       </div>
 
+      {missingHsn > 0 && (
+        <div className="rounded-2xl border border-[#FECDCA] bg-[#FEF3F2] px-4 py-3 flex items-start gap-3 text-xs text-[#7A271A]">
+          <AlertTriangle className="w-4 h-4 text-[#D92D20] shrink-0 mt-0.5" />
+          <p>
+            <b className="text-[#B42318]">{missingHsn} line{missingHsn === 1 ? '' : 's'} without an HSN/SAC code.</b>{' '}
+            Products need an HSN and services a SAC. You can keep editing, but the quotation can't be exported, marked Under Process or Won until every line has one.
+          </p>
+        </div>
+      )}
+
       {/* Sections */}
       <div className="space-y-4">
         {doc.sections.map((section, i) => {
@@ -1271,7 +1296,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
             {!hasPpm && (
               <button onClick={() => update({ sections: [...doc.sections, { key: newKey(), kind: 'ppm', name: 'Pre-Installation Planning & Migration Services', lines: [] }] })}
                 className="flex-1 min-w-[200px] border-2 border-dashed border-[#C7D7FE] hover:border-[#4F46E5] hover:bg-[#F5F8FF] text-[#4F46E5] rounded-xl py-3.5 text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors">
-                <ClipboardList className="w-4 h-4" />Add Pre-Installation &amp; PPM
+                <ClipboardList className="w-4 h-4" />Add Pre-Installation &amp; PMC
               </button>
             )}
           </>)}
@@ -1306,7 +1331,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
                 {computed.sections.map((s, i) => (
                   <tr key={s.key}>
                     <td className="px-4 py-2.5 text-[#98A2B3] tabular-nums">{i + 1}</td>
-                    <td className="px-4 py-2.5 font-semibold text-[#172033]">{doc.sections[i].name || (s.kind === 'ppm' ? 'Pre-Installation & PPM' : 'Untitled solution')}</td>
+                    <td className="px-4 py-2.5 font-semibold text-[#172033]">{doc.sections[i].name || (s.kind === 'ppm' ? 'Pre-Installation & PMC' : 'Untitled solution')}</td>
                     {showCosting && <td className="px-4 py-2.5 text-right tabular-nums text-[#475467]">{formatNum(s.totals.supply_osp)}</td>}
                     <td className="px-4 py-2.5 text-right tabular-nums">{formatNum(s.totals.supply_price)}</td>
                     {showCosting && <td className="px-4 py-2.5 text-right tabular-nums text-[#475467]">{formatNum(s.totals.services_osp)}</td>}
@@ -1317,7 +1342,7 @@ export const QuoteBuilder = ({ quoteId, readOnly: viewerOnly, onBack }) => {
               </tbody>
               <tfoot className="border-t-2 border-[#E4E7EC] font-extrabold text-[#172033]">
                 <tr>
-                  <td className="px-4 py-2.5" colSpan={2}>Grand Total (Supply + Installation + PPM)</td>
+                  <td className="px-4 py-2.5" colSpan={2}>Grand Total (Supply + Installation + PMC)</td>
                   {showCosting && <td className="px-4 py-2.5 text-right tabular-nums">{formatNum(totals.supply_osp)}</td>}
                   <td className="px-4 py-2.5 text-right tabular-nums">{formatNum(totals.supply_price)}</td>
                   {showCosting && <td className="px-4 py-2.5 text-right tabular-nums">{formatNum(totals.services_osp)}</td>}

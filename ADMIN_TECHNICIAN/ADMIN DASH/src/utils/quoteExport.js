@@ -4,11 +4,12 @@
 // (the columns are left out, not hidden). It also carries the GPTW / years
 // badges on top and the partner logo strip on the last page.
 // Internal copy: adds OSP / SM per line, OSP totals and SM (Amount − OSP).
-// Layout: Investment Summary (rooms, sub-total, PPM block, grand total,
+// Layout: Investment Summary (rooms, sub-total, PMC block, grand total,
 // taxes, all inclusive), then the room-wise Bill of Materials with a
 // Supply / Service / Grand Total block per room and once at the end, then
 // Notes, then Terms & Conditions on their own page / sheet.
-// A line with Qty 0 is client scope: it is listed with its prices blank.
+// A line with Qty 0 still prints its Unit Price; its Amount, GST and Total
+// are 0. Client scope is marked with the line's comment, not by hiding prices.
 import { TASKTEL_LOGO_DATA_URI } from './reportLogo';
 import GPTW_PNG from '../assets/quote/gptw.png?inline';
 import LOGITECH_PNG from '../assets/quote/logitech.png?inline';
@@ -30,7 +31,28 @@ const yearsInBusiness = () => new Date().getFullYear() - FOUNDED;
 const PARTNER_LOGOS = [
   ['Logitech', LOGITECH_PNG], ['Neat', NEAT_PNG], ['LG', LG_PNG], ['Samsung', SAMSUNG_PNG], ['Absen', ABSEN_PNG]
 ];
-const PPM_LABEL = 'Pre-Installation Planning & Migration Services';
+const PMC_LABEL = 'Pre-Installation Planning & Migration Services';
+
+// One palette for the PDF and the Excel copy (hex without '#').
+const PALETTE = {
+  brand: '004898',      // logo blue: page rules, titles, links
+  head: '1F2A37',       // table header rows
+  section: '0F5E63',    // solution headings (1, 2, 3 …)
+  zebra: 'F7F9FA',      // alternate item rows
+  border: 'DDE2E7',
+  scope: 'FFF1C2',      // Client Scope rows
+  qtyZero: 'FFF9E3',    // Qty 0 rows
+  amber: '7A5600',      // text on the two highlights above
+  subtotal: 'E6EAEE',   // Supply Total, Service Total
+  total: 'D3DAE1',      // Grand Total (excl. GST)
+  grand: '1E7B4F'       // Grand Total (All Inclusive)
+};
+const css = (key) => `#${PALETTE[key]}`;
+const argb = (key) => `FF${PALETTE[key]}`;
+
+// Client scope has no flag of its own: the line's comment says so.
+const isClientScope = (line) => /client['’]?s?\s*scope/i.test(line.comment || '');
+const lineTone = (line) => (isClientScope(line) ? 'scope' : Number(line.qty) === 0 ? 'zero' : '');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const inr = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -44,7 +66,7 @@ const fmtDate = (key) => {
 
 const verLabel = (version) => `${version.version_no}.0`;
 const managerLine = (quote) => [quote.account_manager_name, quote.account_manager_phone].filter(Boolean).join(' · ');
-const sectionLabel = (section) => section.name || (section.kind === 'ppm' ? PPM_LABEL : 'Untitled solution');
+const sectionLabel = (section) => section.name || (section.kind === 'ppm' ? PMC_LABEL : 'Untitled solution');
 const lineLabel = (line) => [line.model_name, line.series && `(${line.series})`].filter(Boolean).join(' ');
 const slug = (s) => String(s || '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
 // Tasktel_<Customer>_<Project>_Proposal_v<Version>_<DD-MM-YY> (quote date).
@@ -55,8 +77,6 @@ const fileBase = (quote, version) => {
     .filter(Boolean).join('_');
 };
 
-// Qty 0 = client scope: listed, but no prices.
-const isClientScope = (line) => Number(line.qty) === 0;
 // Same rule the backend saves with; the on-screen draft may not be saved yet.
 const productHref = (value) => {
   const s = String(value || '').trim();
@@ -123,7 +143,7 @@ const totalsBlock = (f, { internal, supply = true }) => [
   ...(supply ? [['Supply Total', f.supply_price, 'key'], ['Supply GST', f.supply_gst]] : []),
   ['Service Total', f.services_price, 'key'],
   ['Service GST', f.services_gst],
-  ['Grand Total (excl. GST)', f.subtotal, 'key'],
+  ['Grand Total (excl. GST)', f.subtotal, 'subtotal'],
   ['Total GST', f.gst_total],
   ['Grand Total (All Inclusive)', f.grand_total, 'grand'],
   ...(internal ? [
@@ -177,13 +197,13 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
     `<tr class="tot ${tone || ''}"><td colspan="${cols - 1}" class="r">${esc(label)}</td><td class="r">${tone === 'grand' ? '₹ ' : ''}${money(value)}</td></tr>`
   ).join('');
 
+  const highlighted = new Set();
   const sectionTables = computed.sections.map((section, si) => {
     const lines = orderedLines(section);
     const firstService = lines.findIndex((l) => l.line_type === 'service');
     const hasSupply = lines.some((l) => l.line_type !== 'service');
     const rows = lines.map((line, i) => {
       const c = line.calc;
-      const scope = isClientScope(line);
       const href = productHref(line.product_link);
       const desc = (line.line_type === 'service'
         ? `<div class="strong">${esc(line.description)}</div>`
@@ -191,14 +211,15 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
         + (line.comment ? `<div class="comment">${esc(line.comment)}</div>` : '')
         + (href ? `<a class="plink" href="${esc(href)}" target="_blank" rel="noopener">View product ↗</a>` : '');
       const divider = hasSupply && i === firstService ? `<tr class="group"><td colspan="${cols}">Installation &amp; Services</td></tr>` : '';
-      const blank = (v) => (scope ? '' : v);
-      return `${divider}<tr>
+      const tone = lineTone(line);
+      if (tone) highlighted.add(tone);
+      return `${divider}<tr class="${tone || (i % 2 ? 'z' : '')}">
         <td class="c">${i + 1}</td><td>${desc}</td><td class="mono">${esc(line.hsn_code)}</td>
-        <td class="r">${money(line.qty)}</td>
-        ${internal ? `<td class="r osp">${blank(money(line.osp_unit))}</td><td class="r osp">${blank(line.price_override != null ? '—' : c.sm)}</td>` : ''}
-        <td class="r">${blank(money(c.unit_price))}</td><td class="r">${blank(money(c.amount))}</td>
-        <td class="r">${blank(`${money(line.gst_rate)}%`)}</td>${internal ? '' : `<td class="r">${blank(money(c.gst))}</td>`}
-        <td class="r strong">${blank(money(c.total))}</td>
+        <td class="r qty">${money(line.qty)}</td>
+        ${internal ? `<td class="r osp">${money(line.osp_unit)}</td><td class="r osp">${line.price_override != null ? '—' : c.sm}</td>` : ''}
+        <td class="r">${money(c.unit_price)}</td><td class="r">${money(c.amount)}</td>
+        <td class="r">${money(line.gst_rate)}%</td>${internal ? '' : `<td class="r">${money(c.gst)}</td>`}
+        <td class="r strong">${money(c.total)}</td>
       </tr>`;
     }).join('');
     return `
@@ -287,14 +308,24 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
     .kv span:nth-child(odd) { color: #64748B; }
     .kv span:nth-child(even) { font-weight: 600; }
     .section { margin-bottom: 16px; page-break-inside: auto; }
-    .section-title { background: #004898; color: #FFF; font-weight: 800; font-size: 12px; padding: 7px 10px; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 8px; }
+    .section-title { background: ${css('section')}; color: #FFF; font-weight: 800; font-size: 12px; padding: 7px 10px; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 8px; }
     .section-title .num { background: rgba(255,255,255,.2); border-radius: 4px; padding: 1px 7px; font-size: 11px; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 6px 7px; border: 1px solid #E2E8F0; vertical-align: top; }
-    th { background: #F1F5F9; color: #475569; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; text-align: left; }
+    th, td { padding: 6px 7px; border: 1px solid ${css('border')}; vertical-align: top; }
+    th { background: ${css('head')}; color: #FFF; border-color: ${css('head')}; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; text-align: left; }
     .summary th { text-align: center; vertical-align: middle; }
     tr { page-break-inside: avoid; }
-    .total td { background: #F8FAFC; font-weight: 800; }
+    .total td { background: ${css('subtotal')}; font-weight: 800; }
+    .total.grand-ex td { background: ${css('total')}; }
+    tr.z td { background: ${css('zebra')}; }
+    tr.scope td { background: ${css('scope')}; }
+    tr.zero td { background: ${css('qtyZero')}; }
+    tr.scope .comment { color: ${css('amber')}; font-weight: 700; }
+    tr.zero .qty { color: ${css('amber')}; font-weight: 800; }
+    .legend { display: flex; gap: 18px; justify-content: flex-end; margin-top: 8px; font-size: 9.5px; color: #475569; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend .sw { display: inline-block; width: 14px; height: 10px; border: 1px solid ${css('border')}; border-radius: 2px; }
+    .legend .sw.scope { background: ${css('scope')}; } .legend .sw.zero { background: ${css('qtyZero')}; }
     .group td { background: #F8FAFC; color: #64748B; font-weight: 800; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
     .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .c { text-align: center; }
@@ -308,9 +339,10 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
     th.osp { background: #ECFCCB; color: #3F6212; }
     .neg { color: #B42318; }
     .h2 { font-size: 12px; font-weight: 800; color: #004898; text-transform: uppercase; letter-spacing: .05em; margin: 22px 0 8px; page-break-after: avoid; }
-    .grand td, .tot.grand td { background: #004898 !important; color: #FFF; font-size: 12.5px; font-weight: 800; }
-    .tot td { background: #F8FAFC; border-color: #EEF2F6; }
-    .tot.key td { font-weight: 800; }
+    .grand td, .tot.grand td { background: ${css('grand')} !important; color: #FFF; border-color: ${css('grand')}; font-size: 13px; font-weight: 800; padding-top: 8px; padding-bottom: 8px; }
+    .tot td { background: #FFF; }
+    .tot.key td { background: ${css('subtotal')}; font-weight: 800; }
+    .tot.subtotal td { background: ${css('total')}; font-weight: 800; }
     .tot.osp td, .sm td { background: #F7FEE7 !important; color: #3F6212; font-weight: 700; }
     .words { margin-top: 8px; font-size: 11px; } .words b { color: #004898; }
     .notes { page-break-inside: avoid; white-space: pre-wrap; line-height: 1.6; font-size: 10.5px; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 12px; }
@@ -367,7 +399,7 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
         </tr>
       </thead>
       <tbody>${solutionRows}${roomsSubtotal}${ppmRows}
-        <tr class="total"><td colspan="3">Grand Total (Supply + Installation + PPM)</td>
+        <tr class="total grand-ex"><td colspan="3">Grand Total (Supply + Installation + PMC)</td>
           ${internal ? `<td colspan="2" class="r osp">${money(ospAll)}</td>` : ''}
           <td colspan="3" class="r">${money(grand.subtotal)}</td>
           ${internal ? '<td colspan="2" class="osp"></td>' : ''}
@@ -383,6 +415,7 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
     <table class="lines grand-block"><tbody>${totalsBlock(grand, { internal }).map(([label, value, tone]) =>
       `<tr class="tot ${tone || ''}"><td class="r">${esc(label)}</td><td class="r" style="width:120px">${tone === 'grand' ? '₹ ' : ''}${money(value)}</td></tr>`).join('')}
     </tbody></table>
+    ${highlighted.size ? `<div class="legend">${highlighted.has('scope') ? '<span><i class="sw scope"></i>Client Scope — to be provided by the client</span>' : ''}${highlighted.has('zero') ? '<span><i class="sw zero"></i>Qty 0 — shown for reference, not included in the total</span>' : ''}</div>` : ''}
 
     ${version.notes ? `<div class="h2">Notes</div><div class="notes">${esc(version.notes)}</div>` : ''}
     ${terms.length || version.delivery_timeline ? `<div class="terms-page">
@@ -404,11 +437,12 @@ export function exportQuotePdf({ quote, version, computed }, { internal = false,
 // EXCEL
 // ============================================
 
-const BLUE = 'FF004898';
-const TINT = 'FFEFF5FC';
+const BLUE = argb('brand');
+const HEAD = argb('head');
+const SECTION = { font: { bold: true, color: { argb: 'FFFFFFFF' } }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: argb('section') } } };
 const OSP_FILL = 'FFF7FEE7';
 const OSP_HEAD = 'FFECFCCB';
-const BORDER = { style: 'thin', color: { argb: 'FFCBD5E1' } };
+const BORDER = { style: 'thin', color: { argb: argb('border') } };
 const BOX = { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER };
 // Indian digit grouping (14,50,000), same format string as the funnel export.
 const INR_FMT = '[>=10000000]##\\,##\\,##\\,##0;[>=100000]##\\,##\\,##0;##,##0';
@@ -424,6 +458,15 @@ const fx = (formula, result) => ({ formula, result });
 function styleRange(sheet, row, from, to, style) {
   for (let c = from; c <= to; c += 1) Object.assign(sheet.getRow(row).getCell(c), style);
 }
+
+// Totals-block rows by tone (totalsBlock).
+const totalStyle = (tone, grandSize) => {
+  if (tone === 'grand') return { font: { bold: true, ...(grandSize ? { size: grandSize } : {}), color: { argb: 'FFFFFFFF' } }, fill: fill(argb('grand')), border: BOX };
+  if (tone === 'osp') return { font: { bold: true, color: { argb: 'FF3F6212' } }, fill: fill(OSP_FILL), border: BOX };
+  if (tone === 'key') return { font: { bold: true }, fill: fill(argb('subtotal')), border: BOX };
+  if (tone === 'subtotal') return { font: { bold: true }, fill: fill(argb('total')), border: BOX };
+  return { font: {}, fill: fill('FFFFFFFF'), border: BOX };
+};
 
 // "24 YEARS" badge as a PNG (Excel can't draw it), 2× for print.
 function yearsBadgePng() {
@@ -532,7 +575,7 @@ function headerCells(sheet, rowNo, headers, ospCols = []) {
     const cell = row.getCell(i + 1);
     cell.value = h;
     cell.font = { bold: true, color: { argb: ospCols.includes(i + 1) ? 'FF3F6212' : 'FFFFFFFF' } };
-    cell.fill = fill(ospCols.includes(i + 1) ? OSP_HEAD : BLUE);
+    cell.fill = fill(ospCols.includes(i + 1) ? OSP_HEAD : HEAD);
     cell.alignment = { vertical: 'middle', horizontal: i < 2 ? 'left' : 'center', wrapText: true };
     cell.border = BOX;
   });
@@ -540,12 +583,15 @@ function headerCells(sheet, rowNo, headers, ospCols = []) {
 }
 
 // Item name bold, model / make below, comment small italic.
-function descriptionRich(line) {
+function descriptionRich(line, tone) {
   const runs = line.line_type === 'service'
     ? [{ text: line.description || '', font: { bold: true } }]
     : [{ text: lineLabel(line), font: { bold: true } },
       ...(line.description ? [{ text: `\n${line.description}`, font: { size: 9, color: { argb: 'FF475467' } } }] : [])];
-  if (line.comment) runs.push({ text: `\n${line.comment}`, font: { size: 8, italic: true, color: { argb: 'FF667085' } } });
+  if (line.comment) {
+    const font = tone === 'scope' ? { bold: true, color: { argb: argb('amber') } } : { color: { argb: 'FF667085' } };
+    runs.push({ text: `\n${line.comment}`, font: { size: 8, italic: true, ...font } });
+  }
   return { richText: runs };
 }
 
@@ -571,17 +617,17 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
   headerCells(sheet, r, headers, ospCols);
   sheet.views = [{ showGridLines: false, state: 'frozen', ySplit: r }];
 
+  const highlighted = new Set();
   const sectionRefs = computed.sections.map((section, si) => {
     r += 1;
     sheet.mergeCells(r, 1, r, last);
     sheet.getRow(r).getCell(1).value = `${si + 1}.  ${sectionLabel(section)}`;
-    styleRange(sheet, r, 1, last, { font: { bold: true, color: { argb: 'FF004898' } }, fill: fill(TINT), border: BOX });
+    styleRange(sheet, r, 1, last, { ...SECTION, border: BOX });
 
     const ranges = { supply: [], service: [] };
     orderedLines(section).forEach((line, li) => {
       r += 1;
       const c = line.calc;
-      const scope = isClientScope(line);
       const row = sheet.getRow(r);
       const set = (name, value, numFmt) => {
         const cell = row.getCell(col(name));
@@ -590,33 +636,33 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
       };
       ranges[line.line_type === 'service' ? 'service' : 'supply'].push(r);
       set('Sl', li + 1);
-      set('Description', descriptionRich(line));
+      const tone = lineTone(line);
+      if (tone) highlighted.add(tone);
+      set('Description', descriptionRich(line, tone));
       set('HSN/SAC', line.hsn_code || '');
       set('UOM', line.uom || 'Nos');
       set('Qty', line.qty);
-      if (!scope) {
-        const qty = `${L('Qty')}${r}`;
-        if (internal) {
-          set('OSP Unit', line.osp_unit, INR_FMT);
-          set('OSP Total', fx(`ROUND(${qty}*${L('OSP Unit')}${r},2)`, c.osp_total), INR_FMT);
-          if (line.price_override != null) {
-            set('SM', '—');
-            set('Unit Price', c.unit_price, INR_FMT);
-          } else {
-            set('SM', c.sm);
-            // OSP ÷ SM rounded up to the quote's step (quoteEngine.js); the
-            // ROUND drops float noise so 850 ÷ 0.85 stays 1000.
-            const sm = `${L('SM')}${r}`;
-            set('Unit Price', fx(`IF(${sm}>0,CEILING(ROUND(${L('OSP Unit')}${r}/${sm},6),${version.rounding_step}),0)`, c.unit_price), INR_FMT);
-          }
-        } else {
+      const qty = `${L('Qty')}${r}`;
+      if (internal) {
+        set('OSP Unit', line.osp_unit, INR_FMT);
+        set('OSP Total', fx(`ROUND(${qty}*${L('OSP Unit')}${r},2)`, c.osp_total), INR_FMT);
+        if (line.price_override != null) {
+          set('SM', '—');
           set('Unit Price', c.unit_price, INR_FMT);
+        } else {
+          set('SM', c.sm);
+          // OSP ÷ SM rounded up to the quote's step (quoteEngine.js); the
+          // ROUND drops float noise so 850 ÷ 0.85 stays 1000.
+          const sm = `${L('SM')}${r}`;
+          set('Unit Price', fx(`IF(${sm}>0,CEILING(ROUND(${L('OSP Unit')}${r}/${sm},6),${version.rounding_step}),0)`, c.unit_price), INR_FMT);
         }
-        set('Amount', fx(`ROUND(${qty}*${L('Unit Price')}${r},2)`, c.amount), INR_FMT);
-        set('GST %', line.gst_rate / 100, '0.##%');
-        set('GST', fx(`ROUND(${L('Amount')}${r}*${L('GST %')}${r},2)`, c.gst), INR_FMT);
-        set('Total', fx(`${L('Amount')}${r}+${L('GST')}${r}`, c.total), INR_FMT);
+      } else {
+        set('Unit Price', c.unit_price, INR_FMT);
       }
+      set('Amount', fx(`ROUND(${qty}*${L('Unit Price')}${r},2)`, c.amount), INR_FMT);
+      set('GST %', line.gst_rate / 100, '0.##%');
+      set('GST', fx(`ROUND(${L('Amount')}${r}*${L('GST %')}${r},2)`, c.gst), INR_FMT);
+      set('Total', fx(`${L('Amount')}${r}+${L('GST')}${r}`, c.total), INR_FMT);
       const href = productHref(line.product_link);
       if (href) {
         const cell = row.getCell(col('Product Link'));
@@ -627,8 +673,12 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
         const cell = row.getCell(ci);
         cell.border = BOX;
         cell.alignment = { vertical: 'top', wrapText: ci === col('Description'), horizontal: ci === 1 || ci === col('UOM') ? 'center' : undefined };
-        if (ospCols.includes(ci)) cell.fill = fill(OSP_FILL);
+        const rowFill = tone === 'scope' ? argb('scope') : tone === 'zero' ? argb('qtyZero') : li % 2 ? argb('zebra') : null;
+        if (tone) cell.fill = fill(rowFill);
+        else if (ospCols.includes(ci)) cell.fill = fill(OSP_FILL);
+        else if (rowFill) cell.fill = fill(rowFill);
       }
+      if (tone === 'zero') row.getCell(col('Qty')).font = { bold: true, color: { argb: argb('amber') } };
     });
 
     // Supply / Service / Grand Total block (point 5), all live formulas.
@@ -641,9 +691,7 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
       row.getCell(2).value = label;
       row.getCell(totalCol).value = fx(formula, result);
       row.getCell(totalCol).numFmt = INR_FMT;
-      const style = tone === 'grand' ? { font: { bold: true, color: { argb: 'FFFFFFFF' } }, fill: fill(BLUE), border: BOX }
-        : tone === 'osp' ? { font: { bold: true, color: { argb: 'FF3F6212' } }, fill: fill(OSP_FILL), border: BOX }
-        : { font: { bold: tone === 'key' }, fill: fill('FFF8FAFC'), border: BOX };
+      const style = totalStyle(tone);
       styleRange(sheet, r, 1, last, style);
       refs[key] = `${sheet.getColumn(totalCol).letter}${r}`;
     };
@@ -655,7 +703,7 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
     block('service', 'Service Total', sumOf(L('Amount'), ranges.service), f.services_price, 'key');
     block('serviceGst', 'Service GST', sumOf(L('GST'), ranges.service), f.services_gst);
     const plus = (...keys) => keys.filter((k) => refs[k]).map((k) => refs[k]).join('+') || '0';
-    block('subtotal', 'Grand Total (excl. GST)', plus('supply', 'service'), f.subtotal, 'key');
+    block('subtotal', 'Grand Total (excl. GST)', plus('supply', 'service'), f.subtotal, 'subtotal');
     block('gst', 'Total GST', plus('supplyGst', 'serviceGst'), f.gst_total);
     block('grand', 'Grand Total (All Inclusive)', plus('subtotal', 'gst'), f.grand_total, 'grand');
     if (internal) {
@@ -677,7 +725,7 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
   r += 1;
   sheet.mergeCells(r, 1, r, last);
   sheet.getRow(r).getCell(1).value = 'QUOTATION TOTAL';
-  styleRange(sheet, r, 1, last, { font: { bold: true, color: { argb: 'FF004898' } }, fill: fill(TINT), border: BOX });
+  styleRange(sheet, r, 1, last, { font: { bold: true, color: { argb: 'FFFFFFFF' } }, fill: fill(HEAD), border: BOX });
   const totals = {};
   const rows = totalsBlock(grand, { internal }).map(([label, value, tone], i) => [
     ['supply', 'supplyGst', 'service', 'serviceGst', 'subtotal', 'gst', 'grand', 'ospSupply', 'ospService', 'margin'][i], label, value, tone]);
@@ -693,10 +741,15 @@ function writeBomSheet(workbook, sheet, data, internal, summaryHeaderCells) {
     row.getCell(totalCol).value = fx(formula, value);
     row.getCell(totalCol).numFmt = INR_FMT;
     totals[key] = `${letter}${r}`;
-    const style = tone === 'grand' ? { font: { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }, fill: fill(BLUE), border: BOX }
-      : tone === 'osp' ? { font: { bold: true, color: { argb: 'FF3F6212' } }, fill: fill(OSP_FILL), border: BOX }
-      : { font: { bold: tone === 'key' }, fill: fill('FFF8FAFC'), border: BOX };
+    const style = totalStyle(tone, 12);
     styleRange(sheet, r, 1, last, style);
+  }
+  if (highlighted.size) r += 1;
+  for (const [tone, text] of [['scope', 'Client Scope — to be provided by the client'], ['zero', 'Qty 0 — shown for reference, not included in the total']]) {
+    if (!highlighted.has(tone)) continue;
+    r += 1;
+    Object.assign(sheet.getRow(r).getCell(1), { fill: fill(argb(tone === 'scope' ? 'scope' : 'qtyZero')), border: BOX });
+    Object.assign(sheet.getRow(r).getCell(2), { value: text, font: { size: 9, color: { argb: 'FF475569' } } });
   }
   sheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
   return sectionRefs;
@@ -751,7 +804,7 @@ function writeSummarySheet(workbook, sheet, data, internal, sectionRefs, headerC
       const cell = sheet.getRow(rr).getCell(c);
       const osp = ospCols.includes(c);
       cell.font = { bold: true, color: { argb: osp ? 'FF3F6212' : 'FFFFFFFF' } };
-      cell.fill = fill(osp ? OSP_HEAD : BLUE);
+      cell.fill = fill(osp ? OSP_HEAD : HEAD);
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       cell.border = BOX;
     }
@@ -810,14 +863,14 @@ function writeSummarySheet(workbook, sheet, data, internal, sectionRefs, headerC
     const cells = [[C.sT, rooms.supply_price], [C.sG, rooms.supply_gst], [C.vT, rooms.services_price], [C.vG, rooms.services_gst],
       ...(internal ? [[C.ospST, rooms.supply_osp], [C.ospVT, rooms.services_osp]] : [])];
     for (const [c, value] of cells) sheet.getRow(r).getCell(c).value = fx(sumCol(c, dataRows.rooms), value);
-    styleRow(r, { font: { bold: true }, fill: fill('FFE2E8F0') });
+    styleRow(r, { font: { bold: true }, fill: fill(argb('subtotal')) });
   }
   computed.sections.forEach((s, i) => {
     if (s.kind !== 'ppm') return;
     r += 2;
     sheet.mergeCells(r, C.desc, r, last);
     sheet.getRow(r).getCell(C.desc).value = sectionLabel(s);
-    styleRange(sheet, r, 1, last, { font: { bold: true }, fill: fill(TINT), border: BOX });
+    styleRange(sheet, r, 1, last, { ...SECTION, border: BOX });
     writeRow(i, s.lines.map((l) => l.description).filter(Boolean).join(', ') || sectionLabel(s), true);
   });
 
@@ -827,7 +880,7 @@ function writeSummarySheet(workbook, sheet, data, internal, sectionRefs, headerC
   const taxes = `${sumCol(C.sG, dataRows.all)}+${sumCol(C.vG, dataRows.all)}`;
   const g = sheet.getRow(r);
   sheet.mergeCells(r, 1, r, C.count);
-  g.getCell(1).value = 'GRAND TOTAL (Supply + Installation + PPM)';
+  g.getCell(1).value = 'GRAND TOTAL (Supply + Installation + PMC)';
   if (internal) {
     sheet.mergeCells(r, C.ospSU, r, C.ospST);
     g.getCell(C.ospSU).value = fx(`${sumCol(C.ospST, dataRows.all)}+${sumCol(C.ospVT, dataRows.all)}`, r2(grand.supply_osp + grand.services_osp));
@@ -838,7 +891,7 @@ function writeSummarySheet(workbook, sheet, data, internal, sectionRefs, headerC
   g.getCell(C.vU).value = 'Taxes';
   sheet.mergeCells(r, C.vT, r, C.vG);
   g.getCell(C.vT).value = fx(taxes, grand.gst_total);
-  styleRow(r, { font: { bold: true, color: { argb: 'FFFFFFFF' } }, fill: fill('FF4CAF50') });
+  styleRow(r, { font: { bold: true }, fill: fill(argb('total')) });
   if (internal) for (const c of ospCols) Object.assign(g.getCell(c), { fill: fill(OSP_FILL), font: { bold: true, color: { argb: 'FF3F6212' } } });
   const grandRow = r;
   g.height = 22;
@@ -850,7 +903,7 @@ function writeSummarySheet(workbook, sheet, data, internal, sectionRefs, headerC
   a.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
   sheet.mergeCells(r, C.vT, r, C.vG);
   a.getCell(C.vT).value = fx(`${letter(C.sU)}${grandRow}+${letter(C.vT)}${grandRow}`, grand.grand_total);
-  styleRow(r, { font: { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }, fill: fill('FF4CAF50') });
+  styleRow(r, { font: { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }, fill: fill(argb('grand')) });
   a.height = 24;
 
   r += 1;
@@ -987,7 +1040,7 @@ export async function exportQuoteAccountingXlsx(data) {
     r += 1;
     sheet.mergeCells(r, 1, r, last);
     sheet.getRow(r).getCell(1).value = `${si + 1}.  ${sectionLabel(section)}`;
-    styleRange(sheet, r, 1, last, { font: { bold: true, color: { argb: 'FF004898' } }, fill: fill(TINT), border: BOX });
+    styleRange(sheet, r, 1, last, { ...SECTION, border: BOX });
     goods.forEach((line, li) => {
       r += 1;
       const row = sheet.getRow(r);

@@ -1,13 +1,13 @@
 // Broadcasts, admin side: send, track read receipts, end, delete, and take
-// people out of a live broadcast. Open to every admin.
+// people out of a live broadcast. Super Admin only.
 import express from 'express';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireSuperAdmin } from '../middleware/auth.js';
 import { validateUUID, validateUUIDParam, validateEmployeeType } from '../middleware/validation.js';
 import * as broadcastService from '../services/broadcastService.js';
 import { sendBroadcastError } from './broadcasts.js';
 
 const router = express.Router();
-router.use(requireAdmin);
+router.use(requireSuperAdmin);
 
 // GET /api/admin/broadcasts — all broadcasts with receipt counts.
 router.get('/', async (req, res) => {

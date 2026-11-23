@@ -669,13 +669,14 @@ export const AppProvider = ({ children }) => {
 
   // Whether the signed-in admin may open an admin page: the Settings module
   // toggle first, then their own module permission. Pages with no module
-  // (dashboard, profile) are always allowed; Admin Roles is Super-Admin-only.
+  // (dashboard, profile) are always allowed; Admin Roles and Broadcasts are
+  // Super-Admin-only.
   const canAccessAdminPage = useCallback((pageId) => {
     const module = ADMIN_PAGE_MODULES[pageId];
     if (TOGGLEABLE_MODULES.includes(module) && enabledModules && enabledModules[module] === false) return false;
-    if (!adminAccess) return !module && pageId !== 'staff';
+    if (!adminAccess) return !module && pageId !== 'staff' && pageId !== 'broadcasts';
     if (adminAccess.isSuperAdmin) return true;
-    if (pageId === 'staff') return false;
+    if (pageId === 'staff' || pageId === 'broadcasts') return false;
     if (!module) return true;
     return adminAccess.permissions?.[module] === true;
   }, [adminAccess, enabledModules]);
